@@ -1,1 +1,36 @@
+name: Build HackThe6ix
 
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Clone repository
+        run: |
+          git clone https://github.com/the-ericwang35/HackThe6ix.git
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+          cache: gradle
+
+      - name: Make gradlew executable
+        run: |
+          cd HackThe6ix
+          chmod +x gradlew
+
+      - name: Build debug APK
+        run: |
+          cd HackThe6ix
+          ./gradlew assembleDebug --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: HackThe6ix-debug
+          path: HackThe6ix/**/build/outputs/apk/debug/*.apk
