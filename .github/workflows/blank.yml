@@ -12,8 +12,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: the-ericwang35/HackThe6ix
-          ref: main                    # или master, если у него другая основная ветка
-          path: HackThe6ix             # куда клонировать проект
+          ref: master          # ← Вот здесь было main
+          path: HackThe6ix
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
