@@ -12,14 +12,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: the-ericwang35/HackThe6ix
-          ref: master          # ← Вот здесь было main
+          ref: master
           path: HackThe6ix
 
-      - name: Set up JDK 17
+      - name: Set up JDK 8
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 8
           cache: gradle
 
       - name: Build with Gradle
