@@ -1,38 +1,131 @@
-name: Remote Build PixelSpark
+name: Build Android Projects
 
 on:
-  workflow_dispatch: # Позволяет запускать сборку вручную кнопкой в интерфейсе GitHub
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
+    strategy:
+      fail-fast: false
+      matrix:
+        project:
+          - name: countit_app
+            repo: https://github.com/ailoadtech/countit_app.git
+            type: flutter
+
+          - name: PixelSpark
+            repo: https://github.com/Ehtasham-Arif01/PixelSpark.git
+            type: flutter
+
+          - name: DeepRazor
+            repo: https://github.com/ShubhamKNIT/DeepRazor.git
+            type: android
+
+          - name: photo-ai-tools
+            repo: https://github.com/DikshantArora28/photo-ai-tools.git
+            type: flutter
+
+          - name: Gemini-AI-KMP-App
+            repo: https://github.com/Coding-Meet/Gemini-AI-KMP-App.git
+            type: kmp
+
+          - name: Virtual-Container-for-Android
+            repo: https://github.com/vishal-benake/Virtual-Container-for-Android.git
+            type: android
+
     steps:
-      # 1. Клонируем чужой репозиторий в текущую папку
-      - name: Clone Remote Repository
-        run: |
-          git clone https://github.com/Ehtasham-Arif01/PixelSpark.git .
-          
-      # 2. Устанавливаем JDK (для PixelSpark лучше 17 или 21)
-      - name: Set up JDK 17
+      - name: Checkout runner repo
+        uses: actions/checkout@v4
+
+      - name: Install Java 17
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
-          distribution: 'temurin'
-          cache: gradle
+          distribution: temurin
+          java-version: 17
 
-      # 3. Даем права на запуск Gradle
-      - name: Make Gradlew Executable
-        run: chmod +x gradlew
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
 
-      # 4. Собираем проект
-      # Если это Android — используем assembleDebug. Если Java — build.
-      - name: Build with Gradle
-        run: ./gradlew assembleDebug --no-daemon
+      - name: Accept Android licenses
+        run: yes | sdkmanager --licenses
 
-      # 5. Сохраняем готовый файл (APK)
-      - name: Upload Artifact
+      - name: Install Android packages
+        run: |
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "cmake;3.22.1" \
+            "ndk;26.3.11579264"
+
+      - name: Setup Flutter
+        if: matrix.project.type == 'flutter'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Clone project
+        run: |
+          git clone --recursive ${{ matrix.project.repo }} project
+
+      - name: Grant gradlew permissions
+        run: |
+          cd project
+          find . -name gradlew -exec chmod +x {} \;
+
+      - name: Detect Flutter project
+        id: fluttercheck
+        run: |
+          cd project
+          if [ -f "pubspec.yaml" ]; then
+            echo "flutter=true" >> $GITHUB_OUTPUT
+          else
+            echo "flutter=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Flutter pub get
+        if: steps.fluttercheck.outputs.flutter == 'true'
+        run: |
+          cd project
+          flutter pub get
+
+      - name: Flutter doctor
+        if: steps.fluttercheck.outputs.flutter == 'true'
+        run: flutter doctor -v
+
+      - name: Build Flutter APK
+        if: steps.fluttercheck.outputs.flutter == 'true'
+        run: |
+          cd project
+          flutter build apk --release --verbose
+
+      - name: Build Gradle project
+        if: steps.fluttercheck.outputs.flutter != 'true'
+        run: |
+          cd project
+
+          if [ -f "./gradlew" ]; then
+            ./gradlew assembleRelease --stacktrace --no-daemon
+          else
+            gradle assembleRelease --stacktrace --no-daemon
+          fi
+
+      - name: Collect APKs
+        run: |
+          mkdir -p artifacts
+
+          find project -type f \( -name "*.apk" -o -name "*.aab" \) \
+            -exec cp {} artifacts/ \; || true
+
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: PixelSpark-Build
-          path: app/build/outputs/apk/debug/*.apk
+          name: ${{ matrix.project.name }}
+          path: artifacts/*
