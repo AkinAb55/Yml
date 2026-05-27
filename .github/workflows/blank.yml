@@ -42,21 +42,30 @@ jobs:
           cd source
           chmod +x gradlew
 
-      # Fix repositories
+      # Добавляем repositories
       - name: Add repositories
         run: |
           cd source
 
           find . -name "*.gradle" -type f | while read file; do
             sed -i '/repositories {/a\
-                mavenCentral()\
                 google()\
+                mavenCentral()\
                 maven { url "https://jitpack.io" }\
                 jcenter()
             ' "$file"
           done
 
-      # Remove broken keystore configs
+      # Заменяем мёртвую dependency
+      - name: Replace dead free_reflection dependency
+        run: |
+          cd source
+
+          find . -name "build.gradle" -type f | while read file; do
+            sed -i 's/me.weishu:free_reflection:3.0.1/com.github.tiann:FreeReflection:3.1.0/g' "$file"
+          done
+
+      # Удаляем битые Windows signing configs
       - name: Remove broken signing configs
         run: |
           cd source
@@ -69,7 +78,7 @@ jobs:
             sed -i '/signingConfig signingConfigs.debug/d' "$file"
           done
 
-      # Replace dead jcenter
+      # Fix старых Gradle repos
       - name: Replace jcenter
         run: |
           cd source
@@ -78,8 +87,8 @@ jobs:
             sed -i 's/jcenter()/mavenCentral()/g' "$file"
           done
 
-      # Force dependency resolution
-      - name: Add missing dependency repositories
+      # Глобальные repositories
+      - name: Patch root build.gradle
         run: |
           cd source
 
