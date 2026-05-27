@@ -1,7 +1,7 @@
 name: Build Android App
 
 on:
-  workflow_dispatch: # Позволяет запускать сборку вручную кнопкой
+  workflow_dispatch: # Позволяет запускать сборку вручную кнопкой в Actions
   push:
     branches:
       - main
@@ -12,14 +12,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Клонируем оригинальный репозиторий (ветка main)
+      # 1. Клонируем оригинальный репозиторий
       - name: Clone Original Repository
         uses: actions/checkout@v4
         with:
           repository: 'ailoadtech/countit_app'
           ref: 'main'
 
-      # 2. Устанавливаем Java (необходима для сборщика Gradle)
+      # 2. Устанавливаем JDK 17 (наиболее стабильная версия для современных Gradle-скриптов *.gradle.kts)
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -27,25 +27,20 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
-      # 3. Устанавливаем актуальную стабильную версию Flutter
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: 'stable'
-          cache: true
+      # 3. Даем права на выполнение встроенному сборщику Gradle (gradlew)
+      - name: Grant Execute Permission for Gradlew
+        run: chmod +x gradlew
 
-      # 4. Получаем зависимости, которые прописаны в самом проекте
-      - name: Install Dependencies
-        run: flutter pub get
+      # 4. Собираем проект в режиме Release с помощью Gradle
+      # Скрипт автоматически скачает нужную версию Android SDK, OpenCV и TFLite зависимости
+      - name: Build with Gradle
+        run: ./gradlew assembleRelease
 
-      # 5. Запускаем сборку APK «как есть» из исходников оригинала
-      - name: Build Android APK
-        run: flutter build apk --release
-
-      # 6. Сохраняем готовый файл, чтобы вы могли его скачать
+      # 5. Сохраняем готовый APK-файл в артефакты GitHub Actions
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: countit-app-release-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          # Путь к файлу согласно стандартной структуре Gradle: app/build/outputs/apk/release/
+          path: app/build/outputs/apk/release/*.apk
           retention-days: 7
