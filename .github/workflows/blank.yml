@@ -12,54 +12,56 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Шаг 1: Клонируем ОРИГИНАЛЬНЫЙ репозиторий вместо текущего
+      # Шаг 1: Клонируем ОРИГИНАЛЬНЫЙ репозиторий (Ветка ИСПРАВЛЕНА на main)
       - name: Clone Original Repository
         uses: actions/checkout@v4
         with:
           repository: 'ailoadtech/countit_app'
-          ref: 'master' # Укажите ветку оригинального репозитория (обычно main или master)
+          ref: 'main' # Исправлено с master на main
 
-      # Шаг 2: Устанавливаем Java (необходима для работы Android SDK и Gradle)
-      # Для сборки под Android 12 обычно используется Java 11 или Java 17
+      # Шаг 2: Устанавливаем Java 17 (оптимально для сборки под Android 12/Gradle 7+)
       - name: Set up JDK
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu' # Популярный дистрибутив OpenJDK
+          distribution: 'zulu'
           java-version: '17'
           cache: 'gradle'
 
       # Шаг 3: Устанавливаем Flutter SDK
-      # Скрипт автоматически подтянет стабильную версию. При необходимости можно указать конкретную в `channel` или `version`.
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
 
-      # Шаг 4: Принудительно проверяем и настраиваем Android SDK (Target 31/32 — это Android 12)
+      # Шаг 4: Принудительно подтягиваем Android SDK API 31 (Android 12)
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          api-level: 31 # Android 12 (для 12L / 12.1 используется 32)
+          api-level: 31
           build-tools: 31.0.0
 
-      # Шаг 5: Получаем зависимости Flutter пакетов (pub get)
+      # Шаг 5: Хак-скрипт для гарантированной сборки под Android 12.
+      # Если в оригинальном репозитории targetSdkVersion ниже 31, этот шаг
+      # автоматически перезапишет конфигурацию на Android 12 прямо перед сборкой.
+      - name: Force Android 12 (API 31) Target
+        run: |
+          sed -i 's/compileSdkVersion.*/compileSdkVersion 31/g' android/app/build.gradle
+          sed -i 's/targetSdkVersion.*/targetSdkVersion 31/g' android/app/build.gradle
+          echo "Android SDK Target forced to API 31 (Android 12)"
+
+      # Шаг 6: Получаем зависимости проекта
       - name: Install Dependencies
         run: flutter pub get
 
-      # Шаг 6: Проверяем конфигурацию проекта (Необязательно, но полезно для логов)
-      - name: Flutter Doctor
-        run: flutter doctor -v
-
-      # Шаг 7: Сборка APK. 
-      # Мы собираем `--release`. Скрипт соберет универсальный APK (или App Bundle, если заменить apk на appbundle)
+      # Шаг 7: Сборка универсального APK без подписи (Release Mode)
       - name: Build Android APK
         run: flutter build apk --release
 
-      # Шаг 8: Загружаем готовый APK-файл в артефакты GitHub Actions, чтобы вы могли его скачать
+      # Шаг 8: Загрузка готового APK в артефакты вашего GitHub
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: countit-app-release-apk
+          name: countit-app-android12-apk
           path: build/app/outputs/flutter-apk/app-release.apk
-          retention-days: 7 # Файл будет храниться 7 дней
+          retention-days: 7
