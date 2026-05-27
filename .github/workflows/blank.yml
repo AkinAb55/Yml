@@ -1,7 +1,7 @@
-name: Build Android & Web Projects
+name: Build Android App (Target Android 12)
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Позволяет запускать сборку вручную из вкладки Actions
   push:
     branches:
       - main
@@ -11,149 +11,55 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    strategy:
-      fail-fast: false
-      matrix:
-        project:
-          - name: countit_app
-            repo: https://github.com/ailoadtech/countit_app.git
-            type: flutter
-            java-version: '17'
-            root_dir: '.'
-
-          - name: PixelSpark
-            repo: https://github.com/Ehtasham-Arif01/PixelSpark.git
-            type: flutter
-            java-version: '17'
-            root_dir: '.'
-
-          - name: DeepRazor
-            repo: https://github.com/ShubhamKNIT/DeepRazor.git
-            type: android
-            java-version: '17'
-            root_dir: 'DeepRazor App' # Исправлено: Gradle лежит в этой подпапке
-
-          - name: photo-ai-tools
-            repo: https://github.com/DikshantArora28/photo-ai-tools.git
-            type: nextjs             # Исправлено: это веб-проект, а не flutter
-            java-version: '17'
-            root_dir: '.'
-
-          - name: Gemini-AI-KMP-App
-            repo: https://github.com/Coding-Meet/Gemini-AI-KMP-App.git
-            type: kmp
-            java-version: '17'
-            root_dir: '.'
-
-          - name: Virtual-Container-for-Android
-            repo: https://github.com/vishal-benake/Virtual-Container-for-Android.git
-            type: android
-            java-version: '11'       # Исправлено: старый Gradle 6.5 требует Java 11 (вместо 17)
-            root_dir: '.'
-
     steps:
-      - name: Checkout runner repo
+      # Шаг 1: Клонируем ОРИГИНАЛЬНЫЙ репозиторий вместо текущего
+      - name: Clone Original Repository
         uses: actions/checkout@v4
+        with:
+          repository: 'ailoadtech/countit_app'
+          ref: 'master' # Укажите ветку оригинального репозитория (обычно main или master)
 
-      # Динамически устанавливаем нужную версию Java для конкретного проекта
-      - name: Install Java ${{ matrix.project.java-version }}
+      # Шаг 2: Устанавливаем Java (необходима для работы Android SDK и Gradle)
+      # Для сборки под Android 12 обычно используется Java 11 или Java 17
+      - name: Set up JDK
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: ${{ matrix.project.java-version }}
+          distribution: 'zulu' # Популярный дистрибутив OpenJDK
+          java-version: '17'
+          cache: 'gradle'
 
-      - name: Setup Android SDK
-        if: matrix.project.type != 'nextjs'
-        uses: android-actions/setup-android@v3
-
-      - name: Accept Android licenses
-        if: matrix.project.type != 'nextjs'
-        run: yes | sdkmanager --licenses
-
-      - name: Install Android packages
-        if: matrix.project.type != 'nextjs'
-        run: |
-          sdkmanager \
-            "platform-tools" \
-            "platforms;android-34" \
-            "build-tools;34.0.0" \
-            "cmake;3.22.1" \
-            "ndk;26.3.11579264"
-
-      - name: Setup Flutter
-        if: matrix.project.type == 'flutter'
+      # Шаг 3: Устанавливаем Flutter SDK
+      # Скрипт автоматически подтянет стабильную версию. При необходимости можно указать конкретную в `channel` или `version`.
+      - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          channel: 'stable'
           cache: true
 
-      - name: Setup Node.js (Only for photo-ai-tools)
-        if: matrix.project.type == 'nextjs'
-        uses: actions/setup-node@v4
+      # Шаг 4: Принудительно проверяем и настраиваем Android SDK (Target 31/32 — это Android 12)
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
         with:
-          node-version: '20'
+          api-level: 31 # Android 12 (для 12L / 12.1 используется 32)
+          build-tools: 31.0.0
 
-      - name: Clone project
-        run: |
-          git clone --recursive ${{ matrix.project.repo }} project
+      # Шаг 5: Получаем зависимости Flutter пакетов (pub get)
+      - name: Install Dependencies
+        run: flutter pub get
 
-      # Создаем заглушку ключа для Gemini KMP приложения, чтобы сборка не падала
-      - name: Prepare Gemini KMP Properties
-        if: matrix.project.name == 'Gemini-AI-KMP-App'
-        run: |
-          echo "GEMINI_API_KEY=mock_key_for_ci_build" >> project/local.properties
+      # Шаг 6: Проверяем конфигурацию проекта (Необязательно, но полезно для логов)
+      - name: Flutter Doctor
+        run: flutter doctor -v
 
-      - name: Grant gradlew permissions
-        if: matrix.project.type == 'android' || matrix.project.type == 'kmp' || matrix.project.type == 'flutter'
-        run: |
-          cd project/"${{ matrix.project.root_dir }}"
-          find . -name gradlew -exec chmod +x {} \; || true
+      # Шаг 7: Сборка APK. 
+      # Мы собираем `--release`. Скрипт соберет универсальный APK (или App Bundle, если заменить apk на appbundle)
+      - name: Build Android APK
+        run: flutter build apk --release
 
-      # --- СЦЕНАРИЙ 1: СБОРКА FLUTTER (countit_app, PixelSpark) ---
-      - name: Build Flutter APK
-        if: matrix.project.type == 'flutter'
-        run: |
-          cd project/"${{ matrix.project.root_dir }}"
-          flutter pub get
-          flutter build apk --release
-
-      # --- СЦЕНАРИЙ 2: СБОРКА NATIVE ANDROID / KMP ---
-      - name: Build Gradle project
-        if: matrix.project.type == 'android' || matrix.project.type == 'kmp'
-        run: |
-          cd project/"${{ matrix.project.root_dir }}"
-          if [ -f "./gradlew" ]; then
-            ./gradlew assembleRelease --stacktrace --no-daemon
-          else
-            gradle assembleRelease --stacktrace --no-daemon
-          fi
-
-      # --- СЦЕНАРИЙ 3: СБОРКА WEB NEXT.JS (photo-ai-tools) ---
-      - name: Build Next.js Web App
-        if: matrix.project.type == 'nextjs'
-        env:
-          NEXT_PUBLIC_SITE_URL: "https://localhost:3000"
-          DATABASE_URL: "postgresql://mock:mock@localhost:5432/mock"
-        run: |
-          cd project/"${{ matrix.project.root_dir }}"
-          npm install --legacy-peer-deps
-          npm run build
-
-      # --- СБОР И СОХРАНЕНИЕ РЕЗУЛЬТАТОВ ---
-      - name: Collect Android Artifacts (APK/AAB)
-        if: matrix.project.type != 'nextjs'
-        run: |
-          mkdir -p artifacts
-          find project -type f \( -name "*.apk" -o -name "*.aab" \) -exec cp {} artifacts/ \; || true
-
-      - name: Collect Web Artifacts (Next.js Build)
-        if: matrix.project.type == 'nextjs'
-        run: |
-          mkdir -p artifacts
-          cp -r project/.next artifacts/ || true
-
-      - name: Upload artifacts
+      # Шаг 8: Загружаем готовый APK-файл в артефакты GitHub Actions, чтобы вы могли его скачать
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.project.name }}-build
-          path: artifacts/
+          name: countit-app-release-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 7 # Файл будет храниться 7 дней
