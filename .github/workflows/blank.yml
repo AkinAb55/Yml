@@ -1,11 +1,7 @@
-name: Android Release Build
+name: Build PixelSpark
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-      - master
 
 jobs:
   build:
@@ -13,18 +9,19 @@ jobs:
 
     env:
       FLUTTER_VERSION: "3.22.2"
-      JAVA_VERSION: "17"
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      # Clone ORIGINAL repo
+      - name: Clone PixelSpark
+        run: |
+          git clone https://github.com/Ehtasham-Arif01/PixelSpark.git
 
       # Java
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version: "17"
 
       # Flutter
       - name: Setup Flutter
@@ -34,62 +31,51 @@ jobs:
           channel: stable
           cache: true
 
-      # Android SDK + NDK
+      # Android SDK
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android NDK
+      # Licenses
+      - name: Accept Android Licenses
+        run: yes | sdkmanager --licenses
+
+      # NDK + CMake
+      - name: Install NDK + CMake
         run: |
+          sdkmanager "platform-tools"
+          sdkmanager "platforms;android-34"
+          sdkmanager "build-tools;34.0.0"
           sdkmanager "ndk;26.3.11579264"
           sdkmanager "cmake;3.22.1"
 
-      # Gradle cache
-      - name: Cache Gradle
-        uses: actions/cache@v4
+      # Python
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          python-version: "3.11"
 
-      # Pub cache
-      - name: Cache Pub
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.pub-cache
-          key: pub-${{ runner.os }}-${{ hashFiles('**/pubspec.lock') }}
+      # Permissions
+      - name: Make scripts executable
+        run: chmod +x PixelSpark/scripts/*.sh
 
-      # Flutter dependencies
-      - name: Install dependencies
-        run: flutter pub get
-
-      # Doctor
-      - name: Flutter doctor
-        run: flutter doctor -v
-
-      # Clean
-      - name: Clean project
-        run: flutter clean
-
-      # Build APK
-      - name: Build APK
-        run: flutter build apk --release --verbose
-
-      # Build AAB
-      - name: Build AppBundle
-        run: flutter build appbundle --release
+      # Run ORIGINAL build script
+      - name: Run Production Builder
+        working-directory: PixelSpark
+        run: |
+          bash scripts/build_production.sh || true
 
       # Upload APK
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: release-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: PixelSpark-APK
+          path: |
+            PixelSpark/frontend/build/app/outputs/flutter-apk/*.apk
 
-      # Upload AAB
-      - name: Upload AAB
+      # Upload symbols
+      - name: Upload Symbols
         uses: actions/upload-artifact@v4
         with:
-          name: release-aab
-          path: build/app/outputs/bundle/release/app-release.aab
+          name: PixelSpark-Symbols
+          path: |
+            PixelSpark/frontend/build/app/outputs/symbols
