@@ -42,7 +42,21 @@ jobs:
           cd source
           chmod +x gradlew
 
-      # Удаляем битые Windows keystore paths
+      # Fix repositories
+      - name: Add repositories
+        run: |
+          cd source
+
+          find . -name "*.gradle" -type f | while read file; do
+            sed -i '/repositories {/a\
+                mavenCentral()\
+                google()\
+                maven { url "https://jitpack.io" }\
+                jcenter()
+            ' "$file"
+          done
+
+      # Remove broken keystore configs
       - name: Remove broken signing configs
         run: |
           cd source
@@ -52,18 +66,10 @@ jobs:
             sed -i '/storePassword/d' "$file"
             sed -i '/keyAlias/d' "$file"
             sed -i '/keyPassword/d' "$file"
-          done
-
-      # Удаляем signingConfig references
-      - name: Remove signingConfig references
-        run: |
-          cd source
-
-          find . -name "build.gradle" -type f | while read file; do
             sed -i '/signingConfig signingConfigs.debug/d' "$file"
           done
 
-      # На случай старых репозиториев
+      # Replace dead jcenter
       - name: Replace jcenter
         run: |
           cd source
@@ -71,6 +77,20 @@ jobs:
           find . -name "*.gradle" -type f | while read file; do
             sed -i 's/jcenter()/mavenCentral()/g' "$file"
           done
+
+      # Force dependency resolution
+      - name: Add missing dependency repositories
+        run: |
+          cd source
+
+          sed -i '/allprojects {/a\
+              repositories {\
+                  google()\
+                  mavenCentral()\
+                  maven { url "https://jitpack.io" }\
+                  jcenter()\
+              }
+          ' build.gradle
 
       - name: Build Debug APK
         run: |
