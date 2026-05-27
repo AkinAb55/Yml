@@ -1,7 +1,7 @@
-name: Build Android App
+name: Android Release Build
 
 on:
-  workflow_dispatch: # Позволяет запускать сборку вручную кнопкой в Actions
+  workflow_dispatch:
   push:
     branches:
       - main
@@ -11,36 +11,85 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    steps:
-      # 1. Клонируем оригинальный репозиторий
-      - name: Clone Original Repository
-        uses: actions/checkout@v4
-        with:
-          repository: 'ailoadtech/countit_app'
-          ref: 'main'
+    env:
+      FLUTTER_VERSION: "3.22.2"
+      JAVA_VERSION: "17"
 
-      # 2. Устанавливаем JDK 17 (наиболее стабильная версия для современных Gradle-скриптов *.gradle.kts)
-      - name: Set up JDK 17
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Java
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu'
-          java-version: '17'
-          cache: 'gradle'
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
 
-      # 3. Даем права на выполнение встроенному сборщику Gradle (gradlew)
-      - name: Grant Execute Permission for Gradlew
-        run: chmod +x gradlew
+      # Flutter
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
 
-      # 4. Собираем проект в режиме Release с помощью Gradle
-      # Скрипт автоматически скачает нужную версию Android SDK, OpenCV и TFLite зависимости
-      - name: Build with Gradle
-        run: ./gradlew assembleRelease
+      # Android SDK + NDK
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
 
-      # 5. Сохраняем готовый APK-файл в артефакты GitHub Actions
-      - name: Upload APK Artifact
+      - name: Install Android NDK
+        run: |
+          sdkmanager "ndk;26.3.11579264"
+          sdkmanager "cmake;3.22.1"
+
+      # Gradle cache
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+
+      # Pub cache
+      - name: Cache Pub
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache
+          key: pub-${{ runner.os }}-${{ hashFiles('**/pubspec.lock') }}
+
+      # Flutter dependencies
+      - name: Install dependencies
+        run: flutter pub get
+
+      # Doctor
+      - name: Flutter doctor
+        run: flutter doctor -v
+
+      # Clean
+      - name: Clean project
+        run: flutter clean
+
+      # Build APK
+      - name: Build APK
+        run: flutter build apk --release --verbose
+
+      # Build AAB
+      - name: Build AppBundle
+        run: flutter build appbundle --release
+
+      # Upload APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: countit-app-release-apk
-          # Путь к файлу согласно стандартной структуре Gradle: app/build/outputs/apk/release/
-          path: app/build/outputs/apk/release/*.apk
-          retention-days: 7
+          name: release-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+
+      # Upload AAB
+      - name: Upload AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-aab
+          path: build/app/outputs/bundle/release/app-release.aab
