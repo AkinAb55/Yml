@@ -1,4 +1,4 @@
-name: Build PixelSpark
+name: Build Virtual Container
 
 on:
   workflow_dispatch:
@@ -7,34 +7,35 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    env:
-      FLUTTER_VERSION: "3.22.2"
-
     steps:
-      # Clone ORIGINAL repo
-      - name: Clone PixelSpark
+      - name: Clone target repository
         run: |
-          git clone https://github.com/Ehtasham-Arif01/PixelSpark.git
+          git clone https://github.com/vishal-benake/Virtual-Container-for-Android.git source
 
-      # Java
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: 17
 
-      # Flutter
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          channel: stable
-          cache: true
-
-      # Android SDK
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Grant Gradle permissions
+        run: |
+          cd source
+          chmod +x gradlew
+
+      - name: Build APK
+        run: |
+          cd source
+          ./gradlew assembleDebug --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: source/app/build/outputs/apk/debug/*.apk
       # Licenses
       - name: Accept Android Licenses
         run: yes | sdkmanager --licenses
