@@ -12,14 +12,22 @@ jobs:
         run: |
           git clone https://github.com/vishal-benake/Virtual-Container-for-Android.git source
 
-      - name: Setup Java 8
+      # JDK 17 только для sdkmanager
+      - name: Setup Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 8
+          java-version: 17
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      # Переключаемся на Java 11 для Gradle
+      - name: Setup Java 11
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 11
 
       - name: Fix gradlew permission
         run: |
