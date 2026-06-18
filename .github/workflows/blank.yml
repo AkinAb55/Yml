@@ -1,9 +1,9 @@
-name: Build Android APK (No Expo)
+name: Build Android APK (Prebuild)
 
 on:
-  workflow_dispatch:       # Ручной запуск
+  workflow_dispatch:
   push:
-    branches: [master]     # Автобилд при пуше
+    branches: [master]
 
 jobs:
   build:
@@ -41,38 +41,16 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Generate native project
+        run: npx expo prebuild
+
       - name: Download ESRGAN TFLite model
         run: |
           mkdir -p assets/models
-          URLS=(
-            "https://media.githubusercontent.com/media/tensorflow/examples/master/lite/examples/super_resolution/android/app/src/main/assets/ESRGAN.tflite"
-            "https://raw.githubusercontent.com/google-ai-edge/mediapipe-samples/main/examples/super_resolution/android/app/src/main/assets/ESRGAN.tflite"
-          )
-          SUCCESS=false
-          for URL in "${URLS[@]}"; do
-            echo "Trying: $URL"
-            if curl -L "$URL" -o assets/models/esrgan.tflite --max-time 300 --retry 3 --retry-delay 10 --fail; then
-              SIZE=$(wc -c < assets/models/esrgan.tflite)
-              if [ "$SIZE" -gt 1000000 ]; then
-                echo "Model OK: $(du -sh assets/models/esrgan.tflite)"
-                SUCCESS=true
-                break
-              else
-                echo "File too small ($SIZE bytes) — trying next source"
-                rm -f assets/models/esrgan.tflite
-              fi
-            else
-              echo "Download failed — trying next source"
-              rm -f assets/models/esrgan.tflite
-            fi
-          done
-          if [ "$SUCCESS" = false ]; then
-            echo "WARNING: ESRGAN model unavailable — AI Upscale feature will be disabled in this build."
-            touch assets/models/esrgan.tflite
-          fi
+          curl -L "https://raw.githubusercontent.com/google-ai-edge/mediapipe-samples/main/examples/super_resolution/android/app/src/main/assets/ESRGAN.tflite" -o assets/models/esrgan.tflite || touch assets/models/esrgan.tflite
 
       - name: Build APK with Gradle
-        run: ./gradlew assembleDebug
+        run: cd android && ./gradlew assembleDebug
         env:
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
 
@@ -80,6 +58,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: RAWEye-debug
-          path: '**/*.apk'
+          path: android/app/build/outputs/apk/debug/*.apk
           retention-days: 30
           
