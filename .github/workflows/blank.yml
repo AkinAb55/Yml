@@ -1,4 +1,4 @@
-name: Build WinDroidPro APKs
+name: Build WinDroidPro Release APK
 
 on:
   push:
@@ -35,6 +35,21 @@ jobs:
         mv gradle-8.5 gradle
         echo "$(pwd)/gradle/bin" >> $GITHUB_PATH
 
+    - name: Patch repositories (add JitPack)
+      run: |
+        sed -i '/mavenCentral()/a\        maven { url "https://jitpack.io" }' WinDroidPro/WinDroidPro/build.gradle
+        sed -i '/mavenCentral()/a\        maven { url "https://jitpack.io" }' WinDroidPro/WinDroidPro/settings.gradle || true
+
+    - name: Build Release APK
+      run: cd WinDroidPro/WinDroidPro && gradle assembleRelease --stacktrace
+
+    - name: Upload Release APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: WinDroidPro-Release
+        path: WinDroidPro/WinDroidPro/app/build/outputs/apk/release/*.apk
+        retention-days: 30
+        
     - name: Patch repositories (add JitPack)
       run: |
         sed -i '/mavenCentral()/a\        maven { url "https://jitpack.io" }' WinDroidPro/WinDroidPro/build.gradle
