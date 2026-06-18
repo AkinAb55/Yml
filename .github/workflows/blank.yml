@@ -1,37 +1,38 @@
-name: External Build WinDroidPro
+name: Build APK
 
 on:
-  workflow_dispatch:   # запуск вручную из вкладки Actions
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    
     steps:
-      - name: Checkout WinDroidPro
-        run: git clone https://github.com/esooLsIeicuJehT/WinDroidPro.git
-
-      - name: Enter project directory
-        run: cd WinDroidPro
-
-      - name: Set up JDK 17
-        uses: actions/setup-java@v3
-        with:
-          java-version: '17'
-          distribution: 'temurin'
-
-      - name: Install Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Grant execute permission for gradlew
-        run: chmod +x WinDroidPro/gradlew
-
-      - name: Build with Gradle
-        run: cd WinDroidPro && ./gradlew assembleDebug
-
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: WinDroidPro-debug-apk
-          path: WinDroidPro/app/build/outputs/apk/debug/*.apk
-          
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: gradle
+    
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+    
+    - name: Grant execute permission for gradlew
+      run: chmod +x gradlew
+    
+    - name: Build Debug APK
+      run: ./gradlew assembleDebug --stacktrace
+    
+    - name: Upload Debug APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: WinDroidPro-Debug
+        path: app/build/outputs/apk/debug/*.apk
+        retention-days: 90
+        
