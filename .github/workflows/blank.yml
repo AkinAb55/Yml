@@ -26,11 +26,11 @@ jobs:
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
 
-    - name: Grant execute permission for gradlew
-      run: chmod +x WinDroidPro/gradlew
+    - name: Grant execute permission for build.sh
+      run: chmod +x WinDroidPro/build.sh
 
     - name: Build Debug APK
-      run: cd WinDroidPro && ./gradlew assembleDebug --stacktrace
+      run: cd WinDroidPro && ./build.sh
 
     - name: Upload Debug APK
       uses: actions/upload-artifact@v4
@@ -38,4 +38,3 @@ jobs:
         name: WinDroidPro-Debug
         path: WinDroidPro/app/build/outputs/apk/debug/*.apk
         retention-days: 90
-        
