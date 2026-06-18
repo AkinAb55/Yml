@@ -27,15 +27,15 @@ jobs:
       uses: android-actions/setup-android@v3
 
     - name: Grant execute permission for build.sh
-      run: chmod +x WinDroidPro/build.sh
+      run: chmod +x WinDroidPro/WinDroidPro/build.sh
 
     - name: Build Debug APK
-      run: cd WinDroidPro && ./build.sh
+      run: cd WinDroidPro/WinDroidPro && ./build.sh
 
     - name: Upload Debug APK
       uses: actions/upload-artifact@v4
       with:
         name: WinDroidPro-Debug
-        path: WinDroidPro/app/build/outputs/apk/debug/*.apk
+        path: WinDroidPro/WinDroidPro/app/build/outputs/apk/debug/*.apk
         retention-days: 90
         
