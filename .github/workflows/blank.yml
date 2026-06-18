@@ -1,4 +1,4 @@
-name: Build APK
+name: Build WinDroidPro APKs
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout workflow repo
       uses: actions/checkout@v4
@@ -29,6 +29,9 @@ jobs:
     - name: Install Gradle
       uses: gradle/gradle-build-action@v2
 
+    - name: Patch settings.gradle (remove jcenter)
+      run: sed -i 's/jcenter()/mavenCentral()/g' WinDroidPro/WinDroidPro/settings.gradle
+
     - name: Build Debug APK
       run: cd WinDroidPro/WinDroidPro && gradle assembleDebug --stacktrace
 
@@ -37,5 +40,15 @@ jobs:
       with:
         name: WinDroidPro-Debug
         path: WinDroidPro/WinDroidPro/app/build/outputs/apk/debug/*.apk
-        retention-days: 90
+        retention-days: 30
+
+    - name: Build Release APK
+      run: cd WinDroidPro/WinDroidPro && gradle assembleRelease --stacktrace
+
+    - name: Upload Release APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: WinDroidPro-Release
+        path: WinDroidPro/WinDroidPro/app/build/outputs/apk/release/*.apk
+        retention-days: 30
         
