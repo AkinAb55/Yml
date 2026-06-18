@@ -38,5 +38,4 @@ jobs:
         name: WinDroidPro-Debug
         path: WinDroidPro/app/build/outputs/apk/debug/*.apk
         retention-days: 90
-        retention-days: 90
         
