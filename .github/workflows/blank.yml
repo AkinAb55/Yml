@@ -1,120 +1,85 @@
-name: Build WinDroidPro Release APK
+name: Build Android APK (No Expo)
 
 on:
+  workflow_dispatch:       # Ручной запуск
   push:
-    branches: [ main, master ]
-  workflow_dispatch:
+    branches: [master]     # Автобилд при пуше
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout workflow repo
-      uses: actions/checkout@v4
+      - name: Checkout raw-eye repo
+        uses: actions/checkout@v4
+        with:
+          repository: rahul-harsha-89/raw-eye
+          ref: master
 
-    - name: Clone WinDroidPro
-      run: git clone https://github.com/esooLsIeicuJehT/WinDroidPro.git
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
 
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: 'temurin'
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
 
-    - name: Setup Android SDK
-      uses: android-actions/setup-android@v3
+      - name: Configure Android SDK + NDK
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;26.1.10909125"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.1.10909125" >> $GITHUB_ENV
 
-    - name: Install NDK + CMake
-      run: sdkmanager "ndk;25.1.8937393" "cmake;3.22.1"
+      - name: Install dependencies
+        run: npm install
 
-    - name: Install Gradle 8.5
-      run: |
-        wget https://services.gradle.org/distributions/gradle-8.5-bin.zip
-        unzip gradle-8.5-bin.zip
-        mv gradle-8.5 gradle
-        echo "$(pwd)/gradle/bin" >> $GITHUB_PATH
+      - name: Download ESRGAN TFLite model
+        run: |
+          mkdir -p assets/models
+          URLS=(
+            "https://media.githubusercontent.com/media/tensorflow/examples/master/lite/examples/super_resolution/android/app/src/main/assets/ESRGAN.tflite"
+            "https://raw.githubusercontent.com/google-ai-edge/mediapipe-samples/main/examples/super_resolution/android/app/src/main/assets/ESRGAN.tflite"
+          )
+          SUCCESS=false
+          for URL in "${URLS[@]}"; do
+            echo "Trying: $URL"
+            if curl -L "$URL" -o assets/models/esrgan.tflite --max-time 300 --retry 3 --retry-delay 10 --fail; then
+              SIZE=$(wc -c < assets/models/esrgan.tflite)
+              if [ "$SIZE" -gt 1000000 ]; then
+                echo "Model OK: $(du -sh assets/models/esrgan.tflite)"
+                SUCCESS=true
+                break
+              else
+                echo "File too small ($SIZE bytes) — trying next source"
+                rm -f assets/models/esrgan.tflite
+              fi
+            else
+              echo "Download failed — trying next source"
+              rm -f assets/models/esrgan.tflite
+            fi
+          done
+          if [ "$SUCCESS" = false ]; then
+            echo "WARNING: ESRGAN model unavailable — AI Upscale feature will be disabled in this build."
+            touch assets/models/esrgan.tflite
+          fi
 
-    - name: Patch repositories (add JitPack)
-      run: |
-        sed -i '/mavenCentral()/a\        maven { url "https://jitpack.io" }' WinDroidPro/WinDroidPro/build.gradle
-        sed -i '/mavenCentral()/a\        maven { url "https://jitpack.io" }' WinDroidPro/WinDroidPro/settings.gradle || true
+      - name: Build APK with Gradle
+        run: ./gradlew assembleDebug
+        env:
+          GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8"
 
-    - name: Build Release APK
-      run: cd WinDroidPro/WinDroidPro && gradle assembleRelease --stacktrace
-
-    - name: Upload Release APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: WinDroidPro-Release
-        path: WinDroidPro/WinDroidPro/app/build/outputs/apk/release/*.apk
-        retention-days: 30
-        
-    - name: Patch repositories (add JitPack)
-      run: |
-        sed -i '/mavenCentral()/a\        maven { url "https://jitpack.io" }' WinDroidPro/WinDroidPro/build.gradle
-        sed -i '/mavenCentral()/a\        maven { url "https://jitpack.io" }' WinDroidPro/WinDroidPro/settings.gradle || true
-
-    - name: Build Debug APK
-      run: cd WinDroidPro/WinDroidPro && gradle assembleDebug --stacktrace
-
-    - name: Upload Debug APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: WinDroidPro-Debug
-        path: WinDroidPro/WinDroidPro/app/build/outputs/apk/debug/*.apk
-        retention-days: 30
-
-    - name: Build Release APK
-      run: cd WinDroidPro/WinDroidPro && gradle assembleRelease --stacktrace
-
-    - name: Upload Release APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: WinDroidPro-Release
-        path: WinDroidPro/WinDroidPro/app/build/outputs/apk/release/*.apk
-        retention-days: 30
-        
-    - name: Patch settings.gradle (remove jcenter)
-      run: sed -i 's/jcenter()/mavenCentral()/g' WinDroidPro/WinDroidPro/settings.gradle || true
-
-    - name: Build Debug APK
-      run: cd WinDroidPro/WinDroidPro && gradle assembleDebug --stacktrace
-
-    - name: Upload Debug APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: WinDroidPro-Debug
-        path: WinDroidPro/WinDroidPro/app/build/outputs/apk/debug/*.apk
-        retention-days: 30
-
-    - name: Build Release APK
-      run: cd WinDroidPro/WinDroidPro && gradle assembleRelease --stacktrace
-
-    - name: Upload Release APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: WinDroidPro-Release
-        path: WinDroidPro/WinDroidPro/app/build/outputs/apk/release/*.apk
-        retention-days: 30
-        
-    - name: Build Debug APK
-      run: cd WinDroidPro/WinDroidPro && gradle assembleDebug --stacktrace
-
-    - name: Upload Debug APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: WinDroidPro-Debug
-        path: WinDroidPro/WinDroidPro/app/build/outputs/apk/debug/*.apk
-        retention-days: 30
-
-    - name: Build Release APK
-      run: cd WinDroidPro/WinDroidPro && gradle assembleRelease --stacktrace
-
-    - name: Upload Release APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: WinDroidPro-Release
-        path: WinDroidPro/WinDroidPro/app/build/outputs/apk/release/*.apk
-        retention-days: 30
-        
+      - name: Upload APK as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RAWEye-debug
+          path: '**/*.apk'
+          retention-days: 30
+          
