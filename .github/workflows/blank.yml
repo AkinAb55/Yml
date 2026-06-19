@@ -1,7 +1,10 @@
 name: Release VineOS
 
 on:
-  workflow_dispatch: # ручной запуск
+  push:
+    tags:
+      - 'v*'   # Автоматический запуск при создании тега, например v0.1.0
+  workflow_dispatch: # Возможность ручного запуска
 
 jobs:
   build-release:
@@ -41,6 +44,9 @@ jobs:
             "build-tools;36.0.0" \
             "cmake;3.22.1" \
             "ndk;27.0.12077973"
+
+      - name: Make gradlew executable
+        run: chmod +x gradlew
 
       - name: Build Release APK
         run: ./gradlew assembleRelease
