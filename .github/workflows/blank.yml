@@ -1,4 +1,4 @@
-name: Build ShadowCore
+name: Build SmartVirtualization
 
 on:
   push:
@@ -14,14 +14,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Получаем исходники напрямую из ShadowCore
-      - name: Checkout ShadowCore
+      # Получаем исходники напрямую из SmartVirtualization
+      - name: Checkout SmartVirtualization
         uses: actions/checkout@v4
         with:
-          repository: ReturnKartikey/ShadowCore
+          repository: vpt0/SmartVirtualization
           ref: main
 
-      # Устанавливаем JDK 17 (Gradle 9.4.1 требует >=17)
+      # Устанавливаем JDK 17 (AGP требует >=17)
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -43,14 +43,14 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      # Запускаем сборку (lint не будет падать)
-      - name: Build with Gradle
+      # Собираем APK (lint не блокирует)
+      - name: Build APK
         run: ./gradlew assembleDebug -Pandroid.lint.abortOnError=false
 
       # Публикуем артефакты (APK из app/build/outputs/apk)
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: shadowcore-apk
+          name: smartvirtualization-apk
           path: app/build/outputs/apk/**/*.apk
           
