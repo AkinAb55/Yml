@@ -28,13 +28,15 @@ jobs:
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
+        working-directory: ContainerDroid
 
       - name: Build project
         run: ./gradlew assembleDebug assembleRelease
+        working-directory: ContainerDroid
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
         with:
           name: BlackBox-APKs
-          path: app/build/outputs/apk/**/*.apk
+          path: ContainerDroid/app/build/outputs/apk/**/*.apk
           
