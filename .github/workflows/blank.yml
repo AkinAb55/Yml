@@ -2,9 +2,9 @@ name: Android CI
 
 on:
   push:
-    branches: [ master ]
+    branches: [ main ]
   pull_request:
-    branches: [ master ]
+    branches: [ main ]
 
 jobs:
   build:
@@ -29,8 +29,8 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build all flavors
-        run: ./gradlew clean assembleDebug assembleRelease
+      - name: Build project
+        run: ./gradlew assembleDebug assembleRelease
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4
