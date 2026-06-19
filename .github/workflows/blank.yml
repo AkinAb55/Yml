@@ -43,9 +43,13 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      # Собираем APK (обход ошибок lint/manifest)
+      # Патчим minSdkVersion (меняем 1 на 21)
+      - name: Patch minSdkVersion
+        run: sed -i 's/minSdk 1/minSdk 21/' app/build.gradle
+
+      # Собираем APK (lint не блокирует)
       - name: Build APK
-        run: ./gradlew assembleDebug -Pandroid.lint.abortOnError=false -Pandroid.injected.testOnly=true
+        run: ./gradlew assembleDebug -Pandroid.lint.abortOnError=false
 
       # Публикуем артефакты (APK из app/build/outputs/apk)
       - name: Upload APK
