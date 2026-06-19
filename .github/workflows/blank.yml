@@ -1,4 +1,4 @@
-name: Build Makokolor
+name: Build ShadowCore
 
 on:
   push:
@@ -14,11 +14,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Получаем исходники напрямую из репозитория
-      - name: Checkout Makokolor
+      # Получаем исходники напрямую из ShadowCore
+      - name: Checkout ShadowCore
         uses: actions/checkout@v4
         with:
-          repository: rekluzlabs/Makokolor
+          repository: ReturnKartikey/ShadowCore
           ref: main
 
       # Устанавливаем JDK 11 (как указано в build.gradle.kts)
@@ -39,18 +39,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-gradle-
 
-      # Делаем gradlew исполняемым
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
+      # Запускаем сборку
+      - name: Build with Gradle
+        run: ./gradlew build
 
-      # Сборка APK
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug
-
-      # Публикация артефакта
-      - name: Upload APK
+      # Публикуем артефакты (например, jar из build/libs)
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Makokolor-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: shadowcore-artifacts
+          path: build/libs/*.jar
           
