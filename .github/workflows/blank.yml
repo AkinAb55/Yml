@@ -4,18 +4,18 @@ on:
   push:
     tags:
       - 'v*'   # Автоматический запуск при создании тега, например v0.1.0
-  workflow_dispatch: # Возможность ручного запуска
+  workflow_dispatch: # Возможность ручного запуска вручную
 
 jobs:
   build-release:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout VineOS repo
+      - name: Checkout VineOS fork
         uses: actions/checkout@v4
         with:
-          repository: Hexadecinull/VineOS   # сторонний репозиторий
-          ref: main                        # ветка, можно поменять
+          repository: AkinAb55/VineOS   # твой форк
+          ref: main
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
