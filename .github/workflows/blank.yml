@@ -14,12 +14,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Получаем исходники напрямую из SmartVirtualization
+      # Получаем исходники из твоего форка
       - name: Checkout SmartVirtualization
         uses: actions/checkout@v4
-        with:
-          repository: vpt0/SmartVirtualization
-          ref: main
 
       # Устанавливаем JDK 17 (AGP требует >=17)
       - name: Set up JDK 17
@@ -43,18 +40,25 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      # Патчим minSdkVersion (меняем 1 на 21)
-      - name: Patch minSdkVersion
-        run: sed -i 's/minSdk 1/minSdk 21/' app/build.gradle
-
       # Собираем APK (lint не блокирует)
       - name: Build APK
         run: ./gradlew assembleDebug -Pandroid.lint.abortOnError=false
 
-      # Публикуем артефакты (APK из app/build/outputs/apk)
+      # Запускаем lint отдельно, чтобы получить отчёт
+      - name: Run Lint
+        run: ./gradlew lintDebug -Pandroid.lint.abortOnError=false || true
+
+      # Публикуем APK
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: smartvirtualization-apk
           path: app/build/outputs/apk/**/*.apk
+
+      # Публикуем отчёт lint (HTML)
+      - name: Upload Lint Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-report
+          path: app/build/reports/lint-results-debug.html
           
