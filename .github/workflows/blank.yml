@@ -24,9 +24,11 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
-      - name: Fix gradlew permissions
+      # Добавляем права на исполнение для gradlew
+      - name: Make gradlew executable
         run: chmod +x ./gradlew
 
+      # Теперь запускаем через встроенный wrapper
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
 
@@ -34,5 +36,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: OCR-Lens-AI-Debug
-          path: app/build/outputs/apk/debug/*.apk
-          
+          path: app/build/outputs/apk/debug/*.apk # Убрали лишний перенос строки
