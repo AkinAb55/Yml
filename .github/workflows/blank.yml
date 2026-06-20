@@ -8,32 +8,39 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. Скачиваем целевой репозиторий без форка
       - name: Checkout OCR Lens AI repo
         uses: actions/checkout@v4
         with:
           repository: jnetai-clawbot/ocr-lens-ai
           ref: main
 
+      # 2. Устанавливаем JDK 17 (требуется для compileOptions проекта)
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: gradle
 
+      # 3. Настраиваем окружение Gradle и кэширование
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
-      # Добавляем права на исполнение для gradlew
+      # 4. Перегенерируем Gradle Wrapper, чтобы исправить поврежденный gradlew и права доступа
+      - name: Regenerate Gradle Wrapper
+        run: gradle wrapper --gradle-version 8.2 --distribution-type bin
+
+      # 5. Делаем новый сгенерированный gradlew исполняемым
       - name: Make gradlew executable
         run: chmod +x ./gradlew
 
-      # Теперь запускаем через встроенный wrapper
+      # 6. Запускаем сборку отладочного APK
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
 
+      # 7. Загружаем готовый APK в артефакты GitHub Actions
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: OCR-Lens-AI-Debug
-          path: app/build/outputs/apk/debug/*.apk # Убрали лишний перенос строки
+          path: app/build/outputs/apk/debug/*.apk
