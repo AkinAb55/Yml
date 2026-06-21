@@ -1,53 +1,55 @@
-name: Build External Repository
+name: Build Android APK (External)
 
 on:
-  workflow_dispatch: # Позволяет запускать сборку вручную через вкладку Actions
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
-  build-android:
+  build:
     runs-on: ubuntu-latest
-
+    
     steps:
-      # 1. Клонируем СВОЙ репозиторий (чтобы активировать рабочую директорию)
-      - name: Checkout own repo
+      # 1. Клонируем СТОРОННИЙ репозиторий напрямую в корневую директорию воркфлоу
+      - name: Checkout external code
         uses: actions/checkout@v4
+        with:
+          repository: 'whesley264-oss/offline-camera-translator'
+          ref: 'main' # Укажите ветку, если она отличается от main
 
-      # 2. Клонируем СТОРОННИЙ репозиторий в подпапку target-app
-      - name: Checkout external repository
-        run: |
-          git clone https://github.com/whesley264-oss/offline-camera-translator.git target-app
-
-      # 3. Настраиваем Java (необходима для сборки Android)
+      # 2. Настраиваем Java 17
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
-          distribution: 'zulu'
+          distribution: 'temurin'
 
-      # 4. Настраиваем Node.js
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
-          cache: 'npm'
-          cache-dependency-path: 'target-app/package-lock.json'
-
-      # 5. Устанавливаем зависимости внутри склонированного проекта
-      - name: Install dependencies
+      # 3. Создаем конфигурационный файл для Android SDK
+      - name: Create local.properties
         run: |
-          cd target-app
-          npm install
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
 
-      # 6. Собираем Android APK (отладочную сборку)
-      - name: Build Android Release
+      # 4. Собираем отладочный APK
+      - name: Build Debug APK
         run: |
-          cd target-app/android
-          chmod +x ./gradlew
-          ./gradlew assembleRelease
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --no-build-cache --no-configuration-cache
 
-      # 7. Сохраняем готовый APK как артефакт сборки GitHub
-      - name: Upload APK Artifact
-        uses: actions/artifacts@v4
+      # 5. Выгружаем готовый APK в артефакты
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        if: success()
         with:
-          name: app-release-apk
-          path: target-app/android/app/build/outputs/apk/release/app-release.apk
+          name: debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+
+      # 6. Если сборка упала — сохраняем логи для разбора полетов
+      - name: Upload build logs
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: build-logs
+          path: |
+            app/build/outputs/logs/
+            app/build/reports/
+          retention-days: 7
