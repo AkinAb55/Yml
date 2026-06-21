@@ -1,53 +1,69 @@
 name: Build External Android App
 
 on:
-  workflow_dispatch: # запуск вручную из вкладки Actions
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. Скачиваем код из внешнего репозитория
+    # 1. Скачиваем код из чужого репозитория
     - name: Checkout external repository
       uses: actions/checkout@v4
       with:
         repository: 'malsmak372-cmyk/vidi-ai-ultimate-editor'
-        ref: 'main' # если ветка master, замените на master
+        ref: 'main'
 
-    # 2. Устанавливаем JDK 8 (совместим с Gradle и SDK 29)
-    - name: Set up JDK 8
+    # 2. Устанавливаем Java 17 (ГАРАНТИРОВАНО для работы sdkmanager)
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    # 3. Настраиваем Android SDK (без лишних старых параметров)
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+
+    # 4. Устанавливаем Java 8 ТОЛЬКО ПОСЛЕ того, как Android SDK настроен
+    - name: Set up JDK 8 for Legacy Build
       uses: actions/setup-java@v4
       with:
         java-version: '8'
         distribution: 'temurin'
-        cache: 'gradle'
 
-    # 3. Настраиваем Android SDK (API 29, Build Tools 29.0.3)
-    - name: Setup Android SDK
-      uses: android-actions/setup-android@v3
-      with:
-        api-level: 29
-        build-tools: 29.0.3
-        target: default
-        arch: x86_64
-
-    # 4. Проверяем наличие Gradle Wrapper и даём права
-    - name: Ensure Gradle Wrapper
+    # 5. Исправляем репозитории в корневом build.gradle "на лету"
+    - name: Patch build.gradle for JCenter/MavenCentral
       run: |
-        if [ ! -f gradlew ]; then
-          gradle wrapper
+        if [ -f "build.gradle" ]; then
+          sed -i 's/jcenter()/mavenCentral()\n        jcenter()/g' build.gradle
+          echo "build.gradle successfully patched!"
+        else
+          echo "Root build.gradle not found, skipping patch."
         fi
+
+    # 6. Скачиваем старый Gradle 6.9.4 и запускаем сборку
+    - name: Download Gradle and Build
+      run: |
+        # Скачиваем архив со старым Gradle
+        wget -q https://services.gradle.org/distributions/gradle-6.9.4-bin.zip
+        unzip -q gradle-6.9.4-bin.zip
+        
+        # Принудительно выставляем Java 8 в PATH и JAVA_HOME для текущей сессии bash
+        export JAVA_HOME=$JAVA_HOME_8_X64
+        export PATH=$JAVA_HOME/bin:$GITHUB_WORKSPACE/gradle-6.9.4/bin:$PATH
+        
+        # Генерируем локальный wrapper
+        gradle wrapper --gradle-version 6.9.4
         chmod +x gradlew
+        
+        # Запускаем сборку
+        ./gradlew assembleDebug --stacktrace
 
-    # 5. Собираем Debug APK (Release без ключа подписи упадёт)
-    - name: Build Debug APK
-      run: ./gradlew assembleDebug --stacktrace
-
-    # 6. Загружаем APK как артефакт
+    # 7. Сохраняем APK файлы в артефакты
     - name: Upload APK Artifacts
       uses: actions/upload-artifact@v4
       with:
         name: android-build-apks
         path: app/build/outputs/apk/debug/*.apk
-        
