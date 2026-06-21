@@ -31,8 +31,15 @@ jobs:
 
       - name: Download launcher icon
         run: |
-          mkdir -p app/src/main/res/mipmap-anydpi-v26
-          curl -L "https://iconbird.com/png/download.php?id=23643&s=256" -o app/src/main/res/mipmap-anydpi-v26/ic_launcher.png
+          # Создаем структуру папок для Android-иконок
+          mkdir -p android/app/src/main/res/mipmap-mdpi
+          mkdir -p android/app/src/main/res/mipmap-hdpi
+          mkdir -p android/app/src/main/res/mipmap-xhdpi
+          mkdir -p android/app/src/main/res/mipmap-xxhdpi
+          mkdir -p android/app/src/main/res/mipmap-xxxhdpi
+          
+          # Скачиваем саму иконку в одну из папок плотности (xhdpi)
+          curl -L "https://iconbird.com/png/download.php?id=23643&s=256" -o android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
 
       - name: Build Debug APK
         run: flutter build apk --debug
@@ -42,4 +49,3 @@ jobs:
         with:
           name: es-dizyne-debug-apk
           path: build/app/outputs/flutter-apk/app-debug.apk
-          
