@@ -1,59 +1,52 @@
-name: Build External Android App
+name: Android CI
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. Скачиваем код из чужого репозитория
-    - name: Checkout external repository
-      uses: actions/checkout@v4
-      with:
-        repository: 'malsmak372-cmyk/vidi-ai-ultimate-editor'
-        ref: 'main'
+    - name: Checkout source
+      uses: actions/checkout@v3
 
-    # 2. Устанавливаем Java 17 для sdkmanager
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
+    - name: Set up JDK 11
+      uses: actions/setup-java@v3
       with:
-        java-version: '17'
         distribution: 'temurin'
+        java-version: '11'
 
-    # 3. Настраиваем Android SDK
-    - name: Setup Android SDK
+    - name: Cache Gradle
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+        restore-keys: |
+          ${{ runner.os }}-gradle-
+
+    - name: Install Android SDK
       uses: android-actions/setup-android@v3
-
-    # 4. Устанавливаем Java 8 для сборки самого приложения
-    - name: Set up JDK 8 for Build
-      uses: actions/setup-java@v4
       with:
-        java-version: '8'
-        distribution: 'temurin'
+        api-level: 29
+        build-tools: 29.0.3
+        target: default
+        arch: x86_64
 
-    # 5. Скачиваем старый Gradle, который умеет работать с Java 8, и собираем проект
-    - name: Download Gradle and Build
-      run: |
-        # Скачиваем архив со старым Gradle 6.9.4
-        wget -q https://services.gradle.org/distributions/gradle-6.9.4-bin.zip
-        unzip -q gradle-6.9.4-bin.zip
-        
-        # Переключаем окружение на Java 8
-        export JAVA_HOME=$JAVA_HOME_8_X64
-        export PATH=$JAVA_HOME/bin:$GITHUB_WORKSPACE/gradle-6.9.4/bin:$PATH
-        
-        # Генерируем локальный wrapper старой версии
-        gradle wrapper --gradle-version 6.9.4
-        chmod +x gradlew
-        
-        # Запускаем сборку
-        ./gradlew assembleDebug --stacktrace
+    - name: Grant execute permission for Gradlew
+      run: chmod +x gradlew
 
-    # 6. Сохраняем APK файлы
-    - name: Upload APK Artifacts
-      uses: actions/upload-artifact@v4
+    - name: Build Release APK
+      run: ./gradlew assembleRelease
+
+    - name: Upload APK artifact
+      uses: actions/upload-artifact@v3
       with:
-        name: android-build-apks
-        path: app/build/outputs/apk/debug/*.apk
+        name: release-apk
+        path: app/build/outputs/apk/release/*.apk
+        
