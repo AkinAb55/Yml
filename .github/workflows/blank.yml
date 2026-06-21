@@ -1,44 +1,52 @@
 name: Build External Android App
 
 on:
-  workflow_dispatch: # Позволяет запускать сборку вручную из вкладки Actions
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. Скачиваем код из ЧУЖОГО репозитория напрямую
+    # 1. Скачиваем код из чужого репозитория
     - name: Checkout external repository
       uses: actions/checkout@v4
       with:
         repository: 'malsmak372-cmyk/vidi-ai-ultimate-editor'
-        ref: 'main' # Название ветки (если там master, замените на master)
+        ref: 'main'
 
-    # 2. Устанавливаем Java 8 (необходима для старых версий Gradle / SDK 29)
-    - name: Set up JDK 8
+    # 2. Устанавливаем Java 17 (нужна для sdkmanager)
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    # 3. Настраиваем Android SDK (теперь он не упадет, так как видит Java 17)
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+
+    # 4. Рядом устанавливаем Java 8 (она запишется в переменную JAVA_HOME_8_X64)
+    - name: Set up JDK 8 for Build
       uses: actions/setup-java@v4
       with:
         java-version: '8'
         distribution: 'temurin'
-        cache: 'gradle'
 
-    # 3. Настраиваем Android SDK
-    - name: Setup Android SDK
-      uses: android-actions/setup-android@v3
-
-    # 4. Генерируем локальный gradlew, если его нет в чужом репозитории, и даем права
-    - name: Initialize Gradle Wrapper
+    # 5. Инициализируем Gradle и подменяем JAVA_HOME на Java 8 прямо перед сборкой
+    - name: Initialize Gradle Wrapper and Build
       run: |
+        # Генерируем wrapper, используя Java 17 (это безопасно)
         gradle wrapper
         chmod +x gradlew
+        
+        # Переключаем JAVA_HOME на установленную Java 8 для сборки проекта
+        export JAVA_HOME=$JAVA_HOME_8_X64
+        
+        # Запускаем сборку старого проекта на Java 8
+        ./gradlew assembleDebug --stacktrace
 
-    # 5. Собираем отладочный APK (Debug)
-    # Сборка Release без ключей подписи упадет, поэтому для теста делаем assembleDebug
-    - name: Build with Gradle
-      run: ./gradlew assembleDebug --stacktrace
-
-    # 6. Загружаем готовые APK файлы в артефакты GitHub
+    # 6. Сохраняем APK файлы
     - name: Upload APK Artifacts
       uses: actions/upload-artifact@v4
       with:
