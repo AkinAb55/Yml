@@ -1,4 +1,4 @@
-name: Build Android APK (External)
+name: Build OCR Android APK (External)
 
 on:
   push:
@@ -10,21 +10,21 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      # 1. Клонируем СТОРОННИЙ репозиторий напрямую в корневую директорию воркфлоу
+      # 1. Клонируем сторонний репозиторий (ветка master)
       - name: Checkout external code
         uses: actions/checkout@v4
         with:
-          repository: 'whesley264-oss/offline-camera-translator'
-          ref: 'main' # Укажите ветку, если она отличается от main
+          repository: 'musabadru/ocr-android-app'
+          ref: 'master'
 
-      # 2. Настраиваем Java 17
-      - name: Set up JDK 17
+      # 2. Настраиваем Java 11 (оптимально для старых проектов)
+      - name: Set up JDK 11
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
+          java-version: '11'
           distribution: 'temurin'
 
-      # 3. Создаем конфигурационный файл для Android SDK
+      # 3. Создаем local.properties для указания пути к Android SDK
       - name: Create local.properties
         run: |
           echo "sdk.dir=$ANDROID_HOME" > local.properties
@@ -35,6 +35,24 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon --no-build-cache --no-configuration-cache
 
+      # 5. Выгружаем готовый APK в артефакты
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: ocr-app-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+
+      # 6. Сохраняем логи, если сборка не удалась
+      - name: Upload build logs
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: build-logs
+          path: |
+            app/build/outputs/logs/
+            app/build/reports/
+          retention-days: 7
       # 5. Выгружаем готовый APK в артефакты
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
