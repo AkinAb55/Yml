@@ -13,43 +13,51 @@ jobs:
       ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
 
     steps:
-      # 1. Клонируем репозиторий (он развернется прямо в корень)
+      # 1. Клонируем репозиторий
       - name: Checkout external code
         uses: actions/checkout@v4
         with:
           repository: 'tharushaperera104-create/glory-cam-v2-glory-studio'
           ref: 'main'
 
-      # 2. Устанавливаем Java 21
-      - name: Set up JDK 21
+      # 2. Хак: заменяем экспериментальные версии плагинов на стабильные
+      - name: Patch Experimental Plugin Versions
+        run: |
+          sed -i 's/agp = "9.1.1"/agp = "8.7.3"/g' gradle/libs.versions.toml
+          sed -i 's/kotlin = "2.2.10"/kotlin = "2.0.21"/g' gradle/libs.versions.toml
+          echo "=== Модифицированный libs.versions.toml ==="
+          cat gradle/libs.versions.toml
+
+      # 3. Устанавливаем JDK 17 (оптимально для AGP 8.7.3)
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          java-version: '21'
+          java-version: '17'
           distribution: 'temurin'
 
-      # 3. Устанавливаем сам Gradle в систему
+      # 4. Устанавливаем Gradle
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.12'
+          gradle-version: '8.10.2'
 
-      # 4. Генерируем отсутствующий gradlew wrapper прямо в корне
+      # 5. Генерируем Gradle Wrapper
       - name: Generate Gradle Wrapper
         run: |
           gradle wrapper
 
-      # 5. Создаем local.properties в корне для Android SDK
+      # 6. Создаем local.properties для Android SDK
       - name: Create local.properties
         run: |
           echo "sdk.dir=$ANDROID_HOME" > local.properties
 
-      # 6. Собираем отладочный APK
+      # 7. Собираем отладочный APK
       - name: Build Debug APK
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon --no-build-cache --no-configuration-cache
 
-      # 7. Выгружаем готовый APK в артефакты
+      # 8. Выгружаем готовый APK в артефакты
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         if: success()
@@ -57,7 +65,7 @@ jobs:
           name: glory-cam-debug-apk
           path: app/build/outputs/apk/debug/*.apk
 
-      # 8. Сохраняем логи в случае неудачи
+      # 9. Сохраняем логи в случае неудачи
       - name: Upload build logs
         uses: actions/upload-artifact@v4
         if: failure()
