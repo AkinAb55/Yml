@@ -13,41 +13,39 @@ jobs:
       ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
 
     steps:
-      # 1. Клонируем репозиторий
+      # 1. Клонируем репозиторий (он развернется прямо в корень)
       - name: Checkout external code
         uses: actions/checkout@v4
         with:
           repository: 'tharushaperera104-create/glory-cam-v2-glory-studio'
           ref: 'main'
 
-      # 2. Устанавливаем Java 21 (необходима для AGP 9.1.1)
+      # 2. Устанавливаем Java 21
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
 
-      # 3. Устанавливаем сам Gradle в систему вручную
+      # 3. Устанавливаем сам Gradle в систему
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.12' # Стабильная версия, отлично работающая с AGP 9.x
+          gradle-version: '8.12'
 
-      # 4. Генерируем отсутствующий gradlew wrapper внутри папки проекта
+      # 4. Генерируем отсутствующий gradlew wrapper прямо в корне
       - name: Generate Gradle Wrapper
         run: |
-          cd glory-cam-v2-glory-studio
           gradle wrapper
 
-      # 5. Создаем local.properties для Android SDK
+      # 5. Создаем local.properties в корне для Android SDK
       - name: Create local.properties
         run: |
-          echo "sdk.dir=$ANDROID_HOME" > glory-cam-v2-glory-studio/local.properties
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
 
-      # 6. Собираем отладочный APK через свежесозданный gradlew
+      # 6. Собираем отладочный APK
       - name: Build Debug APK
         run: |
-          cd glory-cam-v2-glory-studio
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon --no-build-cache --no-configuration-cache
 
@@ -57,7 +55,7 @@ jobs:
         if: success()
         with:
           name: glory-cam-debug-apk
-          path: glory-cam-v2-glory-studio/app/build/outputs/apk/debug/*.apk
+          path: app/build/outputs/apk/debug/*.apk
 
       # 8. Сохраняем логи в случае неудачи
       - name: Upload build logs
@@ -66,6 +64,6 @@ jobs:
         with:
           name: build-logs
           path: |
-            glory-cam-v2-glory-studio/app/build/outputs/logs/
-            glory-cam-v2-glory-studio/app/build/reports/
+            app/build/outputs/logs/
+            app/build/reports/
           retention-days: 7
