@@ -1,51 +1,46 @@
-name: Build es-dizyne APK
+name: Build External Android App
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Позволяет запускать сборку вручную из вкладки Actions
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout es-dizyne repo
-        uses: actions/checkout@v4
-        with:
-          repository: emm-5/es-dizyne
-          ref: main
+    # 1. Скачиваем код из ЧУЖОГО репозитория напрямую
+    - name: Checkout external repository
+      uses: actions/checkout@v4
+      with:
+        repository: 'malsmak372-cmyk/vidi-ai-ultimate-editor'
+        ref: 'main' # Название ветки (если там master, замените на master)
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'temurin'
+    # 2. Устанавливаем Java 8 (необходима для старых версий Gradle / SDK 29)
+    - name: Set up JDK 8
+      uses: actions/setup-java@v4
+      with:
+        java-version: '8'
+        distribution: 'temurin'
+        cache: 'gradle'
 
-      - name: Install Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.22.2'
-          channel: 'stable'
+    # 3. Настраиваем Android SDK
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
 
-      - name: Flutter pub get
-        run: flutter pub get
+    # 4. Генерируем локальный gradlew, если его нет в чужом репозитории, и даем права
+    - name: Initialize Gradle Wrapper
+      run: |
+        gradle wrapper
+        chmod +x gradlew
 
-      - name: Download launcher icon
-        run: |
-          # Создаем структуру папок для Android-иконок
-          mkdir -p android/app/src/main/res/mipmap-mdpi
-          mkdir -p android/app/src/main/res/mipmap-hdpi
-          mkdir -p android/app/src/main/res/mipmap-xhdpi
-          mkdir -p android/app/src/main/res/mipmap-xxhdpi
-          mkdir -p android/app/src/main/res/mipmap-xxxhdpi
-          
-          # Скачиваем саму иконку в одну из папок плотности (xhdpi)
-          curl -L "https://iconbird.com/png/download.php?id=23643&s=256" -o android/app/src/main/res/mipmap-xhdpi/ic_launcher.png
+    # 5. Собираем отладочный APK (Debug)
+    # Сборка Release без ключей подписи упадет, поэтому для теста делаем assembleDebug
+    - name: Build with Gradle
+      run: ./gradlew assembleDebug --stacktrace
 
-      - name: Build Debug APK
-        run: flutter build apk --debug
-
-      - name: Upload Debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: es-dizyne-debug-apk
-          path: build/app/outputs/flutter-apk/app-debug.apk
+    # 6. Загружаем готовые APK файлы в артефакты GitHub
+    - name: Upload APK Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: android-build-apks
+        path: app/build/outputs/apk/debug/*.apk
