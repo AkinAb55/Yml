@@ -29,20 +29,10 @@ jobs:
       - name: Flutter pub get
         run: flutter pub get
 
-      - name: Add placeholder launcher icon
+      - name: Download launcher icon
         run: |
           mkdir -p app/src/main/res/mipmap-anydpi-v26
-          cat > app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml <<'EOF'
-          <vector xmlns:android="http://schemas.android.com/apk/res/android"
-              android:width="24dp"
-              android:height="24dp"
-              android:viewportWidth="24"
-              android:viewportHeight="24">
-              <path
-                  android:fillColor="#FFFFFF"
-                  android:pathData="M0,0h24v24h-24z"/>
-          </vector>
-          EOF
+          curl -L "https://iconbird.com/png/download.php?id=23643&s=256" -o app/src/main/res/mipmap-anydpi-v26/ic_launcher.png
 
       - name: Build Debug APK
         run: flutter build apk --debug
