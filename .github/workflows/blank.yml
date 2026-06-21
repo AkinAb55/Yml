@@ -32,7 +32,17 @@ jobs:
       - name: Add placeholder launcher icon
         run: |
           mkdir -p app/src/main/res/mipmap-anydpi-v26
-          convert -size 512x512 xc:white app/src/main/res/mipmap-anydpi-v26/ic_launcher.png
+          cat > app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml <<'EOF'
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="24dp"
+              android:height="24dp"
+              android:viewportWidth="24"
+              android:viewportHeight="24">
+              <path
+                  android:fillColor="#FFFFFF"
+                  android:pathData="M0,0h24v24h-24z"/>
+          </vector>
+          EOF
 
       - name: Build Debug APK
         run: flutter build apk --debug
@@ -42,3 +52,4 @@ jobs:
         with:
           name: es-dizyne-debug-apk
           path: build/app/outputs/flutter-apk/app-debug.apk
+          
