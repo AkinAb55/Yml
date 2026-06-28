@@ -1,39 +1,92 @@
-name: Build External Android Project
+name: Build Full TAWC APK (Direct From Source)
 
 on:
-  workflow_dispatch: # Позволяет запускать сборку вручную через вкладку Actions
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch: # Позволяет запускать сборку кнопкой вручную в любое время
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
-      # 1. Клонируем сторонний репозиторий вместо вашего
-      - name: Checkout external repository
-        uses: actions/checkout@v4
-        with:
-          repository: 'VenInDays/ChatAI-Android'
-          ref: 'main' # Укажите нужную ветку, если там не main (например, master)
+    # 1. Скачиваем оригинальный код приложения напрямую из официального репозитория
+    - name: Clone Original TAWC Repository
+      run: |
+        git clone https://github.com/wmww/tawc.git .
+        git submodule update --init --recursive
 
-      # 2. Настраиваем Java (для Android обычно нужна версия 17 или 11/21 в зависимости от Gradle)
-      - name: set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          java-version: '17'
-          distribution: 'zulu'
-          cache: gradle
+    # 2. Устанавливаем все необходимые утилиты для компиляции Linux-компонентов
+    - name: Install Host Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y git build-essential pkg-config libwayland-dev \
+          libx11-dev libx11-xcb-dev libxcb-xkb-dev libxcb-randr0-dev \
+          libxcb-image0-dev libxkbcommon-dev libpixman-1-dev clang lld ninja-build meson \
+          bison flex python3-mako gettext xkb-data
 
-      # 3. Даем права на выполнение Gradle Wrapper
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
+    # 3. Настраиваем Java для Android Gradle Plugin
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+        cache: 'gradle'
 
-      # 4. Собираем проект (Debug APK)
-      - name: Build with Gradle
-        run: ./gradlew assembleDebug
+    # 4. Настраиваем Android SDK
+    - name: Setup Android SDK & NDK
+      uses: android-actions/setup-android@v3
 
-      # 5. Сохраняем готовый APK как артефакт сборки
-      - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ChatAI-Debug-APK
-          path: app/build/outputs/apk/debug/*.apk
+    # 5. Скачиваем конкретную версию NDK (27.2), требуемую проектом
+    - name: Install Specific Android NDK
+      run: |
+        sdkmanager --install "ndk;27.2.12479018"
+        echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/27.2.12479018" >> $GITHUB_ENV
+
+    # 6. Ставим Rust и настраиваем компиляцию под Android (ARM64)
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: stable
+        targets: aarch64-linux-android
+
+    # 7. Устанавливаем утилиту cargo-ndk, через которую Gradle вызывает Rust
+    - name: Install cargo-ndk
+      run: cargo install cargo-ndk
+
+    # 8. Настраиваем кэширование, чтобы повторные сборки занимали минуты, а не часы
+    - name: Set up Cache for Rust & Native Builds
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/bin/
+          ~/.cargo/registry/index/
+          ~/.cargo/registry/cache/
+          ~/.cargo/git/db/
+          compositor/target/
+          build/
+        key: ${{ runner.os }}-tawc-standalone-${{ hashFiles('**/Cargo.lock', 'deps/deps.list') }}
+        restore-keys: |
+          ${{ runner.os }}-tawc-standalone-
+
+    # 9. Запускаем встроенный скрипт проекта, который скачивает smithay, proot, mesa и накладывает патчи
+    - name: Initialize Project Dependencies
+      run: |
+        chmod +x scripts/ensure-deps.sh
+        ./scripts/ensure-deps.sh --verify-all
+
+    # 10. Запускаем полную сборку со всеми функциями графики и Xwayland
+    - name: Build Full APK with Gradle
+      env:
+        CARGO_BUILD_JOBS: "2" # Ограничиваем потоки, чтобы сервер не вылетел по памяти
+        RUSTFLAGS: "-C link-arg=-fuse-ld=lld"
+      run: |
+        chmod +x gradlew
+        ./gradlew assembleDebug -PtawcAbis=arm64-v8a
+
+    # 11. Сохраняем готовый файл, чтобы вы могли его скачать
+    - name: Upload APK Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: tawc-full-app
+        path: app/build/outputs/apk/debug/app-debug.apk
