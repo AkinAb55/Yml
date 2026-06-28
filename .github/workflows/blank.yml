@@ -71,7 +71,10 @@ jobs:
         targets: aarch64-linux-android
 
     - name: Install cargo-ndk
-      run: cargo install cargo-ndk
+      run: |
+        cargo install cargo-ndk
+        # Прописываем путь к бинарникам cargo в глобальный PATH для следующих шагов
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
     - name: Grant Execute Permissions to Scripts
       run: |
@@ -92,8 +95,12 @@ jobs:
         PATH: /usr/bin:/bin:${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin:${{ env.PATH }}
         LIBTOOL: /usr/bin/libtool
         LIBTOOLIZE: /usr/bin/libtoolize
+        # Пробрасываем корректные компиляторы NDK 27 для сборщика Rust (Cargo) под API 29
+        CC_aarch64_linux_android: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang
+        AR_aarch64_linux_android: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
       run: |
-        ./gradlew assembleDebug \
+        # Флаги --info и --stacktrace заставят Gradle показать лог падения самого Cargo
+        ./gradlew assembleDebug --info --stacktrace \
           -PtawcAbis=arm64-v8a \
           -PtawcGraphics=libhybris,libhybris-zink,gfxstream,cpu \
           -PtawcXwayland=true \
@@ -105,8 +112,11 @@ jobs:
         PATH: /usr/bin:/bin:${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin:${{ env.PATH }}
         LIBTOOL: /usr/bin/libtool
         LIBTOOLIZE: /usr/bin/libtoolize
+        # Пробрасываем корректные компиляторы NDK 27 для сборщика Rust (Cargo) под API 29
+        CC_aarch64_linux_android: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang
+        AR_aarch64_linux_android: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
       run: |
-        ./gradlew assembleRelease \
+        ./gradlew assembleRelease --info --stacktrace \
           -PtawcMethods=tawcroot,proot,chroot \
           -PtawcAbis=arm64-v8a \
           -PtawcGraphics=libhybris,libhybris-zink,gfxstream,cpu \
