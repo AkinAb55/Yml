@@ -40,7 +40,7 @@ jobs:
     - name: Install Host Dependencies & ARM64 Cross-Toolchain
       run: |
         sudo apt-get update
-        # Устанавливаем системные утилиты и кросс-компилятор под aarch64 (ARM64) для libhybris
+        # Устанавливаем системные утилиты, кросс-компилятор и инструменты автосборки (libtool)
         sudo apt-get install -y \
           meson \
           ninja-build \
@@ -50,6 +50,9 @@ jobs:
           bison \
           flex \
           git-lfs \
+          libtool \
+          autoconf \
+          automake \
           gcc-aarch64-linux-gnu \
           g++-aarch64-linux-gnu
 
