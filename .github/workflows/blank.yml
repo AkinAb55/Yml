@@ -13,7 +13,7 @@ jobs:
 
     - name: Clone Original TAWC Repository
       run: |
-        # Очищаем лишнее и стягиваем оригинальный репозиторий со всеми субмодулями
+        # Очищаем лишнее и стягиваем оригинальный репозиторий
         rm -rf .git
         git init
         git remote add origin https://github.com/wmww/tawc.git
@@ -40,7 +40,6 @@ jobs:
     - name: Install Host Dependencies & ARM64 Cross-Toolchain
       run: |
         sudo apt-get update
-        # Устанавливаем системные утилиты, кросс-компилятор и инструменты автосборки (libtool)
         sudo apt-get install -y \
           meson \
           ninja-build \
@@ -51,10 +50,19 @@ jobs:
           flex \
           git-lfs \
           libtool \
+          libtool-bin \
           autoconf \
           automake \
           gcc-aarch64-linux-gnu \
           g++-aarch64-linux-gnu
+
+    - name: Link Host Libtool for NDK Cross-Compilation
+      run: |
+        # Создаем симлинки, чтобы autotools внутри libhybris находил libtool по префиксу NDK
+        sudo ln -s /usr/bin/libtool /usr/bin/aarch64-linux-android-libtool
+        sudo ln -s /usr/bin/libtoolize /usr/bin/aarch64-linux-android-libtoolize
+        sudo ln -s /usr/bin/libtool /usr/bin/aarch64-linux-gnu-libtool
+        sudo ln -s /usr/bin/libtoolize /usr/bin/aarch64-linux-gnu-libtoolize
 
     - name: Set up Rust Toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -72,13 +80,18 @@ jobs:
 
     - name: Pre-build & Fetch Dependencies
       run: |
-        ./scripts/ensure-deps.sh --verify-all || true
+        # Выкачиваем и подготавливаем все зависимости до запуска основного Gradle
         ./scripts/ensure-deps.sh smithay
+        ./scripts/ensure-deps.sh libxkbcommon
+        ./scripts/ensure-deps.sh libhybris
         ./scripts/ensure-deps.sh --patches rutabaga_gfx deps/rutabaga-patches/rutabaga_gfx || true
 
     - name: Build Full Debug APK (ARM64)
       env:
         ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
+        PATH: /usr/bin:/bin:${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin:${{ env.PATH }}
+        LIBTOOL: /usr/bin/libtool
+        LIBTOOLIZE: /usr/bin/libtoolize
       run: |
         ./gradlew assembleDebug \
           -PtawcAbis=arm64-v8a \
@@ -89,6 +102,9 @@ jobs:
     - name: Build Full Release APK (ARM64)
       env:
         ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
+        PATH: /usr/bin:/bin:${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin:${{ env.PATH }}
+        LIBTOOL: /usr/bin/libtool
+        LIBTOOLIZE: /usr/bin/libtoolize
       run: |
         ./gradlew assembleRelease \
           -PtawcMethods=tawcroot,proot,chroot \
