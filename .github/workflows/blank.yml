@@ -54,7 +54,8 @@ jobs:
           autoconf \
           automake \
           gcc-aarch64-linux-gnu \
-          g++-aarch64-linux-gnu
+          g++-aarch64-linux-gnu \
+          libvulkan-dev
 
     - name: Link Host Libtool for NDK Cross-Compilation
       run: |
@@ -99,7 +100,6 @@ jobs:
         CC_aarch64_linux_android: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang
         AR_aarch64_linux_android: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
       run: |
-        # Флаги --info и --stacktrace заставят Gradle показать лог падения самого Cargo
         ./gradlew assembleDebug --info --stacktrace \
           -PtawcAbis=arm64-v8a \
           -PtawcGraphics=libhybris,libhybris-zink,gfxstream,cpu \
