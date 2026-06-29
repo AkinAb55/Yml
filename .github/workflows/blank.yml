@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest    
     timeout-minutes: 240    
     
-    # Переносим переменные сюда, где контекст runner полностью валиден
+    # Контекст runner.temp доступен только здесь, внутри job
     env:
       ANDROID_SDK_ROOT: ${{ runner.temp }}/android-sdk  
       ANDROID_HOME: ${{ runner.temp }}/android-sdk
@@ -273,6 +273,7 @@ jobs:
           path: |            
             ${{ env.TAWC_DIR }}/app/build/outputs/apk/debug/*.apk      
 
+      # ИСПРАВЛЕНО: Шаги разделены, 'uses' и 'with' больше не дублируются в одной строке
       - name: Upload jniLibs & assets        
         uses: actions/upload-artifact@v4        
         with:          
