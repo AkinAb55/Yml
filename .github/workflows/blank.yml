@@ -93,14 +93,19 @@ jobs:
     - name: Build Full Debug APK (ARM64)
       env:
         ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
-        PATH: /usr/bin:/bin:${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin:${{ env.PATH }}
+        PATH: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin:/usr/bin:/bin:${{ env.PATH }}
         LIBTOOL: /usr/bin/libtool
         LIBTOOLIZE: /usr/bin/libtoolize
-        # Пробрасываем корректные компиляторы NDK 27 для сборщика Rust (Cargo) под API 29
+        # Настройка окружения NDK для Autotools (сборка libhybris)
+        CC: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang
+        CXX: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++
+        AR: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
+        STRIP: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip
+        # Настройка окружения для Cargo (Rust)
         CC_aarch64_linux_android: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang
         AR_aarch64_linux_android: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
       run: |
-        ./gradlew assembleDebug --info --stacktrace \
+        ./gradlew assembleDebug --stacktrace --console=plain \
           -PtawcAbis=arm64-v8a \
           -PtawcGraphics=libhybris,libhybris-zink,gfxstream,cpu \
           -PtawcXwayland=true \
@@ -109,14 +114,19 @@ jobs:
     - name: Build Full Release APK (ARM64)
       env:
         ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
-        PATH: /usr/bin:/bin:${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin:${{ env.PATH }}
+        PATH: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin:/usr/bin:/bin:${{ env.PATH }}
         LIBTOOL: /usr/bin/libtool
         LIBTOOLIZE: /usr/bin/libtoolize
-        # Пробрасываем корректные компиляторы NDK 27 для сборщика Rust (Cargo) под API 29
+        # Настройка окружения NDK для Autotools (сборка libhybris)
+        CC: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang
+        CXX: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++
+        AR: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
+        STRIP: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip
+        # Настройка окружения для Cargo (Rust)
         CC_aarch64_linux_android: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang
         AR_aarch64_linux_android: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
       run: |
-        ./gradlew assembleRelease --info --stacktrace \
+        ./gradlew assembleRelease --stacktrace --console=plain \
           -PtawcMethods=tawcroot,proot,chroot \
           -PtawcAbis=arm64-v8a \
           -PtawcGraphics=libhybris,libhybris-zink,gfxstream,cpu \
