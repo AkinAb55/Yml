@@ -1,295 +1,285 @@
 name: Build full TAWC APK (upstream wmww/tawc + wmww/libhybris)
-
-on:
-  workflow_dispatch:
-  push:
+on:  
+  workflow_dispatch:  
+  push:    
+    branches: [ main ]  
+  pull_request:    
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
 
-env:
-  # Android / NDK settings (match upstream app/build.gradle.kts by default)
-  ANDROID_API_LEVEL: "29"
-  ANDROID_BUILD_TOOLS: "33.0.2"
-  ANDROID_NDK_VERSION: "27.2.12479018"
-  ANDROID_ABIS: "arm64-v8a x86_64"
-  # Where we clone the upstream tawc repo
-  TAWC_DIR: "${{ github.workspace }}/tawc-upstream"
-  # libhybris will be placed under the tawc repo's deps/libhybris (expected by build scripts)
-  LIBHYBRIS_DIR: "${{ github.workspace }}/tawc-upstream/deps/libhybris"
-  # ANDROID_SDK_ROOT / ANDROID_HOME are set via GITHUB_ENV in SDK step
+env:  
+  # Android / NDK settings (match upstream app/build.gradle.kts by default)  
+  ANDROID_API_LEVEL: "29"  
+  ANDROID_BUILD_TOOLS: "33.0.2"  
+  ANDROID_NDK_VERSION: "27.2.12479018"  
+  ANDROID_ABIS: "arm64-v8a x86_64"  
+  # Where we clone the upstream tawc repo  
+  TAWC_DIR: "${{ github.workspace }}/tawc-upstream"  
+  # libhybris will be placed under the tawc repo's deps/libhybris  
+  LIBHYBRIS_DIR: "${{ github.workspace }}/tawc-upstream/deps/libhybris"  
 
-jobs:
-  build-full-tawc:
-    runs-on: ubuntu-latest
-    timeout-minutes: 240
+jobs:  
+  build-full-tawc:    
+    runs-on: ubuntu-latest    
+    timeout-minutes: 240    
+    steps:      
+      - name: Checkout this repository (workflow host)        
+        uses: actions/checkout@v4        
+        with:          
+          fetch-depth: 1      
 
-    steps:
-      - name: Checkout this repository (workflow host)
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
+      - name: Checkout upstream wmww/tawc        
+        uses: actions/checkout@v4        
+        with:          
+          repository: wmww/tawc          
+          path: tawc-upstream          
+          fetch-depth: 0      
 
-      - name: Checkout upstream wmww/tawc
-        uses: actions/checkout@v4
-        with:
-          repository: wmww/tawc
-          path: tawc-upstream
-          fetch-depth: 0
+      - name: Checkout upstream wmww/libhybris into tawc deps        
+        uses: actions/checkout@v4        
+        with:          
+          repository: wmww/libhybris          
+          path: tawc-upstream/deps/libhybris          
+          fetch-depth: 0      
 
-      - name: Checkout upstream wmww/libhybris into tawc deps
-        uses: actions/checkout@v4
-        with:
-          repository: wmww/libhybris
-          path: tawc-upstream/deps/libhybris
-          fetch-depth: 0
-
-      - name: Install apt packages (build dependencies)
-        run: |
-          sudo apt-get update
+      - name: Install apt packages (build dependencies)        
+        run: |          
+          sudo apt-get update          
           sudo apt-get install -y --no-install-recommends \
             unzip wget zip build-essential cmake ninja-build pkg-config autoconf automake libtool \
             python3 python3-pip git bison flex clang libx11-dev libx11-xcb-dev libxcb1-dev \
             libxcb-render0-dev libxcb-shm0-dev libxkbcommon-dev meson libcairo2-dev libfreetype6-dev \
-            libpng-dev libexpat1-dev libssl-dev pkg-config curl
-          pip3 install --user meson
+            libpng-dev libexpat1-dev libssl-dev pkg-config curl          
+          pip3 install --user meson      
 
-      - name: Setup Java (Temurin 17)
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
+      - name: Setup Java (Temurin 17)        
+        uses: actions/setup-java@v4        
+        with:          
+          distribution: temurin          
+          java-version: '17'      
 
-      - name: Install Android commandline tools & sdk packages
-        env:
-          ANDROID_SDK_ROOT: ${{ runner.temp }}/android-sdk
-          ANDROID_HOME: ${{ runner.temp }}/android-sdk
-        run: |
-          set -e
-          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
-          cd "$RUNNER_TEMP"
-          CLI_ZIP=commandlinetools-linux-8512546_latest.zip
-          wget -q https://dl.google.com/android/repository/${CLI_ZIP}
-          unzip -q ${CLI_ZIP} -d "$ANDROID_SDK_ROOT/cmdline-tools"
-          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
-          mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools"/* "$ANDROID_SDK_ROOT/cmdline-tools/latest/" || true
-          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
-          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" --licenses || true
+      - name: Install Android commandline tools & sdk packages        
+        env:          
+          ANDROID_SDK_ROOT: ${{ runner.temp }}/android-sdk          
+          ANDROID_HOME: ${{ runner.temp }}/android-sdk        
+        run: |          
+          set -e          
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"          
+          cd "$RUNNER_TEMP"          
+          CLI_ZIP=commandlinetools-linux-8512546_latest.zip          
+          wget -q https://dl.google.com/android/repository/${CLI_ZIP}          
+          unzip -q ${CLI_ZIP} -d "$ANDROID_SDK_ROOT/cmdline-tools"          
+          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"          
+          mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools"/* "$ANDROID_SDK_ROOT/cmdline-tools/latest/" || true          
+          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"          
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" --licenses || true          
           "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" \
             "platform-tools" "platforms;android-${ANDROID_API_LEVEL}" \
-            "build-tools;\( {ANDROID_BUILD_TOOLS}" "ndk; \){ANDROID_NDK_VERSION}" "cmake;3.22.1"
-          ls -la "$ANDROID_SDK_ROOT"
-          # Make variables available to subsequent steps
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
-          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+            "build-tools;${ANDROID_BUILD_TOOLS}" "ndk;${ANDROID_NDK_VERSION}" "cmake;3.22.1"          
+          ls -la "$ANDROID_SDK_ROOT"          
+          # Make variables available to subsequent steps          
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV          
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV      
 
-      - name: Setup Rust toolchain and cargo-ndk
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
-          profile: minimal
-          override: true
+      - name: Setup Rust toolchain and cargo-ndk        
+        uses: actions-rs/toolchain@v1        
+        with:          
+          toolchain: stable          
+          profile: minimal          
+          override: true      
 
-      - name: Add Rust targets & install cargo-ndk
-        run: |
-          rustup target add aarch64-linux-android x86_64-linux-android armv7-linux-androideabi || true
-          export CARGO_HOME="$HOME/.cargo"
-          export PATH="$CARGO_HOME/bin:$PATH"
-          cargo install cargo-ndk --locked || true
+      - name: Add Rust targets & install cargo-ndk        
+        run: |          
+          rustup target add aarch64-linux-android x86_64-linux-android armv7-linux-androideabi || true          
+          export CARGO_HOME="$HOME/.cargo"          
+          export PATH="$CARGO_HOME/bin:$PATH"          
+          cargo install cargo-ndk --locked || true      
 
-      - name: Make tawc scripts executable
-        run: |
-          chmod +x "$TAWC_DIR"/scripts/*.sh || true
-          chmod +x "$TAWC_DIR"/tawcroot/*.sh || true
+      - name: Make tawc scripts executable        
+        run: |          
+          chmod +x "$TAWC_DIR"/scripts/*.sh || true          
+          chmod +x "$TAWC_DIR"/tawcroot/*.sh || true      
 
-      - name: Prepare jniLibs & assets in upstream repo
-        run: |
-          mkdir -p "$TAWC_DIR/app/src/main/jniLibs"
-          mkdir -p "$TAWC_DIR/app/src/main/assets"
-          for abi in ${ANDROID_ABIS}; do mkdir -p "$TAWC_DIR/app/src/main/jniLibs/$abi"; done
+      - name: Prepare jniLibs & assets in upstream repo        
+        run: |          
+          mkdir -p "$TAWC_DIR/app/src/main/jniLibs"          
+          mkdir -p "$TAWC_DIR/app/src/main/assets"          
+          for abi in ${ANDROID_ABIS}; do mkdir -p "$TAWC_DIR/app/src/main/jniLibs/$abi"; done      
 
-      - name: Copy prebuilt artifacts from upstream deps/prebuilt if present
-        run: |
-          set -e
-          PREBUILT_DIR="$TAWC_DIR/deps/prebuilt"
-          if [ -d "$PREBUILT_DIR" ]; then
-            echo "Found upstream deps/prebuilt, copying .so files and assets"
-            find "$PREBUILT_DIR" -type f -name "*.so" -print0 | while IFS= read -r -d '' f; do
-              if echo "$f" | grep -q -E "arm64-v8a|aarch64|arm64"; then ABI="arm64-v8a"; elif echo "$f" | grep -q -E "x86_64|x86-64"; then ABI="x86_64"; else ABI="arm64-v8a"; fi
-              cp -v "$f" "$TAWC_DIR/app/src/main/jniLibs/$ABI/" || true
-            done
-            # libhybris tar or dir
-            if [ -d "$PREBUILT_DIR/libhybris" ] || [ -f "$PREBUILT_DIR/libhybris.tar" ]; then
-              mkdir -p "$TAWC_DIR/app/src/main/assets/libhybris"
-              cp -v -r "$PREBUILT_DIR/libhybris"* "$TAWC_DIR/app/src/main/assets/libhybris/" || true
-            fi
-            # xwayland share tar (expected name share.tar)
-            if [ -f "$PREBUILT_DIR/xwayland-share.tar" ]; then
-              mkdir -p "$TAWC_DIR/app/src/main/assets/xwayland"
-              cp -v "$PREBUILT_DIR/xwayland-share.tar" "$TAWC_DIR/app/src/main/assets/xwayland/share.tar" || true
-            fi
-          else
-            echo "No upstream prebuilt directory"
-          fi
+      - name: Copy prebuilt artifacts from upstream deps/prebuilt if present        
+        run: |          
+          set -e          
+          PREBUILT_DIR="$TAWC_DIR/deps/prebuilt"          
+          if [ -d "$PREBUILT_DIR" ]; then            
+            echo "Found upstream deps/prebuilt, copying .so files and assets"            
+            find "$PREBUILT_DIR" -type f -name "*.so" -print0 | while IFS= read -r -d '' f; do              
+              if echo "$f" | grep -q -E "arm64-v8a|aarch64|arm64"; then ABI="arm64-v8a"; elif echo "$f" | grep -q -E "x86_64|x86-64"; then ABI="x86_64"; else ABI="arm64-v8a"; fi              
+              cp -v "$f" "$TAWC_DIR/app/src/main/jniLibs/$ABI/" || true            
+            done            
+            if [ -d "$PREBUILT_DIR/libhybris" ] || [ -f "$PREBUILT_DIR/libhybris.tar" ]; then              
+              mkdir -p "$TAWC_DIR/app/src/main/assets/libhybris"              
+              cp -v -r "$PREBUILT_DIR/libhybris"* "$TAWC_DIR/app/src/main/assets/libhybris/" || true            
+            fi            
+            if [ -f "$PREBUILT_DIR/xwayland-share.tar" ]; then              
+              mkdir -p "$TAWC_DIR/app/src/main/assets/xwayland"              
+              cp -v "$PREBUILT_DIR/xwayland-share.tar" "$TAWC_DIR/app/src/main/assets/xwayland/share.tar" || true            
+            fi          
+          else            
+            echo "No upstream prebuilt directory"          
+          fi      
 
-      - name: Run ensure-deps.sh in upstream (fetch deps pinned in deps/list)
-        working-directory: ${{ env.TAWC_DIR }}
-        run: |
-          set -e
-          if [ -x "$TAWC_DIR/scripts/ensure-deps.sh" ]; then
-            bash "$TAWC_DIR/scripts/ensure-deps.sh" || true
-          else
-            echo "No ensure-deps.sh found in upstream tawc; continuing"
-          fi
+      - name: Run ensure-deps.sh in upstream (fetch deps pinned in deps/list)        
+        working-directory: ${{ env.TAWC_DIR }}        
+        run: |          
+          set -e          
+          if [ -x "$TAWC_DIR/scripts/ensure-deps.sh" ]; then            
+            bash "$TAWC_DIR/scripts/ensure-deps.sh" || true          
+          else            
+            echo "No ensure-deps.sh found in upstream tawc; continuing"          
+          fi      
 
-      - name: Build libhybris (if assets not present)
-        run: |
-          set -e
-          ASSET_DIR="$TAWC_DIR/app/src/main/assets/libhybris"
-          export ANDROID_NDK_HOME="\( {ANDROID_HOME}/ndk/ \){ANDROID_NDK_VERSION}"
-          if [ ! -d "\( ASSET_DIR" ] || [ -z " \)(ls -A "$ASSET_DIR" 2>/dev/null || true)" ]; then
-            echo "libhybris asset not present — attempting build via scripts/build-libhybris.sh"
-            if [ -x "$TAWC_DIR/scripts/build-libhybris.sh" ]; then
-              bash "$TAWC_DIR/scripts/build-libhybris.sh" || echo "build-libhybris.sh returned non-zero; check logs"
-            else
-              echo "build-libhybris.sh not found in upstream tawc; skipping libhybris build"
-            fi
-          else
-            echo "libhybris asset present — skipping build"
-          fi
+      - name: Build libhybris (if assets not present)        
+        run: |          
+          set -e          
+          ASSET_DIR="$TAWC_DIR/app/src/main/assets/libhybris"          
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"          
+          if [ ! -d "$ASSET_DIR" ] || [ -z "$(ls -A "$ASSET_DIR" 2>/dev/null || true)" ]; then            
+            echo "libhybris asset not present — attempting build via scripts/build-libhybris.sh"            
+            if [ -x "$TAWC_DIR/scripts/build-libhybris.sh" ]; then              
+              bash "$TAWC_DIR/scripts/build-libhybris.sh" || echo "build-libhybris.sh returned non-zero; check logs"            
+            else              
+              echo "build-libhybris.sh not found in upstream tawc; skipping libhybris build"            
+            fi          
+          else            
+            echo "libhybris asset present — skipping build"          
+          fi      
 
-      - name: Build Xwayland (if needed)
-        run: |
-          set -e
-          XWAY_ASSET="$TAWC_DIR/app/src/main/assets/xwayland/share.tar"
-          export ANDROID_NDK_HOME="\( {ANDROID_HOME}/ndk/ \){ANDROID_NDK_VERSION}"
-          if [ ! -f "$XWAY_ASSET" ]; then
-            echo "Xwayland asset not present — attempting build via scripts/build-xwayland.sh"
-            if [ -x "$TAWC_DIR/scripts/build-xwayland.sh" ]; then
-              bash "$TAWC_DIR/scripts/build-xwayland.sh" --abi=aarch64 || echo "build-xwayland.sh returned non-zero"
-            else
-              echo "build-xwayland.sh not found; skipping"
-            fi
-          else
-            echo "Xwayland asset present — skipping build"
-          fi
+      - name: Build Xwayland (if needed)        
+        run: |          
+          set -e          
+          XWAY_ASSET="$TAWC_DIR/app/src/main/assets/xwayland/share.tar"          
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"          
+          if [ ! -f "$XWAY_ASSET" ]; then            
+            echo "Xwayland asset not present — attempting build via scripts/build-xwayland.sh"            
+            if [ -x "$TAWC_DIR/scripts/build-xwayland.sh" ]; then              
+              bash "$TAWC_DIR/scripts/build-xwayland.sh" --abi=aarch64 || echo "build-xwayland.sh returned non-zero"            
+            else              
+              echo "build-xwayland.sh not found; skipping"            
+            fi          
+          else            
+            echo "Xwayland asset present — skipping build"          
+          fi      
 
-      - name: Build tawcroot native binaries (libtawcroot.so)
-        run: |
-          set -e
-          export ANDROID_NDK_HOME="\( {ANDROID_HOME}/ndk/ \){ANDROID_NDK_VERSION}"
-          for scriptAbi in aarch64 x86_64; do
-            case "$scriptAbi" in
-              aarch64) ABI="arm64-v8a" ;;
-              x86_64) ABI="x86_64" ;;
-            esac
-            if [ ! -f "$TAWC_DIR/app/src/main/jniLibs/$ABI/libtawcroot.so" ]; then
-              echo "Building tawcroot for $scriptAbi"
-              bash "$TAWC_DIR/tawcroot/build.sh" --abi=$scriptAbi || echo "tawcroot build script failed for $scriptAbi"
-            else
-              echo "libtawcroot.so for $ABI already present"
-            fi
-          done
+      - name: Build tawcroot native binaries (libtawcroot.so)        
+        run: |          
+          set -e          
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"          
+          for scriptAbi in aarch64 x86_64; do            
+            case "$scriptAbi" in              
+              aarch64) ABI="arm64-v8a" ;;              
+              x86_64) ABI="x86_64" ;;            
+            esac            
+            if [ ! -f "$TAWC_DIR/app/src/main/jniLibs/$ABI/libtawcroot.so" ]; then              
+              echo "Building tawcroot for $scriptAbi"              
+              bash "$TAWC_DIR/tawcroot/build.sh" --abi=$scriptAbi || echo "tawcroot build script failed for $scriptAbi"            
+            else              
+              echo "libtawcroot.so for $ABI already present"            
+            fi          
+          done      
 
-      - name: Build proot (if needed) via scripts/build-proot.sh
-        run: |
-          set -e
-          export ANDROID_NDK_HOME="\( {ANDROID_HOME}/ndk/ \){ANDROID_NDK_VERSION}"
-          for ABI in arm64-v8a x86_64; do
-            if [ ! -f "$TAWC_DIR/app/src/main/jniLibs/$ABI/libproot.so" ] || [ ! -f "$TAWC_DIR/app/src/main/jniLibs/$ABI/libproot-loader.so" ]; then
-              echo "Attempting to build proot for $ABI"
-              if [ -x "$TAWC_DIR/scripts/build-proot.sh" ]; then
-                if [ "$ABI" = "arm64-v8a" ]; then bash "$TAWC_DIR/scripts/build-proot.sh" --abi=aarch64 || true; else bash "$TAWC_DIR/scripts/build-proot.sh" --abi=x86_64 || true; fi
-              else
-                echo "build-proot.sh not found — skipping"
-              fi
-            else
-              echo "proot libs present for $ABI"
-            fi
-          done
+      - name: Build proot (if needed) via scripts/build-proot.sh        
+        run: |          
+          set -e          
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"          
+          for ABI in arm64-v8a x86_64; do            
+            if [ ! -f "$TAWC_DIR/app/src/main/jniLibs/$ABI/libproot.so" ] || [ ! -f "$TAWC_DIR/app/src/main/jniLibs/$ABI/libproot-loader.so" ]; then              
+              echo "Attempting to build proot for $ABI"              
+              if [ -x "$TAWC_DIR/scripts/build-proot.sh" ]; then                
+                if [ "$ABI" = "arm64-v8a" ]; then bash "$TAWC_DIR/scripts/build-proot.sh" --abi=aarch64 || true; else bash "$TAWC_DIR/scripts/build-proot.sh" --abi=x86_64 || true; fi              
+              else                
+                echo "build-proot.sh not found — skipping"              
+              fi            
+            else              
+              echo "proot libs present for $ABI"            
+            fi          
+          done      
 
-      - name: Build gfxstream backend (if needed)
-        run: |
-          set -e
-          export ANDROID_NDK_HOME="\( {ANDROID_HOME}/ndk/ \){ANDROID_NDK_VERSION}"
-          for ABI in arm64-v8a x86_64; do
-            if [ ! -f "$TAWC_DIR/app/src/main/jniLibs/$ABI/libgfxstream_backend.so" ]; then
-              echo "Attempting build-gfxstream-backend for $ABI"
-              if [ -x "$TAWC_DIR/scripts/build-gfxstream-backend.sh" ]; then
-                if [ "$ABI" = "arm64-v8a" ]; then bash "$TAWC_DIR/scripts/build-gfxstream-backend.sh" --abi=aarch64 || true; else bash "$TAWC_DIR/scripts/build-gfxstream-backend.sh" --abi=x86_64 || true; fi
-              else
-                echo "build-gfxstream-backend.sh not found — skipping"
-              fi
-            else
-              echo "gfxstream backend present for $ABI"
-            fi
-          done
+      - name: Build gfxstream backend (if needed)        
+        run: |          
+          set -e          
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"          
+          for ABI in arm64-v8a x86_64; do            
+            if [ ! -f "$TAWC_DIR/app/src/main/jniLibs/$ABI/libgfxstream_backend.so" ]; then              
+              echo "Attempting build-gfxstream-backend for $ABI"              
+              if [ -x "$TAWC_DIR/scripts/build-gfxstream-backend.sh" ]; then                
+                if [ "$ABI" = "arm64-v8a" ]; then bash "$TAWC_DIR/scripts/build-gfxstream-backend.sh" --abi=aarch64 || true; else bash "$TAWC_DIR/scripts/build-gfxstream-backend.sh" --abi=x86_64 || true; fi              
+              else                
+                echo "build-gfxstream-backend.sh not found — skipping"              
+              fi            
+            else              
+              echo "gfxstream backend present for $ABI"            
+            fi          
+          done      
 
-      - name: Build Rust compositor (libcompositor.so) via cargo-ndk if missing
-        run: |
-          set -e
-          export ANDROID_NDK_HOME="\( {ANDROID_HOME}/ndk/ \){ANDROID_NDK_VERSION}"
-          cd "$TAWC_DIR/compositor"
-          for ABI in arm64-v8a x86_64; do
-            case "$ABI" in
-              arm64-v8a) TARGET="arm64-v8a" ; TRIPLE="aarch64-linux-android" ;;
-              x86_64)    TARGET="x86_64"    ; TRIPLE="x86_64-linux-android" ;;
-            esac
-            OUT="$TAWC_DIR/compositor/target/$TRIPLE/release/libcompositor.so"
-            if [ -f "$OUT" ]; then
-              echo "libcompositor already built for $TRIPLE"
-              mkdir -p "$TAWC_DIR/app/src/main/jniLibs/$ABI"
-              cp -v "$OUT" "$TAWC_DIR/app/src/main/jniLibs/$ABI/libcompositor.so" || true
-            else
-              echo "Building compositor for $TARGET via cargo-ndk..."
-              cargo ndk -t $TARGET --platform ${ANDROID_API_LEVEL} --release build || echo "cargo-ndk build (compositor) failed for $TARGET"
-              if [ -f "$OUT" ]; then mkdir -p "$TAWC_DIR/app/src/main/jniLibs/$ABI"; cp -v "$OUT" "$TAWC_DIR/app/src/main/jniLibs/$ABI/libcompositor.so" || true; fi
-            fi
-          done
-          cd - >/dev/null || true
+      - name: Build Rust compositor (libcompositor.so) via cargo-ndk if missing        
+        run: |          
+          set -e          
+          export ANDROID_NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"          
+          cd "$TAWC_DIR/compositor"          
+          for ABI in arm64-v8a x86_64; do            
+            case "$ABI" in              
+              arm64-v8a) TARGET="arm64-v8a" ; TRIPLE="aarch64-linux-android" ;;              
+              x86_64)    TARGET="x86_64"    ; TRIPLE="x86_64-linux-android" ;;            
+            esac            
+            OUT="$TAWC_DIR/compositor/target/$TRIPLE/release/libcompositor.so"            
+            if [ -f "$OUT" ]; then              
+              echo "libcompositor already built for $TRIPLE"              
+              mkdir -p "$TAWC_DIR/app/src/main/jniLibs/$ABI"              
+              cp -v "$OUT" "$TAWC_DIR/app/src/main/jniLibs/$ABI/libcompositor.so" || true            
+            else              
+              echo "Building compositor for $TARGET via cargo-ndk..."              
+              cargo ndk -t $TARGET --platform ${ANDROID_API_LEVEL} --release build || echo "cargo-ndk build (compositor) failed for $TARGET"              
+              if [ -f "$OUT" ]; then mkdir -p "$TAWC_DIR/app/src/main/jniLibs/$ABI"; cp -v "$OUT" "$TAWC_DIR/app/src/main/jniLibs/$ABI/libcompositor.so" || true; fi            
+            fi          
+          done          
+          cd - >/dev/null || true      
 
-      - name: Ensure Gradle wrapper is executable in upstream tawc
-        run: |
-          chmod +x "$TAWC_DIR/gradlew" || true
+      - name: Ensure Gradle wrapper is executable in upstream tawc        
+        run: |          
+          chmod +x "$TAWC_DIR/gradlew" || true      
 
-      - name: Run Gradle assembleDebug in upstream tawc (build Android app)
-        working-directory: $TAWC_DIR
-        env:
-          ANDROID_NDK_HOME: \( {{ env.ANDROID_HOME }}/ndk/ \){{ env.ANDROID_NDK_VERSION }}
-          PATH: ${{ env.PATH }}:$HOME/.cargo/bin
-        run: |
-          ./gradlew :app:assembleDebug --no-daemon --stacktrace
+      - name: Run Gradle assembleDebug in upstream tawc (build Android app)        
+        working-directory: ${{ env.TAWC_DIR }}        
+        env:          
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/${{ env.ANDROID_NDK_VERSION }}          
+        run: |          
+          export PATH="$PATH:$HOME/.cargo/bin"
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace      
 
-      - name: List produced artifacts
-        run: |
-          echo "=== APKs ==="
-          ls -la "$TAWC_DIR/app/build/outputs/apk" || true
-          echo "=== jniLibs staged ==="
-          find "$TAWC_DIR/app/src/main/jniLibs" -maxdepth 3 -type f -print || true
-          echo "=== assets ==="
-          find "$TAWC_DIR/app/src/main/assets" -maxdepth 4 -type f -print || true
+      - name: List produced artifacts        
+        run: |          
+          echo "=== APKs ==="          
+          ls -la "$TAWC_DIR/app/build/outputs/apk" || true          
+          echo "=== jniLibs staged ==="          
+          find "$TAWC_DIR/app/src/main/jniLibs" -maxdepth 3 -type f -print || true          
+          echo "=== assets ==="          
+          find "$TAWC_DIR/app/src/main/assets" -maxdepth 4 -type f -print || true      
 
-      - name: Upload APK artifact (debug)
-        uses: actions/upload-artifact@v4
-        with:
-          name: tawc-apk-debug
-          path: |
-            ${{ env.TAWC_DIR }}/app/build/outputs/apk/debug/*.apk
+      - name: Upload APK artifact (debug)        
+        uses: actions/upload-artifact@v4        
+        with:          
+          name: tawc-apk-debug          
+          path: |            
+            ${{ env.TAWC_DIR }}/app/build/outputs/apk/debug/*.apk      
 
-      - name: Upload jniLibs & assets
-        uses: actions/upload-artifact@v4
-        with:
-          name: tawc-native-artifacts
-          path: |
-            ${{ env.TAWC_DIR }}/app/src/main/jniLibs/**
-            ${{ env.TAWC_DIR }}/app/src/main/assets/**
-
-      - name: Upload build logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: tawc-build-logs
-          path: |
-            ${{ env.TAWC_DIR }}/compositor/target/**
-            ${{ env.TAWC_DIR }}/app/build/**
-            ${{ env.TAWC_DIR }}/build/**
+      - name: Upload jniLibs & assets        
+        uses: actions/upload-artifact@v4        
+        with:          
+          name: tawc-native-artifacts          
+          path: |            
+            ${{ env.TAWC_DIR }}/app/src/main/jniLibs/** ${{ env.TAWC_DIR }}/app/src/main/assets/** - name: Upload build logs on failure        
+        if: failure()        
+        uses: actions/upload-artifact@v4        
+        with:          
+          name: tawc-build-logs          
+          path: |            
+            ${{ env.TAWC_DIR }}/compositor/target/** ${{ env.TAWC_DIR }}/app/build/** ${{ env.TAWC_DIR }}/build/**
