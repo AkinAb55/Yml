@@ -33,7 +33,7 @@ jobs:
     - name: Install Android NDK
       run: |
         sdkmanager --install "ndk;27.2.12479018"
-        # Экспортируем переменную в глобальный GITHUB_ENV для всех шагов
+        # Экспортируем переменную в глобальный GITHUB_ENV для всех шагов раннера
         echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
 
     - name: Install Host Dependencies & ARM64 Cross-Toolchain
@@ -60,6 +60,7 @@ jobs:
 
     - name: Un-hide build logs (Remove tail from script)
       run: |
+        # Убираем обрезку логов, чтобы видеть реальные ошибки компилятора Си, если они произойдут.
         sed -i 's/2>\&1 | tail -5//g' scripts/build-libhybris.sh || true
         sed -i 's/2>\&1 | tail -20//g' scripts/build-libhybris.sh || true
         sed -i 's/2>\&1 | tail -3//g' scripts/build-libhybris.sh || true
@@ -87,15 +88,26 @@ jobs:
         ./scripts/ensure-deps.sh libhybris
         ./scripts/ensure-deps.sh --patches rutabaga_gfx deps/rutabaga-patches/rutabaga_gfx || true
 
+    - name: Link Wayland headers for Libhybris
+      run: |
+        # Копируем заголовочные файлы Wayland из хост-системы Ubuntu во временную папку сборки,
+        # чтобы Android-компилятор Си/C++ смог разрешить зависимость #include <wayland-egl-backend.h>
+        mkdir -p .build_includes/wayland
+        cp /usr/include/wayland* .build_includes/ 2>/dev/null || true
+        cp -r /usr/include/wayland .build_includes/ 2>/dev/null || true
+
     - name: Build Full Debug APK (ARM64)
       env:
-        # ПРАВКА: Заставляем Gradle жестко видеть NDK через local.properties и переменные окружения Linux
-        # Использование $ANDROID_NDK_HOME здесь безопасно, так как мы берем его из ОС, а не из контекста ${{ env }}
         PATH: /usr/bin:/bin:${{ env.PATH }}
         CC_aarch64_linux_android: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang
         AR_aarch64_linux_android: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
+        # Указываем компиляторам Си путь к скопированным заголовочным файлам Wayland
+        C_INCLUDE_PATH: ${{ env.GITHUB_WORKSPACE }}/.build_includes
+        CPLUS_INCLUDE_PATH: ${{ env.GITHUB_WORKSPACE }}/.build_includes
       run: |
+        # Явно создаем local.properties для корректной работы Gradle с установленным NDK
         echo "ndk.dir=${ANDROID_NDK_HOME}" > local.properties
+        
         ./gradlew assembleDebug --stacktrace --console=plain \
           -PtawcAbis=arm64-v8a \
           -PtawcGraphics=libhybris,libhybris-zink,gfxstream,cpu \
@@ -107,8 +119,11 @@ jobs:
         PATH: /usr/bin:/bin:${{ env.PATH }}
         CC_aarch64_linux_android: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang
         AR_aarch64_linux_android: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
+        C_INCLUDE_PATH: ${{ env.GITHUB_WORKSPACE }}/.build_includes
+        CPLUS_INCLUDE_PATH: ${{ env.GITHUB_WORKSPACE }}/.build_includes
       run: |
         echo "ndk.dir=${ANDROID_NDK_HOME}" > local.properties
+        
         ./gradlew assembleRelease --stacktrace --console=plain \
           -PtawcMethods=tawcroot,proot,chroot \
           -PtawcAbis=arm64-v8a \
