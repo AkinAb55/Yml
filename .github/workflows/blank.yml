@@ -6,14 +6,12 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
     - name: Checkout Code (This Repository)
       uses: actions/checkout@v4
 
     - name: Clone Original TAWC Repository
       run: |
-        # Очищаем лишнее и стягиваем оригинальный репозиторий
         rm -rf .git
         git init
         git remote add origin https://github.com/wmww/tawc.git
@@ -35,6 +33,7 @@ jobs:
     - name: Install Android NDK
       run: |
         sdkmanager --install "ndk;27.2.12479018"
+        # Экспортируем переменную в глобальный GITHUB_ENV для всех шагов
         echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
 
     - name: Install Host Dependencies & ARM64 Cross-Toolchain
@@ -55,15 +54,15 @@ jobs:
           automake \
           gcc-aarch64-linux-gnu \
           g++-aarch64-linux-gnu \
-          libvulkan-dev
+          libvulkan-dev \
+          patchelf \
+          file
 
-    - name: Link Host Libtool for NDK Cross-Compilation
+    - name: Un-hide build logs (Remove tail from script)
       run: |
-        # Создаем симлинки, чтобы autotools внутри libhybris находил libtool по префиксу NDK
-        sudo ln -s /usr/bin/libtool /usr/bin/aarch64-linux-android-libtool
-        sudo ln -s /usr/bin/libtoolize /usr/bin/aarch64-linux-android-libtoolize
-        sudo ln -s /usr/bin/libtool /usr/bin/aarch64-linux-gnu-libtool
-        sudo ln -s /usr/bin/libtoolize /usr/bin/aarch64-linux-gnu-libtoolize
+        sed -i 's/2>\&1 | tail -5//g' scripts/build-libhybris.sh || true
+        sed -i 's/2>\&1 | tail -20//g' scripts/build-libhybris.sh || true
+        sed -i 's/2>\&1 | tail -3//g' scripts/build-libhybris.sh || true
 
     - name: Set up Rust Toolchain
       uses: dtolnay/rust-toolchain@stable
@@ -74,7 +73,6 @@ jobs:
     - name: Install cargo-ndk
       run: |
         cargo install cargo-ndk
-        # Прописываем путь к бинарникам cargo в глобальный PATH для следующих шагов
         echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
     - name: Grant Execute Permissions to Scripts
@@ -84,7 +82,6 @@ jobs:
 
     - name: Pre-build & Fetch Dependencies
       run: |
-        # Выкачиваем и подготавливаем все зависимости до запуска основного Gradle
         ./scripts/ensure-deps.sh smithay
         ./scripts/ensure-deps.sh libxkbcommon
         ./scripts/ensure-deps.sh libhybris
@@ -92,19 +89,13 @@ jobs:
 
     - name: Build Full Debug APK (ARM64)
       env:
-        ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
-        PATH: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin:/usr/bin:/bin:${{ env.PATH }}
-        LIBTOOL: /usr/bin/libtool
-        LIBTOOLIZE: /usr/bin/libtoolize
-        # Настройка окружения NDK для Autotools (сборка libhybris)
-        CC: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang
-        CXX: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++
-        AR: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
-        STRIP: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip
-        # Настройка окружения для Cargo (Rust)
+        # ПРАВКА: Заставляем Gradle жестко видеть NDK через local.properties и переменные окружения Linux
+        # Использование $ANDROID_NDK_HOME здесь безопасно, так как мы берем его из ОС, а не из контекста ${{ env }}
+        PATH: /usr/bin:/bin:${{ env.PATH }}
         CC_aarch64_linux_android: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang
         AR_aarch64_linux_android: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
       run: |
+        echo "ndk.dir=${ANDROID_NDK_HOME}" > local.properties
         ./gradlew assembleDebug --stacktrace --console=plain \
           -PtawcAbis=arm64-v8a \
           -PtawcGraphics=libhybris,libhybris-zink,gfxstream,cpu \
@@ -113,19 +104,11 @@ jobs:
 
     - name: Build Full Release APK (ARM64)
       env:
-        ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
-        PATH: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin:/usr/bin:/bin:${{ env.PATH }}
-        LIBTOOL: /usr/bin/libtool
-        LIBTOOLIZE: /usr/bin/libtoolize
-        # Настройка окружения NDK для Autotools (сборка libhybris)
-        CC: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang
-        CXX: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++
-        AR: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
-        STRIP: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip
-        # Настройка окружения для Cargo (Rust)
+        PATH: /usr/bin:/bin:${{ env.PATH }}
         CC_aarch64_linux_android: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang
         AR_aarch64_linux_android: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
       run: |
+        echo "ndk.dir=${ANDROID_NDK_HOME}" > local.properties
         ./gradlew assembleRelease --stacktrace --console=plain \
           -PtawcMethods=tawcroot,proot,chroot \
           -PtawcAbis=arm64-v8a \
