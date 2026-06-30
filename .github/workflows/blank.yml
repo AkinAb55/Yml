@@ -95,6 +95,58 @@ jobs:
           find scripts/ -type f -name "*.sh" -exec chmod +x {} +
           ./scripts/ensure-deps.sh --verify-all
 
+      # 7. Инъекция путей Mesa/EGL и отключение маскировки логов tail -5
+      - name: Hard-patch build-libhybris.sh for Ubuntu 24.04 include paths
+        run: |
+          # Полностью убираем обрезку вывода компиляции через tail
+          sed -i 's/| tail -5//g' scripts/build-libhybris.sh
+          sed -i 's/| tail -3//g' scripts/build-libhybris.sh
+          sed -i 's/| tail -20//g' scripts/build-libhybris.sh
+          
+          # Нативно расширяем внутренний CPPFLAGS скрипта через -idirafter,
+          # чтобы добавить пути /usr/include/libdrm без конфликта LP64 типов данных
+          sed -i 's|export CPPFLAGS="-idirafter \$HOST_WAYLAND_INCLUDE"|export CPPFLAGS="-idirafter $HOST_WAYLAND_INCLUDE -idirafter /usr/include/libdrm"|g' scripts/build-libhybris.sh
+
+      # 8. Настройка кэширования Gradle
+      - name: Setup Gradle Cache
+        uses: gradle/actions/setup-gradle@v3
+
+      # 9. Финальная сборка полной монолитной версии приложения
+      - name: Compile Full Debug APK via Gradle
+        run: |
+          ./gradlew assembleDebug \
+            -PtawcAbis=arm64-v8a,x86_64 \
+            -PtawcMethods=tawcroot,proot,chroot \
+            -PtawcGraphics=libhybris,libhybris-zink,gfxstream,cpu \
+            -PtawcXwayland=true \
+            -PtawcAllFilesAccess=true
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
+          RUSTFLAGS: "-A warnings"
+          PKG_CONFIG_ALLOW_CROSS: "1"
+
+      # 10. Экспорт готового скомпилированного APK файла в артефакты GitHub
+      - name: Upload Complete APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tawc-ultimate-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+      # 5. Настройка Rust для сборки compositor
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: 'aarch64-linux-android, x86_64-linux-android'
+
+      - name: Install cargo-ndk tool
+        run: cargo install cargo-ndk
+
+      # 6. Подготовка внутренних скриптов репозитория и проверка зависимостей
+      - name: Prepare Build Scripts & Verify Deps
+        run: |
+          find scripts/ -type f -name "*.sh" -exec chmod +x {} +
+          ./scripts/ensure-deps.sh --verify-all
+
       # 7. Хак-логирование: убираем `tail -5`, чтобы видеть весь процесс компиляции
       - name: Patch script for verbose compilation log
         run: |
