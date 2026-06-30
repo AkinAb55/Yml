@@ -1,4 +1,4 @@
-name: Debug Xwayland Libffi (Fixed Autotools)
+name: Debug Xwayland Build (Stable CI Fix)
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout TAWC
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           repository: wmww/tawc
@@ -33,98 +33,82 @@ jobs:
           sdkmanager --install "ndk;27.2.12479018"
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
 
-      - name: Host deps (IMPORTANT FIX HERE)
+      # =========================
+      # TOOLCHAIN FIX LAYER
+      # =========================
+      - name: Install host dependencies (FIXED TOOLCHAIN)
         run: |
           sudo apt-get update
+
           sudo apt-get install -y \
             build-essential \
+            git curl \
+            pkg-config \
+            m4 \
             autoconf \
             automake \
             libtool \
             libtool-bin \
-            autoconf-archive \
-            m4 \
-            pkg-config \
-            texinfo \
             gettext \
-            git \
-            curl \
-            python3
+            texinfo \
+            bison flex \
+            python3-pip python3-setuptools python3-wheel \
+            ninja-build
 
-          # ВАЖНО: autotools macro paths
-          echo "ACLOCAL_PATH=/usr/share/aclocal:/usr/share/aclocal-1.16" >> $GITHUB_ENV
-          echo "ACLOCAL_FLAGS=-I /usr/share/aclocal -I /usr/share/aclocal-1.16" >> $GITHUB_ENV
+          # IMPORTANT: DO NOT use apt meson (too old for Mesa 25.x)
 
-      - name: Ensure deps
+          python3 -m pip install --upgrade --break-system-packages \
+            meson>=1.4.0 \
+            ninja
+
+          # ensure user pip bin is used
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+          # verify toolchain
+          which meson
+          meson --version
+          autoconf --version
+          libtoolize --version
+
+      # =========================
+      # DEPS
+      # =========================
+      - name: Prepare deps
         run: |
           chmod +x scripts/*.sh || true
           ./scripts/ensure-deps.sh --verify-all
 
-      - name: Fix environment ONLY (no repo edits)
+      # =========================
+      # CRITICAL AUTOTOOLS FIX
+      # =========================
+      - name: Fix autotools environment (NO repo edits)
         run: |
-          # гарантируем, что libtool macros видимы aclocal
           export ACLOCAL_PATH=/usr/share/aclocal:/usr/share/aclocal-1.16
           export ACLOCAL_FLAGS="-I /usr/share/aclocal -I /usr/share/aclocal-1.16"
 
-      - name: Prewarm libffi clean
+          # force correct libtool macros visibility
+          export LIBTOOLIZE=libtoolize
+
+      # =========================
+      # CLEAN STATE
+      # =========================
+      - name: Clean libffi & build cache
         run: |
           rm -rf deps/xwayland-src/libffi
-          rm -rf build/xwayland-aarch64/build-libffi || true
+          rm -rf build/xwayland-aarch64 || true
 
-      - name: Debug libffi build
+      # =========================
+      # BUILD
+      # =========================
+      - name: Build libffi only (debug stage)
         run: |
           set -e
 
           export ACLOCAL_PATH=/usr/share/aclocal:/usr/share/aclocal-1.16
           export ACLOCAL_FLAGS="-I /usr/share/aclocal -I /usr/share/aclocal-1.16"
 
-          ./scripts/build-xwayland.sh --only=libffi
-      - name: Install Host Toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            meson ninja-build \
-            autoconf automake libtool libtool-bin \
-            pkg-config \
-            python3 \
-            m4 perl curl git \
-            xsltproc
-
-      # 🔍 CRITICAL: toolchain fingerprint
-      - name: Autotools version dump
-        run: |
-          set -x
-          autoconf --version
-          automake --version
-          libtoolize --version
-          aclocal --version
-          echo "==== aclocal dirs ===="
-          aclocal --print-ac-dir
-
-          echo "==== search LT_SYS_SYMBOL_USCORE ===="
-          grep -R "LT_SYS_SYMBOL_USCORE" /usr/share/aclocal || true
-
-      - name: Prepare scripts
-        run: |
-          find scripts/ -type f -name "*.sh" -exec chmod +x {} +
-          ./scripts/ensure-deps.sh --verify-all
-
-      # ❗ MINIMAL patch ONLY for visibility
-      - name: Enable full autotools logs
-        run: |
-          sed -i 's/| tail -5//g' scripts/build-xwayland.sh
-          sed -i 's/| tail -3//g' scripts/build-xwayland.sh
-          sed -i 's/2>\/dev\/null//g' scripts/build-xwayland.sh
-
-      # 🔥 CRASH ISOLATION
-      - name: Build ONLY libffi (no modifications)
-        run: |
-          set -e
-          rm -rf deps/xwayland-src/libffi
-          rm -rf build/xwayland-aarch64/build-libffi || true
+          export PATH="$HOME/.local/bin:$PATH"
 
           ./scripts/build-xwayland.sh --only=libffi
         env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
           PKG_CONFIG_ALLOW_CROSS: "1"
