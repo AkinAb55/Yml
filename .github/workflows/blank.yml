@@ -32,7 +32,7 @@ jobs:
           sdkmanager --install "ndk;27.2.12479018"
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
 
-      # 4. Установка ВСЕХ зависимостей хоста (ДОБАВЛЕНЫ libtool, autoconf, automake)
+      # 4. Установка ВСЕХ зависимостей хоста (Добавлены patchelf, libtool-bin, autoconf, automake)
       - name: Install Build Host Toolchain
         run: |
           sudo apt-get update
@@ -44,6 +44,8 @@ jobs:
             autoconf \
             automake \
             libtool \
+            libtool-bin \
+            patchelf \
             scdoc \
             bison \
             flex \
@@ -76,6 +78,10 @@ jobs:
       # 6. Подготовка скриптов
       - name: Prepare Build Scripts & Verify Deps
         run: |
+          # Проверяем критические утилиты перед запуском сборки
+          which libtool || echo "Libtool check"
+          which patchelf || echo "Patchelf check"
+          
           find scripts/ tawcroot/ -type f -name "*.sh" -exec chmod +x {} +
           ./scripts/ensure-deps.sh --verify-all
 
