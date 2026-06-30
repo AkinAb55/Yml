@@ -21,11 +21,11 @@ jobs:
           ref: 'main'
           submodules: 'recursive'
 
-      # 2. Установка Java-окружения
-      - name: Set up JDK 17
+      # 2. Установка Java-окружения (Репозиторий требует JDK 21 для Gradle Daemon)
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
+          java-version: '21'
           distribution: 'temurin'
 
       # 3. Установка Android SDK и точной версии NDK (27.2.12479018)
@@ -37,7 +37,7 @@ jobs:
           sdkmanager --install "ndk;27.2.12479018"
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
 
-      # 4. Установка зависимостей хоста (Чистый x86_64)
+      # 4. Установка зависимостей хоста (Включая glibc кросс-компиляторы и libwayland-egl-backend-dev)
       - name: Install Build Host Toolchain
         run: |
           sudo apt-get update
@@ -67,6 +67,9 @@ jobs:
             wayland-protocols \
             gcc-aarch64-linux-gnu \
             g++-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu \
+            libc6-arm64-cross \
+            linux-libc-dev-arm64-cross \
             libssl-dev \
             libwayland-dev \
             libwayland-egl-backend-dev \
@@ -79,17 +82,22 @@ jobs:
             libepoxy-dev \
             libx11-dev \
             libxcb1-dev \
-            libx11-xcb-dev
+            libx11-xcb-dev \
+            libarchive-tools \
+            curl \
+            perl
 
-      # 5. Настройка Rust для сборки compositor
+      # 5. Настройка Rust Toolchain со всеми Android (bionic) и Linux (glibc) таргетами
       - name: Set up Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: 'aarch64-linux-android, x86_64-linux-android'
+          targets: 'aarch64-linux-android, x86_64-linux-android, aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu'
 
-      # 6. Установка cargo-ndk
-      - name: Install cargo-ndk tool
-        run: cargo install cargo-ndk
+      # 6. Установка необходимых утилит Cargo
+      - name: Install Cargo Build Utilities
+        run: |
+          cargo install cargo-ndk
+          cargo install bindgen-cli
 
       # 7. Подготовка внутренних скриптов репозитория и проверка зависимостей
       - name: Prepare Build Scripts & Verify Deps
@@ -97,12 +105,17 @@ jobs:
           find scripts/ -type f -name "*.sh" -exec chmod +x {} +
           ./scripts/ensure-deps.sh --verify-all
 
-      # 8. Отключение скрытия логов компиляции (tail -5) для прозрачности
+      # 8. Отключение маскировки логов компиляции (убираем tail) во всех ключевых скриптах
       - name: Patch scripts for verbose logs
         run: |
           sed -i 's/| tail -5//g' scripts/build-libhybris.sh
           sed -i 's/| tail -3//g' scripts/build-libhybris.sh
           sed -i 's/| tail -20//g' scripts/build-libhybris.sh
+          
+          if [ -f "scripts/build-mesa-gfxstream.sh" ]; then
+            sed -i 's/| tail -5//g' scripts/build-mesa-gfxstream.sh
+            sed -i 's/| tail -3//g' scripts/build-mesa-gfxstream.sh
+          fi
 
       # 9. Настройка кэширования Gradle
       - name: Setup Gradle Cache
@@ -123,106 +136,6 @@ jobs:
           PKG_CONFIG_ALLOW_CROSS: "1"
 
       # 11. Экспорт готового скомпилированного APK файла в артефакты GitHub
-      - name: Upload Complete APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: tawc-ultimate-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-      # 5. Настройка Rust для сборки compositor
-      - name: Set up Rust Toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: 'aarch64-linux-android, x86_64-linux-android'
-
-      - name: Install cargo-ndk tool
-        run: cargo install cargo-ndk
-
-      # 6. Подготовка внутренних скриптов репозитория и проверка зависимостей
-      - name: Prepare Build Scripts & Verify Deps
-        run: |
-          find scripts/ -type f -name "*.sh" -exec chmod +x {} +
-          ./scripts/ensure-deps.sh --verify-all
-
-      # 7. Инъекция путей Mesa/EGL и отключение маскировки логов tail -5
-      - name: Hard-patch build-libhybris.sh for Ubuntu 24.04 include paths
-        run: |
-          # Полностью убираем обрезку вывода компиляции через tail
-          sed -i 's/| tail -5//g' scripts/build-libhybris.sh
-          sed -i 's/| tail -3//g' scripts/build-libhybris.sh
-          sed -i 's/| tail -20//g' scripts/build-libhybris.sh
-          
-          # Нативно расширяем внутренний CPPFLAGS скрипта через -idirafter,
-          # чтобы добавить пути /usr/include/libdrm без конфликта LP64 типов данных
-          sed -i 's|export CPPFLAGS="-idirafter \$HOST_WAYLAND_INCLUDE"|export CPPFLAGS="-idirafter $HOST_WAYLAND_INCLUDE -idirafter /usr/include/libdrm"|g' scripts/build-libhybris.sh
-
-      # 8. Настройка кэширования Gradle
-      - name: Setup Gradle Cache
-        uses: gradle/actions/setup-gradle@v3
-
-      # 9. Финальная сборка полной монолитной версии приложения
-      - name: Compile Full Debug APK via Gradle
-        run: |
-          ./gradlew assembleDebug \
-            -PtawcAbis=arm64-v8a,x86_64 \
-            -PtawcMethods=tawcroot,proot,chroot \
-            -PtawcGraphics=libhybris,libhybris-zink,gfxstream,cpu \
-            -PtawcXwayland=true \
-            -PtawcAllFilesAccess=true
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
-          RUSTFLAGS: "-A warnings"
-          PKG_CONFIG_ALLOW_CROSS: "1"
-
-      # 10. Экспорт готового скомпилированного APK файла в артефакты GitHub
-      - name: Upload Complete APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: tawc-ultimate-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-      # 5. Настройка Rust для сборки compositor
-      - name: Set up Rust Toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: 'aarch64-linux-android, x86_64-linux-android'
-
-      - name: Install cargo-ndk tool
-        run: cargo install cargo-ndk
-
-      # 6. Подготовка внутренних скриптов репозитория и проверка зависимостей
-      - name: Prepare Build Scripts & Verify Deps
-        run: |
-          find scripts/ -type f -name "*.sh" -exec chmod +x {} +
-          ./scripts/ensure-deps.sh --verify-all
-
-      # 7. Хак-логирование: убираем `tail -5`, чтобы видеть весь процесс компиляции
-      - name: Patch script for verbose compilation log
-        run: |
-          sed -i 's/| tail -5//g' scripts/build-libhybris.sh
-          sed -i 's/| tail -3//g' scripts/build-libhybris.sh
-
-      # 8. Настройка кэширования Gradle
-      - name: Setup Gradle Cache
-        uses: gradle/actions/setup-gradle@v3
-
-      # 9. Финальная сборка полной монолитной версии приложения
-      # Принудительно передаем CPPFLAGS, чтобы g++ заглядывал во вложенные папки заголовочных файлов EGL/Mesa
-      - name: Compile Full Debug APK via Gradle
-        run: |
-          ./gradlew assembleDebug \
-            -PtawcAbis=arm64-v8a,x86_64 \
-            -PtawcMethods=tawcroot,proot,chroot \
-            -PtawcGraphics=libhybris,libhybris-zink,gfxstream,cpu \
-            -PtawcXwayland=true \
-            -PtawcAllFilesAccess=true
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
-          RUSTFLAGS: "-A warnings"
-          PKG_CONFIG_ALLOW_CROSS: "1"
-          CPPFLAGS: "-I/usr/include/libdrm -I/usr/include/EGL -I/usr/include/GLES2 -I/usr/include/GLES3"
-
-      # 10. Экспорт готового скомпилированного APK файла в артефакты GitHub
       - name: Upload Complete APK Artifact
         uses: actions/upload-artifact@v4
         with:
