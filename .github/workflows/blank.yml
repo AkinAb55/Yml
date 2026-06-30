@@ -1,7 +1,14 @@
 name: Build TAWC (Full Monolithic Build)
 
+# Настройка автоматического запуска
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch: # Позволяет при необходимости запускать вручную
 
 jobs:
   build-apk:
@@ -31,7 +38,7 @@ jobs:
           sdkmanager --install "ndk;27.2.12479018"
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
 
-      # 4. Установка зависимостей хоста (Чистый x86_64 + Кросс-компиляторы)
+      # 4. Установка зависимостей хоста (Исправлено для Ubuntu 24.04)
       - name: Install Build Host Toolchain
         run: |
           sudo apt-get update
@@ -61,7 +68,6 @@ jobs:
             wayland-protocols \
             gcc-aarch64-linux-gnu \
             g++-aarch64-linux-gnu \
-            pkg-config-aarch64-linux-gnu \
             libssl-dev \
             libwayland-dev \
             libdrm-dev \
