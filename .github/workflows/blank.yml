@@ -37,7 +37,7 @@ jobs:
           sdkmanager --install "ndk;27.2.12479018"
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
 
-      # 4. Установка зависимостей хоста (Включая glibc кросс-компиляторы и libwayland-egl-backend-dev)
+      # 4. Установка зависимостей хоста (Включая glibc кросс-компиляторы, либы и обновление Meson)
       - name: Install Build Host Toolchain
         run: |
           sudo apt-get update
@@ -47,6 +47,7 @@ jobs:
             ninja-build \
             python3-pip \
             python3-mako \
+            python3-setuptools \
             autoconf \
             automake \
             libtool \
@@ -86,6 +87,9 @@ jobs:
             libarchive-tools \
             curl \
             perl
+            
+          # Обновляем Meson и Ninja до актуальных версий (Mesa требует Meson >= 1.4.0)
+          sudo pip3 install --upgrade meson ninja --break-system-packages
 
       # 5. Настройка Rust Toolchain со всеми Android (bionic) и Linux (glibc) таргетами
       - name: Set up Rust Toolchain
