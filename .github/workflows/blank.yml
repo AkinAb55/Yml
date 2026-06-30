@@ -1,85 +1,162 @@
-name: Debug Xwayland Libffi Stable Build
+name: Build TAWC (Full Monolithic Build)
 
 on:
-  workflow_dispatch:
   push:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
-  build:
+  build-apk:
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout TAWC
+      # 1. Клонируем оригинальный репозиторий wmww/tawc без форка
+      - name: Checkout TAWC Repository
         uses: actions/checkout@v4
         with:
-          repository: wmww/tawc
-          ref: main
-          submodules: recursive
+          repository: 'wmww/tawc'
+          ref: 'main'
+          submodules: 'recursive'
 
-      # ------------------------
-      # TOOLCHAIN
-      # ------------------------
-      - name: Install system deps
+      # 2. Установка Java-окружения (JDK 21)
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      # 3. Установка Android SDK и точной версии NDK
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Specific NDK (27.2.12479018)
+        run: |
+          sdkmanager --install "ndk;27.2.12479018"
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
+
+      # 4. Установка всех хост-зависимостей (ВКЛЮЧАЯ ИСПРАВЛЕНИЕ ДЛЯ AUTOTOOLS И MESON)
+      - name: Install Build Host Toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             build-essential \
-            autoconf automake libtool libtool-bin \
-            m4 pkg-config \
-            git curl perl \
-            python3-pip python3-setuptools python3-mako \
+            meson \
             ninja-build \
+            python3-pip \
+            python3-mako \
+            python3-setuptools \
+            autoconf \
+            automake \
+            libtool \
+            libtool-bin \
+            autoconf-archive \
+            patchelf \
+            scdoc \
+            bison \
+            flex \
             gettext \
-            xsltproc \
-            bison flex \
             texinfo \
-            libssl-dev libarchive-tools \
-            libdrm-dev libx11-dev libxcb1-dev libxkbcommon-dev libpixman-1-dev \
-            libwayland-dev libepoxy-dev \
-            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+            gperf \
+            pkg-config \
+            tar \
+            zstd \
+            m4 \
+            xsltproc \
+            glslang-tools \
+            wayland-protocols \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu \
+            libc6-arm64-cross \
+            linux-libc-dev-arm64-cross \
+            libssl-dev \
+            libwayland-dev \
+            libwayland-egl-backend-dev \
+            libegl-dev \
+            libgles-dev \
+            libdrm-dev \
+            libvulkan-dev \
+            libxkbcommon-dev \
+            libpixman-1-dev \
+            libepoxy-dev \
+            libx11-dev \
+            libxcb1-dev \
+            libx11-xcb-dev \
+            libarchive-tools \
+            curl \
+            perl
+            
+          # Обновляем Meson и Ninja до актуальных версий (Mesa требует Meson >= 1.4.0)
+          sudo pip3 install --upgrade meson ninja --break-system-packages
 
-      # IMPORTANT: Meson fix (Mesa 25+ requires >=1.4)
-      - name: Upgrade Meson
-        run: |
-          python3 -m pip install --upgrade meson ninja --break-system-packages
-          meson --version
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install NDK
-        run: |
-          sdkmanager "ndk;27.2.12479018"
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> $GITHUB_ENV
-
-      # ------------------------
-      # CRITICAL FIX FOR AUTOTOOLS
-      # ------------------------
-      - name: Fix autotools environment (libtool/macros)
-        run: |
+          # Фикс путей для макросов Autotools на уровне всего ранера
           echo "ACLOCAL_PATH=/usr/share/aclocal:/usr/share/aclocal-1.16" >> $GITHUB_ENV
           echo "ACLOCAL_FLAGS=-I /usr/share/aclocal -I /usr/share/aclocal-1.16" >> $GITHUB_ENV
-          echo "NOCONFIGURE=1" >> $GITHUB_ENV
 
-      # ------------------------
-      # DEPS
-      # ------------------------
-      - name: Prepare deps
+      # 5. Настройка Rust Toolchain со всеми Android (bionic) и Linux (glibc) таргетами
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: 'aarch64-linux-android, x86_64-linux-android, aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu'
+
+      # 6. Установка необходимых утилит Cargo
+      - name: Install Cargo Build Utilities
         run: |
-          chmod +x scripts/*.sh
+          cargo install cargo-ndk
+          cargo install bindgen-cli
+
+      # 7. Подготовка внутренних скриптов репозитория и проверка зависимостей
+      - name: Prepare Build Scripts & Verify Deps
+        run: |
+          find scripts/ -type f -name "*.sh" -exec chmod +x {} +
           ./scripts/ensure-deps.sh --verify-all
 
-      # ------------------------
-      # IMPORTANT: CLEAN libffi state
-      # ------------------------
-      - name: Clean libffi build state
+      # 8. Отключение маскировки логов компиляции (убираем tail), чтобы видеть прогресс шагов
+      - name: Patch scripts for verbose logs
         run: |
-          rm -rf deps/xwayland-src/libffi
-          rm -rf build/xwayland-aarch64 || true
+          sed -i 's/| tail -5//g' scripts/build-libhybris.sh
+          sed -i 's/| tail -3//g' scripts/build-libhybris.sh
+          sed -i 's/| tail -20//g' scripts/build-libhybris.sh
+          
+          if [ -f "scripts/build-mesa-gfxstream.sh" ]; then
+            sed -i 's/| tail -5//g' scripts/build-mesa-gfxstream.sh
+            sed -i 's/| tail -3//g' scripts/build-mesa-gfxstream.sh
+          fi
 
+          if [ -f "scripts/build-xwayland.sh" ]; then
+            sed -i 's/| tail -5//g' scripts/build-xwayland.sh
+            sed -i 's/| tail -3//g' scripts/build-xwayland.sh
+          fi
+
+      # 9. Настройка кэширования Gradle
+      - name: Setup Gradle Cache
+        uses: gradle/actions/setup-gradle@v3
+
+      # 10. Финальная сборка полной монолитной версии приложения через Gradle
+      - name: Compile Full Debug APK via Gradle
+        run: |
+          ./gradlew assembleDebug \
+            -PtawcAbis=arm64-v8a,x86_64 \
+            -PtawcMethods=tawcroot,proot,chroot \
+            -PtawcGraphics=libhybris,libhybris-zink,gfxstream,cpu \
+            -PtawcXwayland=true \
+            -PtawcAllFilesAccess=true
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
+          RUSTFLAGS: "-A warnings"
+          PKG_CONFIG_ALLOW_CROSS: "1"
+          ACLOCAL_PATH: "/usr/share/aclocal:/usr/share/aclocal-1.16"
+          ACLOCAL_FLAGS: "-I /usr/share/aclocal -I /usr/share/aclocal-1.16"
+
+      # 11. Экспорт готового скомпилированного APK файла в артефакты GitHub
+      - name: Upload Complete APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tawc-ultimate-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
       # ------------------------
       # SINGLE CONTROLLED BUILD
       # ------------------------
