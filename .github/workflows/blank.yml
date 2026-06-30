@@ -1,4 +1,4 @@
-name: Debug Xwayland Build (Stable CI Fix)
+name: Debug Xwayland Libffi Stable Build
 
 on:
   workflow_dispatch:
@@ -8,107 +8,89 @@ on:
     branches: [ main ]
 
 jobs:
-  build-apk:
+  build:
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout
+      - name: Checkout TAWC
         uses: actions/checkout@v4
         with:
           repository: wmww/tawc
           ref: main
           submodules: recursive
 
-      - name: Setup JDK
-        uses: actions/setup-java@v4
-        with:
-          java-version: "21"
-          distribution: temurin
+      # ------------------------
+      # TOOLCHAIN
+      # ------------------------
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            autoconf automake libtool libtool-bin \
+            m4 pkg-config \
+            git curl perl \
+            python3-pip python3-setuptools python3-mako \
+            ninja-build \
+            gettext \
+            xsltproc \
+            bison flex \
+            texinfo \
+            libssl-dev libarchive-tools \
+            libdrm-dev libx11-dev libxcb1-dev libxkbcommon-dev libpixman-1-dev \
+            libwayland-dev libepoxy-dev \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+
+      # IMPORTANT: Meson fix (Mesa 25+ requires >=1.4)
+      - name: Upgrade Meson
+        run: |
+          python3 -m pip install --upgrade meson ninja --break-system-packages
+          meson --version
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
       - name: Install NDK
         run: |
-          sdkmanager --install "ndk;27.2.12479018"
-          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
+          sdkmanager "ndk;27.2.12479018"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> $GITHUB_ENV
 
-      # =========================
-      # TOOLCHAIN FIX LAYER
-      # =========================
-      - name: Install host dependencies (FIXED TOOLCHAIN)
+      # ------------------------
+      # CRITICAL FIX FOR AUTOTOOLS
+      # ------------------------
+      - name: Fix autotools environment (libtool/macros)
         run: |
-          sudo apt-get update
+          echo "ACLOCAL_PATH=/usr/share/aclocal:/usr/share/aclocal-1.16" >> $GITHUB_ENV
+          echo "ACLOCAL_FLAGS=-I /usr/share/aclocal -I /usr/share/aclocal-1.16" >> $GITHUB_ENV
+          echo "NOCONFIGURE=1" >> $GITHUB_ENV
 
-          sudo apt-get install -y \
-            build-essential \
-            git curl \
-            pkg-config \
-            m4 \
-            autoconf \
-            automake \
-            libtool \
-            libtool-bin \
-            gettext \
-            texinfo \
-            bison flex \
-            python3-pip python3-setuptools python3-wheel \
-            ninja-build
-
-          # IMPORTANT: DO NOT use apt meson (too old for Mesa 25.x)
-
-          python3 -m pip install --upgrade --break-system-packages \
-            meson>=1.4.0 \
-            ninja
-
-          # ensure user pip bin is used
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-
-          # verify toolchain
-          which meson
-          meson --version
-          autoconf --version
-          libtoolize --version
-
-      # =========================
+      # ------------------------
       # DEPS
-      # =========================
+      # ------------------------
       - name: Prepare deps
         run: |
-          chmod +x scripts/*.sh || true
+          chmod +x scripts/*.sh
           ./scripts/ensure-deps.sh --verify-all
 
-      # =========================
-      # CRITICAL AUTOTOOLS FIX
-      # =========================
-      - name: Fix autotools environment (NO repo edits)
-        run: |
-          export ACLOCAL_PATH=/usr/share/aclocal:/usr/share/aclocal-1.16
-          export ACLOCAL_FLAGS="-I /usr/share/aclocal -I /usr/share/aclocal-1.16"
-
-          # force correct libtool macros visibility
-          export LIBTOOLIZE=libtoolize
-
-      # =========================
-      # CLEAN STATE
-      # =========================
-      - name: Clean libffi & build cache
+      # ------------------------
+      # IMPORTANT: CLEAN libffi state
+      # ------------------------
+      - name: Clean libffi build state
         run: |
           rm -rf deps/xwayland-src/libffi
           rm -rf build/xwayland-aarch64 || true
 
-      # =========================
-      # BUILD
-      # =========================
-      - name: Build libffi only (debug stage)
+      # ------------------------
+      # SINGLE CONTROLLED BUILD
+      # ------------------------
+      - name: Build libffi only (controlled)
         run: |
           set -e
 
-          export ACLOCAL_PATH=/usr/share/aclocal:/usr/share/aclocal-1.16
-          export ACLOCAL_FLAGS="-I /usr/share/aclocal -I /usr/share/aclocal-1.16"
-
           export PATH="$HOME/.local/bin:$PATH"
+          export PKG_CONFIG_ALLOW_CROSS=1
+
+          # IMPORTANT: do NOT patch build-xwayland.sh
+          # we rely on upstream flow, only stabilize environment
 
           ./scripts/build-xwayland.sh --only=libffi
-        env:
-          PKG_CONFIG_ALLOW_CROSS: "1"
