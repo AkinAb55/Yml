@@ -1,19 +1,19 @@
-name: Debug Xwayland Libffi (Fast Verification)
+name: Debug Xwayland Libffi Forensics
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
   pull_request:
     branches:
       - main
-  workflow_dispatch:
 
 jobs:
   build-apk:
     runs-on: ubuntu-24.04
+
     steps:
-      # 1. Клонируем оригинальный репозиторий wmww/tawc без форка
       - name: Checkout TAWC Repository
         uses: actions/checkout@v4
         with:
@@ -21,117 +21,65 @@ jobs:
           ref: 'main'
           submodules: 'recursive'
 
-      # 2. Установка Java-окружения
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
 
-      # 3. Установка Android SDK и точной версии NDK
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Specific NDK (27.2.12479018)
+      - name: Install Specific NDK
         run: |
           sdkmanager --install "ndk;27.2.12479018"
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
 
-      # 4. Установка зависимостей хоста и обновление Meson
-      - name: Install Build Host Toolchain
+      - name: Install Host Toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             build-essential \
-            meson \
-            ninja-build \
-            python3-pip \
-            python3-mako \
-            python3-setuptools \
-            autoconf \
-            automake \
-            libtool \
-            libtool-bin \
-            patchelf \
-            scdoc \
-            bison \
-            flex \
-            gettext \
-            texinfo \
-            gperf \
+            meson ninja-build \
+            autoconf automake libtool libtool-bin \
             pkg-config \
-            tar \
-            zstd \
-            m4 \
-            xsltproc \
-            glslang-tools \
-            wayland-protocols \
-            gcc-aarch64-linux-gnu \
-            g++-aarch64-linux-gnu \
-            binutils-aarch64-linux-gnu \
-            libc6-arm64-cross \
-            linux-libc-dev-arm64-cross \
-            libssl-dev \
-            libwayland-dev \
-            libwayland-egl-backend-dev \
-            libegl-dev \
-            libgles-dev \
-            libdrm-dev \
-            libvulkan-dev \
-            libxkbcommon-dev \
-            libpixman-1-dev \
-            libepoxy-dev \
-            libx11-dev \
-            libxcb1-dev \
-            libx11-xcb-dev \
-            libarchive-tools \
-            curl \
-            perl
-            
-          sudo pip3 install --upgrade meson ninja --break-system-packages
+            python3 \
+            m4 perl curl git \
+            xsltproc
 
-      # 5. Настройка Rust Toolchain
-      - name: Set up Rust Toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: 'aarch64-linux-android, x86_64-linux-android, aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu'
-
-      # 6. Установка утилит Cargo
-      - name: Install Cargo Build Utilities
+      # 🔍 CRITICAL: toolchain fingerprint
+      - name: Autotools version dump
         run: |
-          cargo install cargo-ndk
-          cargo install bindgen-cli
+          set -x
+          autoconf --version
+          automake --version
+          libtoolize --version
+          aclocal --version
+          echo "==== aclocal dirs ===="
+          aclocal --print-ac-dir
 
-      # 7. Подготовка внутренних скриптов и скачивание зависимостей
-      - name: Prepare Build Scripts & Verify Deps
+          echo "==== search LT_SYS_SYMBOL_USCORE ===="
+          grep -R "LT_SYS_SYMBOL_USCORE" /usr/share/aclocal || true
+
+      - name: Prepare scripts
         run: |
           find scripts/ -type f -name "*.sh" -exec chmod +x {} +
           ./scripts/ensure-deps.sh --verify-all
 
-      # 8. Точечные патчи скриптов, отключение tail и принудительное копирование m4
-      - name: Patch scripts and isolate macro paths
+      # ❗ MINIMAL patch ONLY for visibility
+      - name: Enable full autotools logs
         run: |
-          # Убираем скрытие логов через tail
           sed -i 's/| tail -5//g' scripts/build-xwayland.sh
           sed -i 's/| tail -3//g' scripts/build-xwayland.sh
-          
-          # Заставляем xwayland скрипт искать макросы в системной папке
-          sed -i 's|export ACLOCAL_PATH="|export ACLOCAL_PATH="/usr/share/aclocal:|g' scripts/build-xwayland.sh
-          sed -i 's/autoreconf -fi/autoreconf -fiv -I m4 -I . /g' scripts/build-xwayland.sh
+          sed -i 's/2>\/dev\/null//g' scripts/build-xwayland.sh
 
-          # Принудительно выкачиваем репозиторий libffi до запуска сборки, чтобы создать там папку m4
-          ./scripts/build-xwayland.sh --only=libffi || true
-
-          # Копируем критический файл макросов libtool напрямую в libffi
-          mkdir -p deps/xwayland-src/libffi/m4
-          if [ -f "/usr/share/aclocal/libtool.m4" ]; then
-            cp /usr/share/aclocal/libtool.m4 deps/xwayland-src/libffi/m4/
-            echo "Successfully injected libtool.m4 into libffi/m4/"
-          fi
-
-      # 9. ТЕСТОВЫЙ ЗАПУСК: Собираем ТОЛЬКО libffi напрямую
-      - name: Debug single libffi build stage
+      # 🔥 CRASH ISOLATION
+      - name: Build ONLY libffi (no modifications)
         run: |
+          set -e
+          rm -rf deps/xwayland-src/libffi
+          rm -rf build/xwayland-aarch64/build-libffi || true
+
           ./scripts/build-xwayland.sh --only=libffi
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
