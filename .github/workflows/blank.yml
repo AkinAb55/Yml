@@ -31,14 +31,10 @@ jobs:
           sdkmanager --install "ndk;27.2.12479018"
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
 
-      # 4. Настройка Multiarch и установка зависимостей хоста
-      # Включаем архитектуру arm64 для получения корректных заголовочных файлов (Wayland, DRM, X11)
-      - name: Install Build Host Toolchain (with Multiarch arm64)
+      # 4. Установка зависимостей хоста (Чистый x86_64 + Кросс-компиляторы)
+      - name: Install Build Host Toolchain
         run: |
-          sudo dpkg --add-architecture arm64
           sudo apt-get update
-          
-          # Базовые утилиты сборки хоста
           sudo apt-get install -y \
             build-essential \
             meson \
@@ -65,19 +61,17 @@ jobs:
             wayland-protocols \
             gcc-aarch64-linux-gnu \
             g++-aarch64-linux-gnu \
-            libssl-dev
-            
-          # Заголовочные файлы целевой архитектуры arm64 для libhybris и Mesa
-          sudo apt-get install -y \
-            libwayland-dev:arm64 \
-            libdrm-dev:arm64 \
-            libvulkan-dev:arm64 \
-            libxkbcommon-dev:arm64 \
-            libpixman-1-dev:arm64 \
-            libepoxy-dev:arm64 \
-            libx11-dev:arm64 \
-            libxcb1-dev:arm64 \
-            libx11-xcb-dev:arm64
+            pkg-config-aarch64-linux-gnu \
+            libssl-dev \
+            libwayland-dev \
+            libdrm-dev \
+            libvulkan-dev \
+            libxkbcommon-dev \
+            libpixman-1-dev \
+            libepoxy-dev \
+            libx11-dev \
+            libxcb1-dev \
+            libx11-xcb-dev
 
       # 5. Настройка Rust для сборки compositor
       - name: Set up Rust Toolchain
@@ -99,7 +93,6 @@ jobs:
         uses: gradle/actions/setup-gradle@v3
 
       # 8. Финальная сборка полной монолитной версии приложения
-      # Экспортируем переменные для правильного разрешения путей pkg-config кросс-компилятором
       - name: Compile Full Debug APK via Gradle
         run: |
           ./gradlew assembleDebug \
@@ -112,7 +105,6 @@ jobs:
           ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
           RUSTFLAGS: "-A warnings"
           PKG_CONFIG_ALLOW_CROSS: "1"
-          PKG_CONFIG_PATH_aarch64_unknown_linux_gnu: "/usr/lib/aarch64-linux-gnu/pkgconfig"
 
       # 9. Экспорт готового скомпилированного APK файла в артефакты
       - name: Upload Complete APK Artifact
