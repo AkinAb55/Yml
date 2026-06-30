@@ -6,7 +6,7 @@ on:
 jobs:
   build-apk:
     runs-on: ubuntu-24.04
-    
+
     steps:
       # 1. Клонируем оригинальный репозиторий
       - name: Checkout TAWC Repository
@@ -32,14 +32,19 @@ jobs:
           sdkmanager --install "ndk;27.2.12479018"
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
 
-      # 4. Установка ВСЕХ зависимостей хоста (ВКЛЮЧАЯ КРОСС-КОМПИЛЯТОР ДЛЯ LIBHYBRIS)
+      # 4. Установка ВСЕХ зависимостей хоста (ДОБАВЛЕНЫ libtool, autoconf, automake)
       - name: Install Build Host Toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y \
+            build-essential \
             meson \
             ninja-build \
             python3-pip \
+            autoconf \
+            automake \
+            libtool \
+            scdoc \
             bison \
             flex \
             gettext \
@@ -64,7 +69,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: 'aarch64-linux-android, x86_64-linux-android'
-
+          
       - name: Install cargo-ndk tool
         run: cargo install cargo-ndk
 
@@ -74,12 +79,11 @@ jobs:
           find scripts/ tawcroot/ -type f -name "*.sh" -exec chmod +x {} +
           ./scripts/ensure-deps.sh --verify-all
 
-      # 7. Настройка кэширования
+      # 7. Настройка кэширования Gradle
       - name: Setup Gradle Cache
         uses: gradle/actions/setup-gradle@v3
 
       # 8. Финальная сборка полной версии приложения
-      # Добавлен флаг RUSTFLAGS, чтобы скрыть предупреждения rutabaga_gfx
       - name: Compile Full Debug APK via Gradle
         run: |
           ./gradlew assembleDebug \
@@ -90,7 +94,7 @@ jobs:
             -PtawcAllFilesAccess=true
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
-          RUSTFLAGS: "-A warnings" 
+          RUSTFLAGS: "-A warnings"
 
       # 9. Экспорт готового файла
       - name: Upload Complete APK Artifact
