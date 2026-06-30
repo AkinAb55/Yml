@@ -1,40 +1,84 @@
-name: Debug Xwayland Libffi Forensics
+name: Debug Xwayland Libffi (Fixed Autotools)
 
 on:
   workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [ main ]
   pull_request:
-    branches:
-      - main
+    branches: [ main ]
 
 jobs:
   build-apk:
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout TAWC Repository
+      - name: Checkout TAWC
         uses: actions/checkout@v4
         with:
-          repository: 'wmww/tawc'
-          ref: 'main'
-          submodules: 'recursive'
+          repository: wmww/tawc
+          ref: main
+          submodules: recursive
 
-      - name: Set up JDK 21
+      - name: Setup JDK
         uses: actions/setup-java@v4
         with:
-          java-version: '21'
-          distribution: 'temurin'
+          java-version: "21"
+          distribution: temurin
 
-      - name: Set up Android SDK
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Specific NDK
+      - name: Install NDK
         run: |
           sdkmanager --install "ndk;27.2.12479018"
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
 
+      - name: Host deps (IMPORTANT FIX HERE)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            autoconf \
+            automake \
+            libtool \
+            libtool-bin \
+            autoconf-archive \
+            m4 \
+            pkg-config \
+            texinfo \
+            gettext \
+            git \
+            curl \
+            python3
+
+          # ВАЖНО: autotools macro paths
+          echo "ACLOCAL_PATH=/usr/share/aclocal:/usr/share/aclocal-1.16" >> $GITHUB_ENV
+          echo "ACLOCAL_FLAGS=-I /usr/share/aclocal -I /usr/share/aclocal-1.16" >> $GITHUB_ENV
+
+      - name: Ensure deps
+        run: |
+          chmod +x scripts/*.sh || true
+          ./scripts/ensure-deps.sh --verify-all
+
+      - name: Fix environment ONLY (no repo edits)
+        run: |
+          # гарантируем, что libtool macros видимы aclocal
+          export ACLOCAL_PATH=/usr/share/aclocal:/usr/share/aclocal-1.16
+          export ACLOCAL_FLAGS="-I /usr/share/aclocal -I /usr/share/aclocal-1.16"
+
+      - name: Prewarm libffi clean
+        run: |
+          rm -rf deps/xwayland-src/libffi
+          rm -rf build/xwayland-aarch64/build-libffi || true
+
+      - name: Debug libffi build
+        run: |
+          set -e
+
+          export ACLOCAL_PATH=/usr/share/aclocal:/usr/share/aclocal-1.16
+          export ACLOCAL_FLAGS="-I /usr/share/aclocal -I /usr/share/aclocal-1.16"
+
+          ./scripts/build-xwayland.sh --only=libffi
       - name: Install Host Toolchain
         run: |
           sudo apt-get update
