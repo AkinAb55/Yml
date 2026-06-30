@@ -1,6 +1,5 @@
 name: Build TAWC (Full Monolithic Build)
 
-# Настройка автоматического запуска при изменениях в репозитории
 on:
   push:
     branches:
@@ -8,7 +7,7 @@ on:
   pull_request:
     branches:
       - main
-  workflow_dispatch: # Сохраняем возможность ручного перезапуска
+  workflow_dispatch:
 
 jobs:
   build-apk:
@@ -38,7 +37,7 @@ jobs:
           sdkmanager --install "ndk;27.2.12479018"
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
 
-      # 4. Установка зависимостей хоста (Добавлен libegl-dev для предоставления wayland-egl-backend.h)
+      # 4. Установка зависимостей хоста (Чистый x86_64)
       - name: Install Build Host Toolchain
         run: |
           sudo apt-get update
@@ -96,7 +95,7 @@ jobs:
           find scripts/ -type f -name "*.sh" -exec chmod +x {} +
           ./scripts/ensure-deps.sh --verify-all
 
-      # 7. Хак-логирование: убираем `tail -5`, чтобы в случае любых форс-мажоров видеть всё
+      # 7. Хак-логирование: убираем `tail -5`, чтобы видеть весь процесс компиляции
       - name: Patch script for verbose compilation log
         run: |
           sed -i 's/| tail -5//g' scripts/build-libhybris.sh
@@ -107,6 +106,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v3
 
       # 9. Финальная сборка полной монолитной версии приложения
+      # Принудительно передаем CPPFLAGS, чтобы g++ заглядывал во вложенные папки заголовочных файлов EGL/Mesa
       - name: Compile Full Debug APK via Gradle
         run: |
           ./gradlew assembleDebug \
@@ -119,6 +119,7 @@ jobs:
           ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
           RUSTFLAGS: "-A warnings"
           PKG_CONFIG_ALLOW_CROSS: "1"
+          CPPFLAGS: "-I/usr/include/libdrm -I/usr/include/EGL -I/usr/include/GLES2 -I/usr/include/GLES3"
 
       # 10. Экспорт готового скомпилированного APK файла в артефакты GitHub
       - name: Upload Complete APK Artifact
