@@ -8,7 +8,6 @@ on:
 jobs:
   build-apk:
     runs-on: ubuntu-24.04
-
     steps:
       - name: Checkout TAWC Repository
         uses: actions/checkout@v4
@@ -53,27 +52,25 @@ jobs:
         run: |
           mkdir -p $HOME/.local/bin
           echo "$HOME/.local/bin" >> $GITHUB_PATH
-
+          
           cat > $HOME/.local/bin/aclocal << 'EOL'
-#!/bin/bash
-exec /usr/bin/aclocal "$@" -I /usr/share/aclocal -I /usr/share/aclocal-1.16 -I m4 --force
-EOL
-
+          #!/bin/bash
+          exec /usr/bin/aclocal "$@" -I /usr/share/aclocal -I /usr/share/aclocal-1.16 -I m4 --force
+          EOL
+          
           cat > $HOME/.local/bin/autoreconf << 'EOL'
-#!/bin/bash
-export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16:${ACLOCAL_PATH:-}"
-exec /usr/bin/autoreconf "$@"
-EOL
-
+          #!/bin/bash
+          export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16:${ACLOCAL_PATH:-}"
+          exec /usr/bin/autoreconf "$@"
+          EOL
+          
           chmod +x $HOME/.local/bin/aclocal $HOME/.local/bin/autoreconf
           export PATH="$HOME/.local/bin:$PATH"
-
+          
           # Патч скрипта
           sed -i 's/autoreconf -fi/autoreconf -fiv --install/g' scripts/build-xwayland.sh
-
           # Добавляем libtoolize + aclocal перед autogen
           sed -i '/NOCONFIGURE=1 .*autogen.sh/ i \ \ \ \ \ \ (cd "$src" \&\& libtoolize --force --copy \&\& aclocal -I m4 --force || true)' scripts/build-xwayland.sh
-
           # Чистка libffi
           rm -rf deps/xwayland-src/libffi build/xwayland-aarch64/build-libffi* 2>/dev/null || true
 
