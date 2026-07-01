@@ -1,105 +1,105 @@
-name: TAWC Wayland Diagnostic (Real Build Replica)
+name: TAWC Wayland Diagnostic
 
 on:
   workflow_dispatch:
 
 jobs:
-  test-wayland:
+  test:
     runs-on: ubuntu-24.04
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout TAWC
+        uses: actions/checkout@v4
         with:
           repository: wmww/tawc
           submodules: recursive
 
-      - name: Install dependencies
+      - name: Install packages
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential meson ninja-build \
-            pkg-config python3 curl \
+            meson ninja-build pkg-config \
             libffi-dev libexpat1-dev \
-            autoconf automake libtool \
-            wayland-protocols
+            python3 curl
 
-      - name: Build Wayland scanner (host 1.25)
+      - name: Build native wayland-scanner 1.25.0
         run: |
-          mkdir -p /tmp/wayland
-          cd /tmp/wayland
-
           curl -L https://gitlab.freedesktop.org/wayland/wayland/-/archive/1.25.0/wayland-1.25.0.tar.gz \
-          | tar xz --strip-components=1
+            | tar xz
+
+          cd wayland-1.25.0
 
           meson setup build \
             --prefix=/usr/local \
+            -Dlibraries=false \
             -Ddocumentation=false \
-            -Dtests=false \
-            -Dlibraries=false
+            -Dtests=false
 
           ninja -C build
           sudo ninja -C build install
 
-          echo "=== HOST SCANNER ==="
+      - name: Environment
+        run: |
+          echo "===== PATH ====="
+          echo "$PATH"
+
+          echo
+          echo "===== WHICH ====="
           which wayland-scanner
+
+          echo
           wayland-scanner --version
 
-          echo "=== PKG-CONFIG CHECK ==="
-          pkg-config --modversion wayland-scanner || true
+          echo
+          echo "===== PKG CONFIG ====="
+          pkg-config --modversion wayland-scanner
 
-      - name: Setup TAWC cross environment (same as build-xwayland)
-        run: |
-          export ANDROID_HOME=$HOME/Android/Sdk
-          export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018
+          echo
+          pkg-config --variable=pcfiledir wayland-scanner
 
-          echo "NDK=$ANDROID_NDK_HOME"
+          echo
+          echo "===== FILE ====="
+          find /usr -name wayland-scanner.pc
 
-          export PATH="/usr/local/bin:$PATH"
-
-      - name: Create TAWC-like Meson cross file
+      - name: Create Android cross file
         run: |
           mkdir -p build
 
           cat > build/android-cross.ini <<EOF
           [binaries]
-          c = '/usr/local/lib/android/sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang'
-          cpp = '/usr/local/lib/android/sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++'
-          ar = 'ar'
-          strip = 'strip'
-          pkg-config = 'pkg-config'
+          c='cc'
+          cpp='c++'
+          ar='ar'
+          strip='strip'
+          pkg-config='pkg-config'
 
           [host_machine]
-          system = 'android'
-          cpu_family = 'aarch64'
-          cpu = 'aarch64'
-          endian = 'little'
-
-          [properties]
-          pkg_config_libdir = '/usr/local/lib/x86_64-linux-gnu/pkgconfig:/usr/local/lib/pkgconfig:/usr/local/share/pkgconfig'
+          system='android'
+          cpu_family='aarch64'
+          cpu='aarch64'
+          endian='little'
           EOF
 
-      - name: FULL DEBUG Wayland build (TAWC-like)
+      - name: Meson configure (same as TAWC)
+        env:
+          PKG_CONFIG_ALLOW_CROSS: "1"
+          PKG_CONFIG_PATH: /usr/local/lib/pkgconfig:/usr/local/share/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig
         run: |
-          set -x
+          echo "===== BEFORE ====="
 
-          export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/usr/local/share/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig"
-          export PKG_CONFIG_ALLOW_CROSS=1
-
-          echo "===== FINAL ENV ====="
-          env | sort
-
-          echo "===== WHICH SCANNER ====="
           which wayland-scanner
           wayland-scanner --version
 
-          echo "===== PKG-CONFIG RESULT ====="
-          pkg-config --modversion wayland-scanner || true
+          pkg-config --modversion wayland-scanner
 
-          echo "===== START MESON ====="
+          echo
+          echo "===== MESON ====="
 
-          meson setup build-wayland deps/xwayland-src/wayland/src \
+          meson setup \
+            build-wayland \
+            deps/xwayland-src/wayland/src \
             --cross-file build/android-cross.ini \
-            --prefix=/tmp/wayland-out \
+            --prefix=/tmp/install \
             --buildtype=debug \
             -Ddefault_library=shared \
             -Dscanner=false \
@@ -107,18 +107,15 @@ jobs:
             -Ddocumentation=false \
             -Ddtd_validation=false \
             -Dlibraries=true \
-            --wipe \
-            --reconfigure \
-            --verbose
+            --wipe
 
-      - name: Dump failure logs
-        if: failure()
+      - name: Dump Meson log
+        if: always()
         run: |
           echo "===== MESON LOG ====="
-          cat build-wayland/meson-logs/meson-log.txt || true
 
-          echo "===== PKG-CONFIG SEARCH ====="
-          pkg-config --debug --modversion wayland-scanner || true
-
-          echo "===== ALL WAYLAND PCS ====="
-          find /usr /usr/local -name "*wayland*.pc" 2>/dev/null || true
+          if [ -f build-wayland/meson-logs/meson-log.txt ]; then
+              cat build-wayland/meson-logs/meson-log.txt
+          else
+              echo "meson-log.txt not found"
+          fi
