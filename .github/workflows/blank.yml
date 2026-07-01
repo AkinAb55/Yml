@@ -1,4 +1,4 @@
-name: Debug Xwayland Libffi (Force Fix)
+name: Debug Xwayland Libffi (Deep Test)
 
 on:
   push:
@@ -19,12 +19,14 @@ jobs:
           ref: 'main'
           submodules: 'recursive'
 
+      # Установка Java
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
 
+      # Установка Android SDK/NDK
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
@@ -33,6 +35,7 @@ jobs:
           sdkmanager --install "ndk;27.2.12479018"
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
 
+      # Установка окружения сборщика
       - name: Install Build Host Toolchain
         run: |
           sudo apt-get update
@@ -59,13 +62,21 @@ jobs:
           chmod +x scripts/*.sh || true
           ./scripts/ensure-deps.sh --verify-all
 
-      # Включаем МАКСИМАЛЬНЫЙ ВЫВОД ЛОГОВ
-      - name: Inject Max Verbose Flags into Script
+      # Включаем МАКСИМАЛЬНЫЙ ВЫВОД ЛОГОВ И ПАТЧИМ СКРИПТ
+      - name: Inject Max Verbose Flags & Fix ACLOCAL_PATH
         run: |
+          # Включаем трассировку bash команд изнутри скрипта (выведет вообще всё)
           sed -i '2i set -x' scripts/build-xwayland.sh
+          
+          # Убираем обрезку вывода через tail
           sed -i 's/| tail -5//g' scripts/build-xwayland.sh
           sed -i 's/| tail -3//g' scripts/build-xwayland.sh
+          
+          # Заменяем "autoreconf -fi" на "autoreconf -fiv" (verbose для autotools)
           sed -i 's/autoreconf -fi/autoreconf -fiv/g' scripts/build-xwayland.sh
+
+          # ГЛАВНЫЙ ФИКС: исправляем жестко зашитое затирание переменной ACLOCAL_PATH
+          sed -i 's|export ACLOCAL_PATH="$PREFIX/share/aclocal"|export ACLOCAL_PATH="$PREFIX/share/aclocal:/usr/share/aclocal:/usr/share/aclocal-1.16"|g' scripts/build-xwayland.sh
 
       # Полная очистка перед тестом
       - name: Clear old libffi cache
@@ -73,21 +84,7 @@ jobs:
           rm -rf deps/xwayland-src/libffi
           rm -rf build/xwayland-aarch64/build-libffi || true
 
-      # СОЗДАЕМ КРИТИЧЕСКИЙ ХАК ДЛЯ ACLOCAL
-      - name: Force Libtool Macros Wrapper
-        run: |
-          # Создаем локальную директорию для бинарников и добавляем её в начало PATH
-          mkdir -p $HOME/.local/bin
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-          
-          # Перехватываем вызовы aclocal и принудительно подмешиваем системные пути
-          cat << 'EOF' > $HOME/.local/bin/aclocal
-          #!/bin/bash
-          exec /usr/bin/aclocal "$@" -I /usr/share/aclocal -I /usr/share/aclocal-1.16
-          EOF
-          chmod +x $HOME/.local/bin/aclocal
-
-      # ТЕСТОВЫЙ ЗАПУСК
+      # ТЕСТОВЫЙ ЗАПУСК С ПОЛНЫМ ЛОГОМ
       - name: Debug single libffi build stage (Verbose)
         run: |
           ./scripts/build-xwayland.sh --only=libffi
