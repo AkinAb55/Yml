@@ -28,7 +28,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential autoconf automake libtool libtool-bin \
+            build-essential meson ninja-build autoconf automake libtool libtool-bin \
             autoconf-archive m4 pkg-config git curl python3 python3-pip
 
       - name: Prepare Build Scripts & Deps
@@ -62,12 +62,35 @@ jobs:
           AR="$NDK_BIN/llvm-ar"
           RANLIB="$NDK_BIN/llvm-ranlib"
           STRIP="$NDK_BIN/llvm-strip"
+          LD="$NDK_BIN/ld.lld"
           
           mkdir -p "$SRC_ROOT" "$PREFIX/lib" "$PREFIX/include" "$PREFIX/share" "$PC_DIR" "$PREFIX/share/pkgconfig"
           export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16:$PREFIX/share/aclocal"
           
-          # Фикс: pkg-config должен искать в обеих директориях нашего префикса
           PC_LIBDIR_CROSS="$PC_DIR:$PREFIX/share/pkgconfig"
+          CROSS_FILE="$OUT_DIR/android-cross.ini"
+          
+          cat >"$CROSS_FILE" <<EON
+          [binaries]
+          c       = '$CC'
+          cpp     = '$CXX'
+          ar      = '$AR'
+          strip   = '$STRIP'
+          ld      = '$LD'
+          pkg-config = 'pkg-config'
+          [built-in options]
+          c_args = ['-fPIC', '-O2', '-DANDROID', '-D_GNU_SOURCE', '-I$PREFIX/include']
+          cpp_args = ['-fPIC', '-O2', '-DANDROID', '-D_GNU_SOURCE', '-I$PREFIX/include']
+          c_link_args = ['-L$PREFIX/lib', '-Wl,-rpath-link,$PREFIX/lib']
+          cpp_link_args = ['-L$PREFIX/lib', '-Wl,-rpath-link,$PREFIX/lib']
+          [host_machine]
+          system = 'android'
+          cpu_family = 'aarch64'
+          cpu = 'aarch64'
+          endian = 'little'
+          [properties]
+          pkg_config_libdir = '$PC_LIBDIR_CROSS'
+          EON
           
           CFLAGS_CROSS="-fPIC -O2 -DANDROID -D_GNU_SOURCE -I$PREFIX/include"
           LDFLAGS_CROSS="-L$PREFIX/lib -Wl,-rpath-link,$PREFIX/lib"
@@ -93,6 +116,35 @@ jobs:
                   "$@"
           }
 
+          build_meson() {
+              local name="$1"; shift
+              local src="$SRC_ROOT/$name"
+              local build="$OUT_DIR/build-$name"
+              mkdir -p "$build"
+              if [ ! -f "$build/build.ninja" ]; then
+                  meson setup "$build" "$src" --cross-file "$CROSS_FILE" --prefix="$PREFIX" --libdir=lib --buildtype=release -Ddefault_library=shared "$@"
+              fi
+              ninja -C "$build" install
+          }
+
+          build_autotools() {
+              local name="$1"; shift
+              local src="$SRC_ROOT/$name"
+              ( cd "$src" && \
+                  if [ ! -f configure ] || [ ! -s configure ]; then \
+                      rm -rf autom4te.cache config.cache aclocal.m4 configure && \
+                      libtoolize --force --copy && \
+                      aclocal -I m4 -I /usr/share/aclocal -I "$PREFIX/share/aclocal" --force && \
+                      autoconf --force && \
+                      autoheader --force || true && \
+                      automake --add-missing --copy --foreign || true && \
+                      chmod +x configure || true; \
+                  fi && \
+                  configure_autotools "$@" && \
+                  make -j"$(nproc)" && \
+                  make install )
+          }
+
           stage_xorg_macros() {
               clone_pinned util-macros
               ( cd "$SRC_ROOT/util-macros" && \
@@ -102,6 +154,10 @@ jobs:
                 ./configure --prefix="$PREFIX" && \
                 make install )
           }
+
+          stage_xorgproto() { clone_pinned xorgproto; build_meson xorgproto -Dlegacy=true; }
+
+          stage_libxau() { clone_pinned libxau; build_autotools libxau; }
 
           stage_xcb_proto() {
               clone_pinned xcb-proto
@@ -115,26 +171,16 @@ jobs:
           
           stage_libxcb() {
               clone_pinned libxcb
-              ( cd "$SRC_ROOT/libxcb" && \
-                if [ ! -f configure ] || [ ! -s configure ]; then \
-                    rm -rf autom4te.cache config.cache aclocal.m4 configure && \
-                    libtoolize --force --copy && \
-                    aclocal -I m4 -I /usr/share/aclocal -I "$PREFIX/share/aclocal" --force && \
-                    autoconf --force && \
-                    autoheader --force || true && \
-                    automake --add-missing --copy --foreign || true && \
-                    chmod +x configure || true; \
-                fi && \
-                configure_autotools --disable-devel-docs --without-doxygen PYTHON=python3 XCBPROTO_CFLAGS="-I$PREFIX/include" XCBPROTO_LIBS="" && \
-                make -j"$(nproc)" && \
-                make install )
+              build_autotools libxcb --disable-devel-docs --without-doxygen PYTHON=python3 XCBPROTO_CFLAGS="-I$PREFIX/include" XCBPROTO_LIBS=""
           }
           
           stage_xorg_macros
+          stage_xorgproto
+          stage_libxau
           stage_xcb_proto
           stage_libxcb
           
-          echo "==> Изолированный тест XCB завершен!"
+          echo "==> Изолированный тест XCB + Xau завершен!"
           EOF
           chmod +x scripts/build-xwayland.sh
 
