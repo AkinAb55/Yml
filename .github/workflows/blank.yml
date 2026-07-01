@@ -1,79 +1,175 @@
-name: TAWC Wayland Debug (Scanner + Meson)
+name: Test Wayland Cross-Compile (Fix Scanner)
 
 on:
+  push:
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
-  test:
+  test-build:
     runs-on: ubuntu-24.04
-
     steps:
-      - name: Checkout TAWC
+      - name: Checkout TAWC Repository
         uses: actions/checkout@v4
         with:
-          repository: wmww/tawc
-          submodules: recursive
+          repository: 'wmww/tawc'
+          ref: 'main'
+          submodules: 'recursive'
 
-      - name: Install dependencies
+      - name: Set up Android SDK & NDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Specific NDK
+        run: |
+          sdkmanager --install "ndk;27.2.12479018"
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
+
+      - name: Install Build Host Toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            meson ninja-build pkg-config \
-            libffi-dev libexpat1-dev \
-            python3 curl git \
-            wayland-protocols
+            build-essential meson ninja-build autoconf automake libtool libtool-bin \
+            autoconf-archive m4 pkg-config texinfo gettext git curl python3
 
-      # 🔥 Build correct wayland-scanner (critical)
-      - name: Build wayland-scanner 1.25.0
+      - name: Compile Native Wayland Scanner (v1.25.0)
         run: |
-          curl -L https://gitlab.freedesktop.org/wayland/wayland/-/archive/1.25.0/wayland-1.25.0.tar.gz | tar xz
-          cd wayland-1.25.0
-
-          meson setup build \
-            --prefix=/usr/local \
-            -Dtests=false \
-            -Ddocumentation=false \
-            -Dlibraries=false
-
+          mkdir -p /tmp/wayland-native-src
+          curl -fsSL https://gitlab.freedesktop.org/wayland/wayland/-/archive/1.25.0/wayland-1.25.0.tar.gz | tar -xz -C /tmp/wayland-native-src --strip-components=1
+          cd /tmp/wayland-native-src
+          meson setup build --prefix=/opt/wayland-build -Ddocumentation=false -Dtests=false -Dlibraries=false
           ninja -C build
           sudo ninja -C build install
 
-      # 🔥 HARD FIX environment (important)
-      - name: Export Wayland environment
+      - name: Overwrite with Fixed build-xwayland.sh
         run: |
-          echo "WAYLAND_SCANNER=/usr/local/bin/wayland-scanner" >> $GITHUB_ENV
-          echo "PKG_CONFIG_ALLOW_CROSS=1" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/share/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig" >> $GITHUB_ENV
-          echo "PATH=/usr/local/bin:$PATH" >> $GITHUB_ENV
+          cat > scripts/build-xwayland.sh << 'EOF'
+          #!/bin/bash
+          set -exuo pipefail
+          
+          SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+          REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+          source "$SCRIPT_DIR/lib/deps.sh"
+          
+          SRC_ROOT="$REPO_DIR/deps/xwayland-src"
+          PATCH_ROOT="$REPO_DIR/deps/xwayland-patches"
+          TAWC_TMP_PREFIX="share/xtmp"
+          ABI=aarch64
+          ONLY=""
+          
+          for arg in "$@"; do
+              case "$arg" in
+                  --only=*) ONLY="${arg#--only=}" ;;
+              esac
+          done
+          
+          OUT_DIR="$REPO_DIR/build/xwayland-$ABI"
+          PREFIX="$OUT_DIR/install"
+          PC_DIR="$PREFIX/lib/pkgconfig"
+          
+          NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          TRIPLE=aarch64-linux-android
+          
+          CC="$NDK_BIN/${TRIPLE}29-clang"
+          CXX="$NDK_BIN/${TRIPLE}29-clang++"
+          AR="$NDK_BIN/llvm-ar"
+          RANLIB="$NDK_BIN/llvm-ranlib"
+          STRIP="$NDK_BIN/llvm-strip"
+          LD="$NDK_BIN/ld.lld"
+          
+          mkdir -p "$SRC_ROOT" "$PREFIX/lib" "$PREFIX/include" "$PREFIX/share" "$PC_DIR"
+          PC_LIBDIR_CROSS="$PC_DIR:$PREFIX/share/pkgconfig"
+          export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16:$PREFIX/share/aclocal"
+          
+          CFLAGS_CROSS="-fPIC -O2 -DANDROID -D_GNU_SOURCE -I$PREFIX/include"
+          LDFLAGS_CROSS="-L$PREFIX/lib -Wl,-rpath-link,$PREFIX/lib"
+          
+          clone_pinned() {
+              local name="$1"
+              dep_apply_patches "$name" "$PATCH_ROOT/$name" "s|@TAWC_TMP_PREFIX@|$TAWC_TMP_PREFIX|g"
+          }
+          
+          CROSS_FILE="$OUT_DIR/android-cross.ini"
+          mkdir -p "$OUT_DIR"
+          
+          # Прописываем путь к сканеру и принудительно переопределяем его для build-machine
+          cat >"$CROSS_FILE" <<EON
+          [binaries]
+          c = '$CC'
+          cpp = '$CXX'
+          ar = '$AR'
+          strip = '$STRIP'
+          ld = '$LD'
+          pkg-config = 'pkg-config'
+          wayland-scanner = '/opt/wayland-build/bin/wayland-scanner'
+          
+          [built-in options]
+          c_args = ['-fPIC', '-O2', '-DANDROID', '-D_GNU_SOURCE', '-I$PREFIX/include']
+          cpp_args = ['-fPIC', '-O2', '-DANDROID', '-D_GNU_SOURCE', '-I$PREFIX/include']
+          c_link_args = ['-L$PREFIX/lib', '-Wl,-rpath-link,$PREFIX/lib']
+          cpp_link_args = ['-L$PREFIX/lib', '-Wl,-rpath-link,$PREFIX/lib']
+          
+          [host_machine]
+          system = 'android'
+          cpu_family = 'aarch64'
+          cpu = 'aarch64'
+          endian = 'little'
+          
+          [properties]
+          pkg_config_libdir = '$PC_DIR:$PREFIX/share/pkgconfig'
+          EON
+          
+          configure_autotools() {
+              PKG_CONFIG_LIBDIR="$PC_LIBDIR_CROSS" ./configure --host="$TRIPLE" --prefix="$PREFIX" --libdir="$PREFIX/lib" CC="$CC" CXX="$CXX" AR="$AR" RANLIB="$RANLIB" STRIP="$STRIP" CFLAGS="$CFLAGS_CROSS" CPPFLAGS="-I$PREFIX/include" LDFLAGS="$LDFLAGS_CROSS" PKG_CONFIG="pkg-config" "$@"
+          }
+          
+          build_meson() {
+              local name="$1"; shift
+              local build="$OUT_DIR/build-$name"
+              mkdir -p "$build"
+              
+              # Передаем явную нативную утилиту через встроенное свойство Meson: -Dwayland-scanner=...
+              meson setup "$build" "$SRC_ROOT/$name" \
+                  --cross-file "$CROSS_FILE" \
+                  --prefix="$PREFIX" \
+                  --libdir=lib \
+                  --buildtype=release \
+                  -Ddefault_library=shared \
+                  -Dwayland-scanner=/opt/wayland-build/bin/wayland-scanner \
+                  "$@"
+                  
+              ninja -C "$build" install
+          }
+          
+          build_autotools() {
+              local name="$1"; shift
+              ( cd "$SRC_ROOT/$name" && if [ ! -f configure ]; then
+                  rm -rf autom4te.cache config.cache aclocal.m4
+                  libtoolize --force --copy && aclocal -I m4 -I /usr/share/aclocal --force && autoconf --force && autoheader --force || true
+                  cp -f $(ls -d /usr/share/automake-* | head -n1)/{install-sh,compile,missing} ./ || true
+                  automake --add-missing --copy --force-missing --foreign || true
+                  touch configure
+              fi && configure_autotools "$@" && make -j"$(nproc)" && make install )
+          }
+          
+          stage_libffi() { clone_pinned libffi; build_autotools libffi --disable-multi-os-directory --disable-docs; }
+          stage_wayland() { clone_pinned wayland; build_meson wayland -Dscanner=false -Dtests=false -Ddocumentation=false -Ddtd_validation=false -Dlibraries=true; }
+          
+          if [ "$ONLY" = "libffi" ]; then stage_libffi; elif [ "$ONLY" = "wayland" ]; then stage_libffi; stage_wayland; fi
+          EOF
+          chmod +x scripts/build-xwayland.sh
 
-      - name: Verify scanner
+      - name: Run Test Build (Libffi + Wayland)
         run: |
-          echo "===== WHICH ====="
-          which wayland-scanner
+          ./scripts/ensure-deps.sh --verify-all
+          export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16"
+          ./scripts/build-xwayland.sh --only=wayland
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
+          PKG_CONFIG_ALLOW_CROSS: "1"
 
-          echo "===== VERSION ====="
-          wayland-scanner --version
-
-          echo "===== PKG-CONFIG ====="
-          pkg-config --modversion wayland-scanner
-
-      # 🔥 ONLY WAYLAND MESON TEST (no xwayland yet)
-      - name: Configure Wayland (Meson test)
+      - name: Verify Generated Files
         run: |
-          meson setup build-wayland \
-            deps/xwayland-src/wayland/src \
-            --prefix=/tmp/test \
-            --buildtype=debug \
-            -Ddefault_library=shared \
-            -Dscanner=false \
-            -Dtests=false \
-            -Ddocumentation=false \
-            -Ddtd_validation=false \
-            -Dlibraries=true \
-            --wipe
-
-      - name: Show Meson logs
-        if: always()
-        run: |
-          echo "===== MESON LOG ====="
-          cat build-wayland/meson-logs/meson-log.txt || true
+          echo "=== Check .pc files ==="
+          ls -l build/xwayland-aarch64/install/lib/pkgconfig/ || true
+          echo "=== Check .so files ==="
+          ls -l build/xwayland-aarch64/install/lib/ || true
