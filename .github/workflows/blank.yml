@@ -1,13 +1,21 @@
-name: Test Native Scripts (Xwayland Fast-Track)
+name: Build TAWC (Full Monolithic Build)
 
 on:
-  workflow_dispatch: # Запуск вручную в один клик из вкладки Actions
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
-  test-native-build:
+  build-apk:
+    name: Compile Monolithic Full APK
     runs-on: ubuntu-24.04
+
     steps:
-      # 1. Клонируем оригинальный репозиторий со всеми подмодулями
+      # 1. Клонируем оригинальный репозиторий wmww/tawc без форка
       - name: Checkout TAWC Repository
         uses: actions/checkout@v4
         with:
@@ -15,78 +23,138 @@ jobs:
           ref: 'main'
           submodules: 'recursive'
 
-      # 2. Настраиваем Android SDK и NDK (нужен для bionic-сборки Xwayland)
+      # 2. Установка Java-окружения (Репозиторий требует JDK 21 для Gradle Daemon)
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      # 3. Установка Android SDK и точной версии NDK (27.2.12479018)
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install NDK 27
+      - name: Install Specific NDK (27.2.12479018)
         run: |
           sdkmanager --install "ndk;27.2.12479018"
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
           echo "ANDROID_HOME=${ANDROID_SDK_ROOT}" >> $GITHUB_ENV
 
-      # 3. Инструменты хоста (Добавлен libwayland-bin для сканера и python3-lxml для libxcb)
+      # 4. Установка зависимостей хоста (Включая glibc кросс-компиляторы, либы и инструменты кодогенерации)
       - name: Install Build Host Toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential meson ninja-build pkg-config patchelf \
-            autoconf automake libtool libtool-bin bison flex gperf gettext texinfo \
-            python3-pip python3-mako python3-lxml python3-setuptools \
-            xsltproc wayland-protocols libwayland-bin curl perl git \
-            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
-            
+            build-essential \
+            meson \
+            ninja-build \
+            python3-pip \
+            python3-mako \
+            python3-lxml \
+            python3-setuptools \
+            autoconf \
+            automake \
+            libtool \
+            libtool-bin \
+            patchelf \
+            scdoc \
+            bison \
+            flex \
+            gettext \
+            texinfo \
+            gperf \
+            pkg-config \
+            tar \
+            zstd \
+            m4 \
+            xsltproc \
+            glslang-tools \
+            wayland-protocols \
+            libwayland-bin \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            binutils-aarch64-linux-gnu \
+            libc6-arm64-cross \
+            linux-libc-dev-arm64-cross \
+            libssl-dev \
+            libwayland-dev \
+            libwayland-egl-backend-dev \
+            libegl-dev \
+            libgles-dev \
+            libdrm-dev \
+            libvulkan-dev \
+            libxkbcommon-dev \
+            libpixman-1-dev \
+            libepoxy-dev \
+            libx11-dev \
+            libxcb1-dev \
+            libx11-xcb-dev \
+            libarchive-tools \
+            curl \
+            perl                      
+
+          # Обновляем Meson и Ninja до актуальных версий (Mesa требует Meson >= 1.4.0)
           sudo pip3 install --upgrade meson ninja --break-system-packages
 
-      # 4. Настраиваем Rust (нужен для smithay и ffi-частей Mesa)
+      # 5. Настройка Rust Toolchain со всеми Android (bionic) и Linux (glibc) таргетами
       - name: Set up Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: 'aarch64-linux-android, x86_64-linux-android, aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu'
 
-      # 5. Права на исполнение и валидация зависимостей по deps.list
-      - name: Sync and Verify Pinned Dependencies
+      # 6. Установка необходимых утилит Cargo
+      - name: Install Cargo Build Utilities
+        run: |
+          cargo install cargo-ndk
+          cargo install bindgen-cli
+
+      # 7. Подготовка внутренних скриптов репозитория и проверка/клонирование зависимостей
+      - name: Prepare Build Scripts & Verify Deps
         run: |
           find scripts/ -type f -name "*.sh" -exec chmod +x {} +
           ./scripts/ensure-deps.sh --verify-all
 
-      # 6. Патчинг скриптов: убираем tail + лечим изоляцию Meson для wayland-protocols
-      - name: Patch scripts for verbose logs and Scanner bypass
+      # 8. Отключение маскировки логов компиляции и КРИТИЧЕСКОЕ исправление кросс-файла Meson
+      - name: Patch scripts for verbose logs and Cross-File fixes
         run: |
-          # Убираем обрезку логов компиляции
-          sed -i 's/| tail -5//g' scripts/build-xwayland.sh || true
-          sed -i 's/| tail -3//g' scripts/build-xwayland.sh || true
-          sed -i 's/| head -20//g' scripts/build-xwayland.sh || true
+          # 8a. Раскрываем полные логи компиляции (убираем tail)
+          sed -i 's/| tail -[0-9]*//g' scripts/build-libhybris.sh || true
+          sed -i 's/| tail -[0-9]*//g' scripts/build-mesa-gfxstream.sh || true
+          sed -i 's/| tail -[0-9]*//g' scripts/build-xwayland.sh || true
+          sed -i 's/| head -[0-9]*//g' scripts/build-xwayland.sh || true
           
-          # КРИТИЧЕСКИЙ ХАК ДЛЯ WAYLAND-PROTOCOLS:
-          # Внедряем явное указание пути к бинарнику хоста во все вызовы 'meson setup' внутри build-xwayland.sh.
-          # Это заставит Meson использовать /usr/bin/wayland-scanner из Ubuntu вместо бесконечного поиска в pkg-config.
-          sed -i "s/meson setup \"\$build\" \"\$src\"/meson setup \"\$build\" \"\$src\" -Dwayland-scanner=\$(which wayland-scanner)/g" scripts/build-xwayland.sh
+          # 8b. ТОЧНОЕ ИСПРАВЛЕНИЕ ДЛЯ XWAYLAND (Решает проблему wayland-scanner во всех стадиях)
+          # Вместо передачи флага в командную строку, мы внедряем путь к нативному сканеру 
+          # хоста прямо в секцию [binaries] инжектируемого файла конфигурации android-cross.ini.
+          sed -i "s|pkg-config = 'pkg-config'|pkg-config = 'pkg-config'\nwayland-scanner = '$(which wayland-scanner)'|g" scripts/build-xwayland.sh
           
-          echo "==> Проверка патча внутри build-xwayland.sh (строки вокруг meson setup):"
-          grep -C 3 "meson setup" scripts/build-xwayland.sh
+          echo "==> Валидация применения патча в build-xwayland.sh (должна появиться строка wayland-scanner):"
+          grep -A 8 "\[binaries\]" scripts/build-xwayland.sh
 
-      # 7. ИЗОЛИРОВАННЫЙ ЗАПУСК СБОРКИ XWAYLAND
-      - name: Execute Fast-Track Xwayland Build
+      # 9. Настройка кэширования Gradle
+      - name: Setup Gradle Cache
+        uses: gradle/actions/setup-gradle@v3
+
+      # 10. Финальная сборка полной монолитной версии приложения через Gradle
+      - name: Compile Full Debug APK via Gradle
+        run: |
+          ./gradlew assembleDebug \
+            -PtawcAbis=arm64-v8a,x86_64 \
+            -PtawcMethods=tawcroot,proot,chroot \
+            -PtawcGraphics=libhybris,libhybris-zink,gfxstream,cpu \
+            -PtawcXwayland=true \
+            -PtawcAllFilesAccess=true
         env:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+          ANDROID_NDK_ROOT: ${{ env.ANDROID_NDK_HOME }}
+          RUSTFLAGS: "-A warnings"
           PKG_CONFIG_ALLOW_CROSS: "1"
-        run: |
-          echo "==> Проверяем наличие сканера на хосте перед стартом:"
-          which wayland-scanner
-          
-          echo "==> Запуск компиляции Xwayland под aarch64..."
-          ./scripts/build-xwayland.sh --abi=aarch64
 
-      # 8. Проверка артефактов на выходе
-      - name: Check Build Artifacts
-        run: |
-          echo "==> Проверка структуры скомпилированных файлов:"
-          if [ -d "build/xwayland-aarch64/install" ]; then
-            ls -la build/xwayland-aarch64/install/bin/ || echo "Бинарники не найдены"
-            ls -la build/xwayland-aarch64/install/lib/ || echo "Библиотеки не найдены"
-          else
-            echo "Папка install не создана. Сборка не завершилась."
-            exit 1
-          fi
+      # 11. Экспорт готового скомпилированного APK файла в артефакты GitHub
+      - name: Upload Complete APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tawc-ultimate-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
