@@ -1,10 +1,10 @@
-name: Test Wayland Scanner
+name: TAWC Wayland Diagnostic (Real Build Replica)
 
 on:
   workflow_dispatch:
 
 jobs:
-  test:
+  test-wayland:
     runs-on: ubuntu-24.04
 
     steps:
@@ -17,30 +17,15 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            meson ninja-build \
-            pkg-config \
-            build-essential \
-            curl python3
+            build-essential meson ninja-build \
+            pkg-config python3 curl \
+            libffi-dev libexpat1-dev \
+            autoconf automake libtool \
+            wayland-protocols
 
-      - name: Show system versions BEFORE install
+      - name: Build Wayland scanner (host 1.25)
         run: |
-          echo "===== BEFORE ====="
-
-          which wayland-scanner || true
-          wayland-scanner --version || true
-
-          echo
-          pkg-config --modversion wayland-scanner || true
-
-          echo
-          pkg-config --variable pc_path pkg-config
-
-          echo
-          find /usr -name "wayland-scanner.pc" 2>/dev/null
-
-      - name: Build Wayland 1.25 scanner
-        run: |
-          mkdir /tmp/wayland
+          mkdir -p /tmp/wayland
           cd /tmp/wayland
 
           curl -L https://gitlab.freedesktop.org/wayland/wayland/-/archive/1.25.0/wayland-1.25.0.tar.gz \
@@ -53,88 +38,87 @@ jobs:
             -Dlibraries=false
 
           ninja -C build
-
           sudo ninja -C build install
 
-      - name: Dump EVERYTHING after install
-        run: |
-
-          echo "========== PATH =========="
-          echo "$PATH"
-
-          echo
-          echo "========== PKG_CONFIG_PATH =========="
-          echo "${PKG_CONFIG_PATH:-EMPTY}"
-
-          echo
-          echo "========== PKG_CONFIG_LIBDIR =========="
-          echo "${PKG_CONFIG_LIBDIR:-EMPTY}"
-
-          echo
-          echo "========== WHICH =========="
+          echo "=== HOST SCANNER ==="
           which wayland-scanner
-
-          echo
-          ls -l $(which wayland-scanner)
-
-          echo
-          echo "========== VERSION =========="
           wayland-scanner --version
 
-          echo
-          echo "========== pkg-config =========="
-          which pkg-config
-          pkg-config --version
-
-          echo
-          echo "========== pc search path =========="
-          pkg-config --variable pc_path pkg-config
-
-          echo
-          echo "========== modversion =========="
+          echo "=== PKG-CONFIG CHECK ==="
           pkg-config --modversion wayland-scanner || true
 
-          echo
-          echo "========== cflags =========="
-          pkg-config --cflags wayland-scanner || true
-
-          echo
-          echo "========== libs =========="
-          pkg-config --libs wayland-scanner || true
-
-          echo
-          echo "========== ALL .pc FILES =========="
-          find /usr -name "wayland-scanner.pc" -exec sh -c '
-            echo
-            echo "----- $1 -----"
-            cat "$1"
-          ' sh {} \;
-
-          echo
-          echo "========== Installed scanner =========="
-          find /usr/local -name "wayland-scanner*"
-
-          echo
-          echo "========== Installed pc =========="
-          find /usr/local -name "*.pc"
-
-      - name: Test pkg-config manually
+      - name: Setup TAWC cross environment (same as build-xwayland)
         run: |
+          export ANDROID_HOME=$HOME/Android/Sdk
+          export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018
 
-          echo "===== DEFAULT ====="
+          echo "NDK=$ANDROID_NDK_HOME"
+
+          export PATH="/usr/local/bin:$PATH"
+
+      - name: Create TAWC-like Meson cross file
+        run: |
+          mkdir -p build
+
+          cat > build/android-cross.ini <<EOF
+          [binaries]
+          c = '/usr/local/lib/android/sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang'
+          cpp = '/usr/local/lib/android/sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++'
+          ar = 'ar'
+          strip = 'strip'
+          pkg-config = 'pkg-config'
+
+          [host_machine]
+          system = 'android'
+          cpu_family = 'aarch64'
+          cpu = 'aarch64'
+          endian = 'little'
+
+          [properties]
+          pkg_config_libdir = '/usr/local/lib/x86_64-linux-gnu/pkgconfig:/usr/local/lib/pkgconfig:/usr/local/share/pkgconfig'
+          EOF
+
+      - name: FULL DEBUG Wayland build (TAWC-like)
+        run: |
+          set -x
+
+          export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/usr/local/share/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig"
+          export PKG_CONFIG_ALLOW_CROSS=1
+
+          echo "===== FINAL ENV ====="
+          env | sort
+
+          echo "===== WHICH SCANNER ====="
+          which wayland-scanner
+          wayland-scanner --version
+
+          echo "===== PKG-CONFIG RESULT ====="
           pkg-config --modversion wayland-scanner || true
 
-          echo
-          echo "===== /usr/local/lib/pkgconfig ====="
-          PKG_CONFIG_PATH=/usr/local/lib/pkgconfig \
-          pkg-config --modversion wayland-scanner || true
+          echo "===== START MESON ====="
 
-          echo
-          echo "===== /usr/local/share/pkgconfig ====="
-          PKG_CONFIG_PATH=/usr/local/share/pkgconfig \
-          pkg-config --modversion wayland-scanner || true
+          meson setup build-wayland deps/xwayland-src/wayland/src \
+            --cross-file build/android-cross.ini \
+            --prefix=/tmp/wayland-out \
+            --buildtype=debug \
+            -Ddefault_library=shared \
+            -Dscanner=false \
+            -Dtests=false \
+            -Ddocumentation=false \
+            -Ddtd_validation=false \
+            -Dlibraries=true \
+            --wipe \
+            --reconfigure \
+            --verbose
 
-          echo
-          echo "===== BOTH ====="
-          PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/share/pkgconfig \
-          pkg-config --modversion wayland-scanner || true
+      - name: Dump failure logs
+        if: failure()
+        run: |
+          echo "===== MESON LOG ====="
+          cat build-wayland/meson-logs/meson-log.txt || true
+
+          echo "===== PKG-CONFIG SEARCH ====="
+          pkg-config --debug --modversion wayland-scanner || true
+
+          echo "===== ALL WAYLAND PCS ====="
+          find /usr /usr/local -name "*wayland*.pc" 2>/dev/null || true
