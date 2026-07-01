@@ -1,10 +1,10 @@
-name: Debug Xwayland Libffi (Max Verbose Logs)
+name: Debug Xwayland Libffi
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+    branches:
+      - main
+      - master
   workflow_dispatch:
 
 jobs:
@@ -12,7 +12,6 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      # 1. Клонируем оригинальный репозиторий wmww/tawc без форка
       - name: Checkout TAWC Repository
         uses: actions/checkout@v4
         with:
@@ -20,14 +19,14 @@ jobs:
           ref: 'main'
           submodules: 'recursive'
 
-      # 2. Установка Java-окружения
+      # Установка Java
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
 
-      # 3. Установка Android SDK и точной версии NDK
+      # Установка Android SDK/NDK
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
@@ -36,7 +35,7 @@ jobs:
           sdkmanager --install "ndk;27.2.12479018"
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
 
-      # 4. Установка зависимостей хоста (Включая autoconf-archive)
+      # Установка окружения сборщика
       - name: Install Build Host Toolchain
         run: |
           sudo apt-get update
@@ -55,33 +54,35 @@ jobs:
             curl \
             python3
 
-          # Глобальный проброс путей для макросов Autotools на уровне всего ранера
           echo "ACLOCAL_PATH=/usr/share/aclocal:/usr/share/aclocal-1.16" >> $GITHUB_ENV
           echo "ACLOCAL_FLAGS=-I /usr/share/aclocal -I /usr/share/aclocal-1.16" >> $GITHUB_ENV
 
-      # 5. Подготовка внутренних скриптов и скачивание зависимостей
+      # Подготовка скриптов
       - name: Prepare Build Scripts & Verify Deps
         run: |
           chmod +x scripts/*.sh || true
           ./scripts/ensure-deps.sh --verify-all
 
-      # 6. Включаем МАКСИМАЛЬНЫЙ ВЫВОД ЛОГОВ (Патчим скрытие tail и добавляем -v в autoreconf)
+      # Включаем МАКСИМАЛЬНЫЙ ВЫВОД ЛОГОВ
       - name: Inject Max Verbose Flags into Script
         run: |
+          # Включаем трассировку bash команд изнутри скрипта (выведет вообще всё)
+          sed -i '2i set -x' scripts/build-xwayland.sh
+          
           # Убираем обрезку вывода через tail
           sed -i 's/| tail -5//g' scripts/build-xwayland.sh
           sed -i 's/| tail -3//g' scripts/build-xwayland.sh
           
-          # Заменяем "autoreconf -fi" на "autoreconf -fiv", чтобы видеть подробный трассировочный лог
+          # Заменяем "autoreconf -fi" на "autoreconf -fiv" (verbose для autotools)
           sed -i 's/autoreconf -fi/autoreconf -fiv/g' scripts/build-xwayland.sh
 
-      # 7. Полная очистка рабочей папки либы от старых косяков перед запуском
+      # Полная очистка перед тестом
       - name: Clear old libffi cache
         run: |
           rm -rf deps/xwayland-src/libffi
           rm -rf build/xwayland-aarch64/build-libffi || true
 
-      # 8. БЫСТРЫЙ ТЕСТОВЫЙ ЗАПУСК: Собираем ТОЛЬКО libffi напрямую с отслеживанием всех макросов
+      # ТЕСТОВЫЙ ЗАПУСК С ПОЛНЫМ ЛОГОМ
       - name: Debug single libffi build stage (Verbose)
         run: |
           ./scripts/build-xwayland.sh --only=libffi
