@@ -68,8 +68,8 @@ jobs:
           chmod +x $HOME/.local/bin/aclocal $HOME/.local/bin/autoreconf
           export PATH="$HOME/.local/bin:$PATH"
 
-          # 2. Создаем новую функцию с исправленной логикой генерации конфигов для Bionic
-          cat > /tmp/fixed_build_autotools << 'FIXED'
+          # 2. Подготавливаем блок кода новой функции с правильными отступами
+          cat > /tmp/new_function.txt << 'FIXED'
           build_autotools() {
               local name="$1"; shift
               local src="$SRC_ROOT/$name"
@@ -91,15 +91,15 @@ jobs:
                   make install && \
                   printf '%s\n' "$TRIPLE" > .tawc-autotools-host )
           }
+          _ignored_old_build_autotools() {
           FIXED
 
-          # 3. Безопасный фикс: переименовываем старую функцию, чтобы избежать конфликтов синтаксиса
-          sed -i 's/build_autotools() {/old_build_autotools() {/g' scripts/build-xwayland.sh
-          
-          # 4. Внедряем нашу новую исправленную функцию в самый конец скрипта
-          cat /tmp/fixed_build_autotools >> scripts/build-xwayland.sh
+          # 3. Инжектим новую функцию РОВНО на место старой (вместо строки "build_autotools() {")
+          # Старая однострочная функция автоматически закроется внутри фиктивной "_ignored_old_build_autotools"
+          sed -i '/build_autotools() {/r /tmp/new_function.txt' scripts/build-xwayland.sh
+          sed -i 's/build_autotools() {//g' scripts/build-xwayland.sh
 
-          # 5. Очищаем старые артефакты libffi перед сборкой
+          # 4. Очищаем старые артефакты libffi перед сборкой
           rm -rf deps/xwayland-src/libffi build/xwayland-aarch64 2>/dev/null || true
 
       - name: Debug single libffi build stage
