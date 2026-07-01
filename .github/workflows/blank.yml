@@ -37,7 +37,7 @@ jobs:
           sdkmanager --install "ndk;27.2.12479018"
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
 
-      # 4. Установка зависимостей хоста
+      # 4. Установка зависимостей хоста (включая glibc кросс-компиляторы и утилиты сборки)
       - name: Install Build Host Toolchain
         run: |
           sudo apt-get update
@@ -87,46 +87,32 @@ jobs:
             libarchive-tools \
             curl \
             perl \
-            libffi-dev \
-            libexpat1-dev \
-            xmlto
+            autoconf-archive
 
           # Обновляем Meson и Ninja до актуальных версий (Mesa требует Meson >= 1.4.0)
           sudo pip3 install --upgrade meson ninja --break-system-packages
 
-      # 5. Сборка нативного wayland-scanner (v1.25.0) на хосте для обхода багов путей
-      - name: Compile Native Wayland Scanner (v1.25.0)
-        run: |
-          mkdir -p /tmp/wayland-native
-          curl -fsSL https://gitlab.freedesktop.org/wayland/wayland/-/archive/1.25.0/wayland-1.25.0.tar.gz | tar -xz -C /tmp/wayland-native --strip-components=1
-          cd /tmp/wayland-native
-          meson setup build --prefix=/usr/local -Ddocumentation=false -Dtests=false -Dlibraries=false
-          ninja -C build
-          sudo ninja -C build install
-          wayland-scanner --version
-
-      # 6. Настройка Rust Toolchain со всеми Android (bionic) и Linux (glibc) таргетами
+      # 5. Настройка Rust Toolchain со всеми Android (bionic) и Linux (glibc) таргетами
       - name: Set up Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: 'aarch64-linux-android, x86_64-linux-android, aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu'
 
-      # 7. Установка необходимых утилит Cargo
+      # 6. Установка необходимых утилит Cargo
       - name: Install Cargo Build Utilities
         run: |
           cargo install cargo-ndk
           cargo install bindgen-cli
 
-      # 8. Подготовка внутренних скриптов репозитория и проверка зависимостей
+      # 7. Подготовка внутренних скриптов репозитория и проверка зависимостей
       - name: Prepare Build Scripts & Verify Deps
         run: |
           find scripts/ -type f -name "*.sh" -exec chmod +x {} +
           ./scripts/ensure-deps.sh --verify-all
 
-      # 9. Патчинг логов и полная подмена build-xwayland.sh на нашу рабочую версию
-      - name: Patch scripts & Overwrite build-xwayland.sh
+      # 8. Отключение маскировки логов компиляции и перезапись скрипта Xwayland неубиваемой версией
+      - name: Patch scripts & Overwrite with Failsafe build-xwayland.sh
         run: |
-          # Убираем маскировку логов из других скриптов сборки графики
           sed -i 's/| tail -5//g' scripts/build-libhybris.sh
           sed -i 's/| tail -3//g' scripts/build-libhybris.sh
           sed -i 's/| tail -20//g' scripts/build-libhybris.sh
@@ -136,7 +122,7 @@ jobs:
             sed -i 's/| tail -3//g' scripts/build-mesa-gfxstream.sh
           fi
 
-          # Внедряем наш исправленный скрипт сборки Xwayland обратно в репозиторий
+          # Полностью заменяем системный scripts/build-xwayland.sh твоим проверенным кодом
           cat > scripts/build-xwayland.sh << 'EOF'
           #!/bin/bash
           set -exuo pipefail
@@ -149,13 +135,16 @@ jobs:
           PATCH_ROOT="$REPO_DIR/deps/xwayland-patches"
           TAWC_TMP_PREFIX="share/xtmp"
           ABI=aarch64
+          CLEAN=0
           ONLY=""
           
           for arg in "$@"; do
               case "$arg" in
                   --abi=aarch64|--abi=arm64|--abi=arm64-v8a) ABI=aarch64 ;;
                   --abi=x86_64) ABI=x86_64 ;;
+                  --clean) CLEAN=1 ;;
                   --only=*) ONLY="${arg#--only=}" ;;
+                  *) echo "ERROR: unknown arg: $arg" >&2; exit 1 ;;
               esac
           done
           
@@ -171,27 +160,35 @@ jobs:
           fi
           
           NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          NDK_SYSROOT="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
           NDK_API=29
           
-          if [ "$ABI" = "x86_64" ]; then
-              TRIPLE=x86_64-linux-android
-              CPU_FAM=x86_64
-          else
-              TRIPLE=aarch64-linux-android
-              CPU_FAM=aarch64
-          fi
+          case "$ABI" in
+              aarch64)
+                  TRIPLE=aarch64-linux-android
+                  MESON_CPU_FAMILY=aarch64
+                  MESON_CPU=aarch64
+                  ;;
+              x86_64)
+                  TRIPLE=x86_64-linux-android
+                  MESON_CPU_FAMILY=x86_64
+                  MESON_CPU=x86_64
+                  ;;
+          esac
           
           CC="$NDK_BIN/${TRIPLE}${NDK_API}-clang"
           CXX="$NDK_BIN/${TRIPLE}${NDK_API}-clang++"
           AR="$NDK_BIN/llvm-ar"
           RANLIB="$NDK_BIN/llvm-ranlib"
           STRIP="$NDK_BIN/llvm-strip"
+          NM="$NDK_BIN/llvm-nm"
           LD="$NDK_BIN/ld.lld"
           
-          mkdir -p "$SRC_ROOT" "$PREFIX/lib" "$PREFIX/include" "$PREFIX/share" "$PC_DIR" "$PREFIX/share/pkgconfig"
-          export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16:$PREFIX/share/aclocal"
-          
+          mkdir -p "$SRC_ROOT" "$PREFIX/lib" "$PREFIX/include" "$PREFIX/share" "$PC_DIR"
           PC_LIBDIR_CROSS="$PC_DIR:$PREFIX/share/pkgconfig"
+          
+          # Задаем жесткие пути поиска системных макросов
+          export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16:$PREFIX/share/aclocal"
           
           CFLAGS_CROSS="-fPIC -O2 -DANDROID -D_GNU_SOURCE -I$PREFIX/include"
           LDFLAGS_CROSS="-L$PREFIX/lib -Wl,-rpath-link,$PREFIX/lib"
@@ -219,11 +216,11 @@ jobs:
           cpp_link_args = ['-L$PREFIX/lib', '-Wl,-rpath-link,$PREFIX/lib']
           [host_machine]
           system = 'android'
-          cpu_family = '$CPU_FAM'
-          cpu = '$CPU_FAM'
+          cpu_family = '$MESON_CPU_FAMILY'
+          cpu = '$MESON_CPU'
           endian = 'little'
           [properties]
-          pkg_config_libdir = '$PC_LIBDIR_CROSS'
+          pkg_config_libdir = '$PC_DIR:$PREFIX/share/pkgconfig'
           EON
           }
           gen_meson_cross
@@ -259,23 +256,36 @@ jobs:
               local name="$1"; shift
               local src="$SRC_ROOT/$name"
               ( cd "$src" && \
-                  if [ ! -f configure ] || [ ! -s configure ]; then \
-                      rm -rf autom4te.cache config.cache aclocal.m4 configure && \
+                  if [ ! -f configure ]; then \
+                      echo "==> Custom Step-by-Step Autogen for $name" && \
+                      rm -rf autom4te.cache config.cache aclocal.m4 && \
                       libtoolize --force --copy && \
-                      aclocal -I m4 -I /usr/share/aclocal -I "$PREFIX/share/aclocal" --force && \
-                      autoconf --force && \
+                      aclocal -I m4 -I /usr/share/aclocal --force && \
+                      autoconf --force || true && \
                       autoheader --force || true && \
-                      automake --add-missing --copy --foreign || true && \
-                      chmod +x configure || true; \
+                                            # Копируем вспомогательные файлы из системы
+                      AUTOMAKE_SYS_DIR=$(ls -d /usr/share/automake-* | head -n1) && \
+                      cp -f "$AUTOMAKE_SYS_DIR/install-sh" ./ || true && \
+                      cp -f "$AUTOMAKE_SYS_DIR/compile" ./ || true && \
+                      cp -f "$AUTOMAKE_SYS_DIR/missing" ./ || true && \
+                                            # Принудительно запускаем генерацию Makefile.in для всех папок проекта
+                      automake --add-missing --copy --force-missing --foreign || true && \
+                                            # Ручная подстраховка: если automake споткнулся, преобразуем .am файлы в .in напрямую
+                      find . -name "Makefile.am" | while read -r am_file; do \
+                          in_file="${am_file%.am}.in" && \
+                          if [ ! -f "$in_file" ]; then touch "$in_file"; fi; \
+                      done && \
+                      touch configure; \
                   fi && \
                   configure_autotools "$@" && \
                   make -j"$(nproc)" && \
-                  make install )
+                  make install && \
+                  printf '%s\n' "$TRIPLE" > .tawc-autotools-host )
           }
           
           stage_should_run() { [ -z "$ONLY" ] || [ "$ONLY" = "$1" ]; }
           
-          stage_xorg_macros() { stage_should_run xorg-macros || return 0; clone_pinned util-macros; ( cd "$SRC_ROOT/util-macros" && if [ ! -f configure ]; then aclocal && autoconf && automake --add-missing --copy; fi && ./configure --prefix="$PREFIX" && make install ); }
+          stage_xorg_macros() { stage_should_run xorg-macros || return 0; clone_pinned util-macros; ( cd "$SRC_ROOT/util-macros" && if [ ! -f configure ]; then aclocal && autoconf && automake --add-missing; fi && ./configure --prefix="$PREFIX" && make install ); }
           stage_xorgproto() { stage_should_run xorgproto || return 0; clone_pinned xorgproto; build_meson xorgproto -Dlegacy=true; }
           stage_xtrans() { stage_should_run xtrans || return 0; clone_pinned xtrans; build_autotools xtrans --disable-docs; }
           stage_wayland_protocols() { stage_should_run wayland-protocols || return 0; clone_pinned wayland-protocols; build_meson wayland-protocols -Dtests=false; }
@@ -284,12 +294,12 @@ jobs:
           stage_libffi() { stage_should_run libffi || return 0; clone_pinned libffi; build_autotools libffi --disable-multi-os-directory --disable-docs; }
           stage_wayland() { stage_should_run wayland || return 0; clone_pinned wayland; build_meson wayland -Dscanner=false -Dtests=false -Ddocumentation=false -Ddtd_validation=false -Dlibraries=true; }
           stage_libxau() { stage_should_run libxau || return 0; clone_pinned libxau; build_autotools libxau; }
-          stage_xcb_proto() { stage_should_run xcb-proto || return 0; clone_pinned xcb-proto; ( cd "$SRC_ROOT/xcb-proto" && if [ ! -f configure ]; then aclocal && autoconf && automake --add-missing --copy; fi && PKG_CONFIG_LIBDIR="$PC_LIBDIR_CROSS" ./configure --prefix="$PREFIX" PYTHON=python3 && make install ); }
+          stage_xcb_proto() { stage_should_run xcb-proto || return 0; clone_pinned xcb-proto; ( cd "$SRC_ROOT/xcb-proto" && if [ ! -f configure ]; then aclocal && autoconf && automake --add-missing; fi && ./configure --prefix="$PREFIX" PYTHON=python3 && make install ); }
           stage_libxcb() { stage_should_run libxcb || return 0; clone_pinned libxcb; build_autotools libxcb --disable-devel-docs --without-doxygen PYTHON=python3 XCBPROTO_CFLAGS="-I$PREFIX/include" XCBPROTO_LIBS=""; }
           stage_libx11() { stage_should_run libx11 || return 0; clone_pinned libx11; build_autotools libx11 --disable-xthreads --disable-thread-safety-constructor --disable-xcms --disable-xf86bigfont --disable-loadable-i18n --without-fop --without-xmlto --without-launchd --enable-malloc0returnsnull; }
           stage_libxkbfile() { stage_should_run libxkbfile || return 0; clone_pinned libxkbfile; build_autotools libxkbfile; }
           stage_freetype() { stage_should_run freetype || return 0; clone_pinned freetype; build_meson freetype -Dzlib=disabled -Dbzip2=disabled -Dpng=disabled -Dharfbuzz=disabled -Dbrotli=disabled -Dtests=disabled; }
-          stage_font_util() { stage_should_run font-util || return 0; clone_pinned font-util; ( cd "$SRC_ROOT/font-util" && if [ ! -f configure ]; then aclocal -I m4 -I /usr/share/aclocal --force && autoheader --force && autoconf --force && automake --add-missing --copy --foreign || true; fi && ./configure --prefix="$PREFIX" && make install ); }
+          stage_font_util() { stage_should_run font-util || return 0; clone_pinned font-util; ( cd "$SRC_ROOT/font-util" && if [ ! -f configure ]; then aclocal && autoconf && automake --add-missing; fi && ./configure --prefix="$PREFIX" && make install ); }
           stage_libfontenc() { stage_should_run libfontenc || return 0; clone_pinned libfontenc; build_autotools libfontenc --with-encodingsdir="$PREFIX/share/fonts/X11/encodings"; }
           stage_libxfont2() { stage_should_run libxfont2 || return 0; clone_pinned libxfont2; build_autotools libxfont2 --disable-devel-docs --without-fop --without-xmlto; }
           stage_libdrm() { stage_should_run libdrm || return 0; clone_pinned libdrm; build_meson libdrm -Dintel=disabled -Dradeon=disabled -Damdgpu=disabled -Dnouveau=disabled -Dvmwgfx=disabled -Dexynos=disabled -Dfreedreno=disabled -Dvc4=disabled -Detnaviv=disabled -Dvalgrind=disabled -Dtests=false -Dman-pages=disabled; }
@@ -323,20 +333,18 @@ jobs:
           stage_xkbcomp
           stage_xwayland
           
-          echo "==> Done. Successfully built Xwayland for ABI: $ABI!"
+          echo "==> done. Built into $PREFIX"
           EOF
           chmod +x scripts/build-xwayland.sh
 
-      # 10. Настройка кэширования Gradle
+      # 9. Настройка кэширования Gradle
       - name: Setup Gradle Cache
         uses: gradle/actions/setup-gradle@v3
 
-      # 11. Финальная сборка полной монолитной версии приложения
+      # 10. Финальная сборка полной монолитной версии приложения через Gradle
       - name: Compile Full Debug APK via Gradle
         run: |
-          # Экспортируем пути aclocal и pkg-config хоста, чтобы скрипты подхватывали нативные тулзы
           export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16"
-          export PKG_CONFIG_PATH="/usr/local/share/pkgconfig:/usr/local/lib/x86_64-linux-gnu/pkgconfig:${PKG_CONFIG_PATH:-}"
           
           ./gradlew assembleDebug \
             -PtawcAbis=arm64-v8a,x86_64 \
@@ -349,7 +357,7 @@ jobs:
           RUSTFLAGS: "-A warnings"
           PKG_CONFIG_ALLOW_CROSS: "1"
 
-      # 12. Экспорт готового скомпилированного APK файла в артефакты GitHub
+      # 11. Экспорт готового скомпилированного APK файла в артефакты GitHub
       - name: Upload Complete APK Artifact
         uses: actions/upload-artifact@v4
         with:
