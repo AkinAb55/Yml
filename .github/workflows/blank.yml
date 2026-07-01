@@ -1,54 +1,4 @@
-name: Debug Xwayland Libffi (Failsafe Local Patch)
-
-on:
-  push:
-    branches: [ main, master ]
-  workflow_dispatch:
-
-jobs:
-  build-apk:
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout TAWC Repository
-        uses: actions/checkout@v4
-        with:
-          repository: 'wmww/tawc'
-          ref: 'main'
-          submodules: 'recursive'
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Specific NDK
-        run: |
-          sdkmanager --install "ndk;27.2.12479018"
-          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
-
-      - name: Install Build Host Toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential meson ninja-build autoconf automake libtool libtool-bin \
-            autoconf-archive m4 pkg-config texinfo gettext git curl python3
-
-      - name: Prepare Build Scripts & Deps
-        run: |
-          chmod +x scripts/*.sh || true
-          ./scripts/ensure-deps.sh --verify-all
-
-      - name: Inject Max Verbose Flags
-        run: |
-          sed -i '2i set -x' scripts/build-xwayland.sh
-          sed -i 's/2>\/dev\/null//g' scripts/build-xwayland.sh
-          sed -i 's/autoreconf -fi/autoreconf -fiv/g' scripts/build-xwayland.sh
-
-      - name: Fix build_autotools function (Final Version)
+- name: Fix build_autotools function (Final Version)
         run: |
           mkdir -p $HOME/.local/bin
           echo "$HOME/.local/bin" >> $GITHUB_PATH
@@ -93,18 +43,11 @@ jobs:
           }
           FIXED
 
-          # 3. Полностью удаляем оригинальную однострочную функцию из скрипта
-          sed -i '/build_autotools() {/,/}/d' scripts/build-xwayland.sh
+          # 3. Безопасный фикс: просто переименовываем старую функцию, чтобы она не вызывалась
+          sed -i 's/build_autotools() {/old_build_autotools() {/g' scripts/build-xwayland.sh
           
-          # 4. Внедряем нашу новую исправленную функцию в тело скрипта
+          # 4. Внедряем нашу новую исправленную функцию в самый конец скрипта
           cat /tmp/fixed_build_autotools >> scripts/build-xwayland.sh
 
           # 5. Очищаем старые артефакты libffi перед сборкой
           rm -rf deps/xwayland-src/libffi build/xwayland-aarch64 2>/dev/null || true
-
-      - name: Debug single libffi build stage
-        run: |
-          ./scripts/build-xwayland.sh --only=libffi
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
-          PKG_CONFIG_ALLOW_CROSS: "1"
