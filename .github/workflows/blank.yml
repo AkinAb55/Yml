@@ -63,8 +63,11 @@ jobs:
           RANLIB="$NDK_BIN/llvm-ranlib"
           STRIP="$NDK_BIN/llvm-strip"
           
-          mkdir -p "$SRC_ROOT" "$PREFIX/lib" "$PREFIX/include" "$PREFIX/share" "$PC_DIR" "$PREFIX/share/aclocal"
+          mkdir -p "$SRC_ROOT" "$PREFIX/lib" "$PREFIX/include" "$PREFIX/share" "$PC_DIR" "$PREFIX/share/pkgconfig"
           export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16:$PREFIX/share/aclocal"
+          
+          # Фикс: pkg-config должен искать в обеих директориях нашего префикса
+          PC_LIBDIR_CROSS="$PC_DIR:$PREFIX/share/pkgconfig"
           
           CFLAGS_CROSS="-fPIC -O2 -DANDROID -D_GNU_SOURCE -I$PREFIX/include"
           LDFLAGS_CROSS="-L$PREFIX/lib -Wl,-rpath-link,$PREFIX/lib"
@@ -76,7 +79,7 @@ jobs:
           }
           
           configure_autotools() {
-              PKG_CONFIG_LIBDIR="$PC_DIR" \
+              PKG_CONFIG_LIBDIR="$PC_LIBDIR_CROSS" \
               PKG_CONFIG_PATH="" \
               ./configure \
                   --host="$TRIPLE" \
@@ -90,7 +93,6 @@ jobs:
                   "$@"
           }
 
-          # Нужен для libxcb, чтобы не падал макрос XORG_MACROS_VERSION
           stage_xorg_macros() {
               clone_pinned util-macros
               ( cd "$SRC_ROOT/util-macros" && \
@@ -107,7 +109,7 @@ jobs:
                 if [ ! -f configure ]; then \
                     aclocal && autoconf && automake --add-missing --copy || true; \
                 fi && \
-                ./configure --prefix="$PREFIX" PYTHON=python3 && \
+                PKG_CONFIG_LIBDIR="$PC_LIBDIR_CROSS" ./configure --prefix="$PREFIX" PYTHON=python3 && \
                 make install )
           }
           
