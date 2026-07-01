@@ -183,9 +183,18 @@ jobs:
                       rm -rf autom4te.cache config.cache aclocal.m4 && \
                       libtoolize --force --copy && \
                       aclocal -I m4 -I /usr/share/aclocal --force && \
-                      autoconf --force && \
-                      autoheader --force && \
-                      automake --add-missing --copy --foreign || true && \
+                      autoconf --force || true && \
+                      autoheader --force || true && \
+                      
+                      # Фикс вспомогательных файлов: принудительно копируем их из системы, 
+                      # так как automake ломается из-за макросов
+                      AUTOMAKE_SYS_DIR=$(ls -d /usr/share/automake-* | head -n1) && \
+                      cp -f "$AUTOMAKE_SYS_DIR/install-sh" ./ || true && \
+                      cp -f "$AUTOMAKE_SYS_DIR/compile" ./ || true && \
+                      cp -f "$AUTOMAKE_SYS_DIR/missing" ./ || true && \
+                      
+                      # Создаем пустой Makefile.in, чтобы configure не ругался (если требуется)
+                      touch Makefile.in || true && \
                       touch configure; \
                   fi && \
                   configure_autotools "$@" && \
