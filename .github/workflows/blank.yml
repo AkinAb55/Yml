@@ -63,7 +63,7 @@ jobs:
           RANLIB="$NDK_BIN/llvm-ranlib"
           STRIP="$NDK_BIN/llvm-strip"
           
-          mkdir -p "$SRC_ROOT" "$PREFIX/lib" "$PREFIX/include" "$PREFIX/share" "$PC_DIR"
+          mkdir -p "$SRC_ROOT" "$PREFIX/lib" "$PREFIX/include" "$PREFIX/share" "$PC_DIR" "$PREFIX/share/aclocal"
           export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16:$PREFIX/share/aclocal"
           
           CFLAGS_CROSS="-fPIC -O2 -DANDROID -D_GNU_SOURCE -I$PREFIX/include"
@@ -90,7 +90,17 @@ jobs:
                   "$@"
           }
 
-          # 1. Сборка xcb-proto (Проверяем, нужен ли ему autoheader)
+          # Нужен для libxcb, чтобы не падал макрос XORG_MACROS_VERSION
+          stage_xorg_macros() {
+              clone_pinned util-macros
+              ( cd "$SRC_ROOT/util-macros" && \
+                if [ ! -f configure ]; then \
+                    aclocal && autoconf && automake --add-missing --copy || true; \
+                fi && \
+                ./configure --prefix="$PREFIX" && \
+                make install )
+          }
+
           stage_xcb_proto() {
               clone_pinned xcb-proto
               ( cd "$SRC_ROOT/xcb-proto" && \
@@ -101,24 +111,24 @@ jobs:
                 make install )
           }
           
-          # 2. Кросс-компиляция самого libxcb под Android NDK
           stage_libxcb() {
               clone_pinned libxcb
               ( cd "$SRC_ROOT/libxcb" && \
-                if [ ! -f configure ]; then \
-                    rm -rf autom4te.cache config.cache aclocal.m4 && \
+                if [ ! -f configure ] || [ ! -s configure ]; then \
+                    rm -rf autom4te.cache config.cache aclocal.m4 configure && \
                     libtoolize --force --copy && \
-                    aclocal -I m4 -I /usr/share/aclocal --force && \
+                    aclocal -I m4 -I /usr/share/aclocal -I "$PREFIX/share/aclocal" --force && \
                     autoconf --force && \
                     autoheader --force || true && \
                     automake --add-missing --copy --foreign || true && \
-                    touch configure; \
+                    chmod +x configure || true; \
                 fi && \
                 configure_autotools --disable-devel-docs --without-doxygen PYTHON=python3 XCBPROTO_CFLAGS="-I$PREFIX/include" XCBPROTO_LIBS="" && \
                 make -j"$(nproc)" && \
                 make install )
           }
           
+          stage_xorg_macros
           stage_xcb_proto
           stage_libxcb
           
