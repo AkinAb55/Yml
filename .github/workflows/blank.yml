@@ -1,4 +1,4 @@
-name: Debug Font-Util and Macros ONLY
+name: Debug XCB-Proto and LibXCB ONLY
 
 on:
   push:
@@ -29,14 +29,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential autoconf automake libtool libtool-bin \
-            autoconf-archive m4 pkg-config git curl
+            autoconf-archive m4 pkg-config git curl python3 python3-pip
 
       - name: Prepare Build Scripts & Deps
         run: |
           chmod +x scripts/*.sh || true
           ./scripts/ensure-deps.sh --verify-all
 
-      - name: Overwrite with Targeted build-xwayland.sh
+      - name: Overwrite with Targeted Build Script
         run: |
           cat > scripts/build-xwayland.sh << 'EOF'
           #!/bin/bash
@@ -56,8 +56,18 @@ jobs:
           PC_DIR="$PREFIX/lib/pkgconfig"
           TRIPLE=aarch64-linux-android
           
+          NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          CC="$NDK_BIN/${TRIPLE}29-clang"
+          CXX="$NDK_BIN/${TRIPLE}29-clang++"
+          AR="$NDK_BIN/llvm-ar"
+          RANLIB="$NDK_BIN/llvm-ranlib"
+          STRIP="$NDK_BIN/llvm-strip"
+          
           mkdir -p "$SRC_ROOT" "$PREFIX/lib" "$PREFIX/include" "$PREFIX/share" "$PC_DIR"
           export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16:$PREFIX/share/aclocal"
+          
+          CFLAGS_CROSS="-fPIC -O2 -DANDROID -D_GNU_SOURCE -I$PREFIX/include"
+          LDFLAGS_CROSS="-L$PREFIX/lib -Wl,-rpath-link,$PREFIX/lib"
           
           clone_pinned() {
               local name="$1"
@@ -65,40 +75,58 @@ jobs:
               dep_apply_patches "$name" "$patch_dir" "s|@TAWC_TMP_PREFIX@|$TAWC_TMP_PREFIX|g"
           }
           
-          # 1. Сборка утилит макросов (БЕЗ autoheader!)
-          stage_xorg_macros() {
-              clone_pinned util-macros
-              ( cd "$SRC_ROOT/util-macros" && \
+          configure_autotools() {
+              PKG_CONFIG_LIBDIR="$PC_DIR" \
+              PKG_CONFIG_PATH="" \
+              ./configure \
+                  --host="$TRIPLE" \
+                  --prefix="$PREFIX" \
+                  --libdir="$PREFIX/lib" \
+                  CC="$CC" CXX="$CXX" AR="$AR" RANLIB="$RANLIB" STRIP="$STRIP" \
+                  CFLAGS="$CFLAGS_CROSS" \
+                  CPPFLAGS="-I$PREFIX/include" \
+                  LDFLAGS="$LDFLAGS_CROSS" \
+                  PKG_CONFIG="pkg-config" \
+                  "$@"
+          }
+
+          # 1. Сборка xcb-proto (Проверяем, нужен ли ему autoheader)
+          stage_xcb_proto() {
+              clone_pinned xcb-proto
+              ( cd "$SRC_ROOT/xcb-proto" && \
                 if [ ! -f configure ]; then \
                     aclocal && autoconf && automake --add-missing --copy || true; \
                 fi && \
-                ./configure --prefix="$PREFIX" && \
+                ./configure --prefix="$PREFIX" PYTHON=python3 && \
                 make install )
           }
           
-          # 2. Сборка проблемного font-util (С принудительным autoheader)
-          stage_font_util() {
-              clone_pinned font-util
-              ( cd "$SRC_ROOT/font-util" && \
+          # 2. Кросс-компиляция самого libxcb под Android NDK
+          stage_libxcb() {
+              clone_pinned libxcb
+              ( cd "$SRC_ROOT/libxcb" && \
                 if [ ! -f configure ]; then \
+                    rm -rf autom4te.cache config.cache aclocal.m4 && \
+                    libtoolize --force --copy && \
                     aclocal -I m4 -I /usr/share/aclocal --force && \
-                    autoheader --force && \
                     autoconf --force && \
-                    automake --add-missing --copy --foreign || true; \
+                    autoheader --force || true && \
+                    automake --add-missing --copy --foreign || true && \
+                    touch configure; \
                 fi && \
-                ./configure --prefix="$PREFIX" && \
+                configure_autotools --disable-devel-docs --without-doxygen PYTHON=python3 XCBPROTO_CFLAGS="-I$PREFIX/include" XCBPROTO_LIBS="" && \
+                make -j"$(nproc)" && \
                 make install )
           }
           
-          # Запускаем ТОЛЬКО эту изолированную связку
-          stage_xorg_macros
-          stage_font_util
+          stage_xcb_proto
+          stage_libxcb
           
-          echo "==> Изолированный тест завершен!"
+          echo "==> Изолированный тест XCB завершен!"
           EOF
           chmod +x scripts/build-xwayland.sh
 
-      - name: Run Target Test
+      - name: Run XCB Target Test
         run: |
           export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16"
           ./scripts/build-xwayland.sh
