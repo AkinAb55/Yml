@@ -44,21 +44,7 @@ jobs:
 
       - name: Overwrite with Failsafe build-xwayland.sh
         run: |
-          # 1. Создаем обертки для инструментов сборки в PATH
-          mkdir -p $HOME/.local/bin
-          cat > $HOME/.local/bin/aclocal << 'EOL'
-          #!/bin/bash
-          exec /usr/bin/aclocal "$@" -I /usr/share/aclocal -I /usr/share/aclocal-1.16 -I m4 --force
-          EOL
-          
-          cat > $HOME/.local/bin/autoreconf << 'EOL'
-          #!/bin/bash
-          export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16:${ACLOCAL_PATH:-}"
-          exec /usr/bin/autoreconf "$@"
-          EOL
-          chmod +x $HOME/.local/bin/aclocal $HOME/.local/bin/autoreconf
-
-          # 2. Полностью перезаписываем scripts/build-xwayland.sh на исправную и стабильную версию
+          # Полностью перезаписываем scripts/build-xwayland.sh
           cat > scripts/build-xwayland.sh << 'EOF'
           #!/bin/bash
           set -exuo pipefail
@@ -123,8 +109,8 @@ jobs:
           mkdir -p "$SRC_ROOT" "$PREFIX/lib" "$PREFIX/include" "$PREFIX/share" "$PC_DIR"
           PC_LIBDIR_CROSS="$PC_DIR:$PREFIX/share/pkgconfig"
           
-          # Жестко прописываем пути к системным макросам, чтобы autoconf их видел
-          export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16:$PREFIX/share/aclocal:${ACLOCAL_PATH:-}"
+          # Задаем жесткие пути поиска системных макросов
+          export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16:$PREFIX/share/aclocal"
           
           CFLAGS_CROSS="-fPIC -O2 -DANDROID -D_GNU_SOURCE -I$PREFIX/include"
           LDFLAGS_CROSS="-L$PREFIX/lib -Wl,-rpath-link,$PREFIX/lib"
@@ -193,10 +179,13 @@ jobs:
               local src="$SRC_ROOT/$name"
               ( cd "$src" && \
                   if [ ! -f configure ]; then \
-                      echo "==> Running fixed autogen for $name" && \
+                      echo "==> Custom Step-by-Step Autogen for $name" && \
+                      rm -rf autom4te.cache config.cache aclocal.m4 && \
                       libtoolize --force --copy && \
                       aclocal -I m4 -I /usr/share/aclocal --force && \
-                      autoreconf -fiv --install -I m4 -I /usr/share/aclocal && \
+                      autoconf --force && \
+                      autoheader --force && \
+                      automake --add-missing --copy --foreign || true && \
                       touch configure; \
                   fi && \
                   configure_autotools "$@" && \
@@ -207,7 +196,7 @@ jobs:
           
           stage_should_run() { [ -z "$ONLY" ] || [ "$ONLY" = "$1" ]; }
           
-          stage_xorg_macros() { stage_should_run xorg-macros || return 0; clone_pinned util-macros; ( cd "$SRC_ROOT/util-macros" && if [ ! -f configure ]; then autoreconf -fiv --install -I /usr/share/aclocal; fi && ./configure --prefix="$PREFIX" && make install ); }
+          stage_xorg_macros() { stage_should_run xorg-macros || return 0; clone_pinned util-macros; ( cd "$SRC_ROOT/util-macros" && if [ ! -f configure ]; then aclocal && autoconf && automake --add-missing; fi && ./configure --prefix="$PREFIX" && make install ); }
           stage_xorgproto() { stage_should_run xorgproto || return 0; clone_pinned xorgproto; build_meson xorgproto -Dlegacy=true; }
           stage_xtrans() { stage_should_run xtrans || return 0; clone_pinned xtrans; build_autotools xtrans --disable-docs; }
           stage_wayland_protocols() { stage_should_run wayland-protocols || return 0; clone_pinned wayland-protocols; build_meson wayland-protocols -Dtests=false; }
@@ -216,12 +205,12 @@ jobs:
           stage_libffi() { stage_should_run libffi || return 0; clone_pinned libffi; build_autotools libffi --disable-multi-os-directory --disable-docs; }
           stage_wayland() { stage_should_run wayland || return 0; clone_pinned wayland; build_meson wayland -Dscanner=false -Dtests=false -Ddocumentation=false -Ddtd_validation=false -Dlibraries=true; }
           stage_libxau() { stage_should_run libxau || return 0; clone_pinned libxau; build_autotools libxau; }
-          stage_xcb_proto() { stage_should_run xcb-proto || return 0; clone_pinned xcb-proto; ( cd "$SRC_ROOT/xcb-proto" && if [ ! -f configure ]; then autoreconf -fiv --install -I /usr/share/aclocal; fi && ./configure --prefix="$PREFIX" PYTHON=python3 && make install ); }
+          stage_xcb_proto() { stage_should_run xcb-proto || return 0; clone_pinned xcb-proto; ( cd "$SRC_ROOT/xcb-proto" && if [ ! -f configure ]; then aclocal && autoconf && automake --add-missing; fi && ./configure --prefix="$PREFIX" PYTHON=python3 && make install ); }
           stage_libxcb() { stage_should_run libxcb || return 0; clone_pinned libxcb; build_autotools libxcb --disable-devel-docs --without-doxygen PYTHON=python3 XCBPROTO_CFLAGS="-I$PREFIX/include" XCBPROTO_LIBS=""; }
           stage_libx11() { stage_should_run libx11 || return 0; clone_pinned libx11; build_autotools libx11 --disable-xthreads --disable-thread-safety-constructor --disable-xcms --disable-xf86bigfont --disable-loadable-i18n --without-fop --without-xmlto --without-launchd --enable-malloc0returnsnull; }
           stage_libxkbfile() { stage_should_run libxkbfile || return 0; clone_pinned libxkbfile; build_autotools libxkbfile; }
           stage_freetype() { stage_should_run freetype || return 0; clone_pinned freetype; build_meson freetype -Dzlib=disabled -Dbzip2=disabled -Dpng=disabled -Dharfbuzz=disabled -Dbrotli=disabled -Dtests=disabled; }
-          stage_font_util() { stage_should_run font-util || return 0; clone_pinned font-util; ( cd "$SRC_ROOT/font-util" && if [ ! -f configure ]; then autoreconf -fiv --install -I /usr/share/aclocal; fi && ./configure --prefix="$PREFIX" && make install ); }
+          stage_font_util() { stage_should_run font-util || return 0; clone_pinned font-util; ( cd "$SRC_ROOT/font-util" && if [ ! -f configure ]; then aclocal && autoconf && automake --add-missing; fi && ./configure --prefix="$PREFIX" && make install ); }
           stage_libfontenc() { stage_should_run libfontenc || return 0; clone_pinned libfontenc; build_autotools libfontenc --with-encodingsdir="$PREFIX/share/fonts/X11/encodings"; }
           stage_libxfont2() { stage_should_run libxfont2 || return 0; clone_pinned libxfont2; build_autotools libxfont2 --disable-devel-docs --without-fop --without-xmlto; }
           stage_libdrm() { stage_should_run libdrm || return 0; clone_pinned libdrm; build_meson libdrm -Dintel=disabled -Dradeon=disabled -Damdgpu=disabled -Dnouveau=disabled -Dvmwgfx=disabled -Dexynos=disabled -Dfreedreno=disabled -Dvc4=disabled -Detnaviv=disabled -Dvalgrind=disabled -Dtests=false -Dman-pages=disabled; }
@@ -262,7 +251,6 @@ jobs:
 
       - name: Debug single libffi build stage
         run: |
-          export PATH="$HOME/.local/bin:$PATH"
           export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16"
           ./scripts/build-xwayland.sh --only=libffi
         env:
