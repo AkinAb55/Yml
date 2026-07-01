@@ -1,4 +1,4 @@
-name: TAWC Wayland Diagnostic
+name: TAWC Wayland Debug (Scanner + Meson)
 
 on:
   workflow_dispatch:
@@ -14,92 +14,55 @@ jobs:
           repository: wmww/tawc
           submodules: recursive
 
-      - name: Install packages
+      - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             meson ninja-build pkg-config \
             libffi-dev libexpat1-dev \
-            python3 curl
+            python3 curl git \
+            wayland-protocols
 
-      - name: Build native wayland-scanner 1.25.0
+      # 🔥 Build correct wayland-scanner (critical)
+      - name: Build wayland-scanner 1.25.0
         run: |
-          curl -L https://gitlab.freedesktop.org/wayland/wayland/-/archive/1.25.0/wayland-1.25.0.tar.gz \
-            | tar xz
-
+          curl -L https://gitlab.freedesktop.org/wayland/wayland/-/archive/1.25.0/wayland-1.25.0.tar.gz | tar xz
           cd wayland-1.25.0
 
           meson setup build \
             --prefix=/usr/local \
-            -Dlibraries=false \
+            -Dtests=false \
             -Ddocumentation=false \
-            -Dtests=false
+            -Dlibraries=false
 
           ninja -C build
           sudo ninja -C build install
 
-      - name: Environment
+      # 🔥 HARD FIX environment (important)
+      - name: Export Wayland environment
         run: |
-          echo "===== PATH ====="
-          echo "$PATH"
+          echo "WAYLAND_SCANNER=/usr/local/bin/wayland-scanner" >> $GITHUB_ENV
+          echo "PKG_CONFIG_ALLOW_CROSS=1" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/share/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig" >> $GITHUB_ENV
+          echo "PATH=/usr/local/bin:$PATH" >> $GITHUB_ENV
 
-          echo
+      - name: Verify scanner
+        run: |
           echo "===== WHICH ====="
           which wayland-scanner
 
-          echo
+          echo "===== VERSION ====="
           wayland-scanner --version
 
-          echo
-          echo "===== PKG CONFIG ====="
+          echo "===== PKG-CONFIG ====="
           pkg-config --modversion wayland-scanner
 
-          echo
-          pkg-config --variable=pcfiledir wayland-scanner
-
-          echo
-          echo "===== FILE ====="
-          find /usr -name wayland-scanner.pc
-
-      - name: Create Android cross file
+      # 🔥 ONLY WAYLAND MESON TEST (no xwayland yet)
+      - name: Configure Wayland (Meson test)
         run: |
-          mkdir -p build
-
-          cat > build/android-cross.ini <<EOF
-          [binaries]
-          c='cc'
-          cpp='c++'
-          ar='ar'
-          strip='strip'
-          pkg-config='pkg-config'
-
-          [host_machine]
-          system='android'
-          cpu_family='aarch64'
-          cpu='aarch64'
-          endian='little'
-          EOF
-
-      - name: Meson configure (same as TAWC)
-        env:
-          PKG_CONFIG_ALLOW_CROSS: "1"
-          PKG_CONFIG_PATH: /usr/local/lib/pkgconfig:/usr/local/share/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig
-        run: |
-          echo "===== BEFORE ====="
-
-          which wayland-scanner
-          wayland-scanner --version
-
-          pkg-config --modversion wayland-scanner
-
-          echo
-          echo "===== MESON ====="
-
-          meson setup \
-            build-wayland \
+          meson setup build-wayland \
             deps/xwayland-src/wayland/src \
-            --cross-file build/android-cross.ini \
-            --prefix=/tmp/install \
+            --prefix=/tmp/test \
             --buildtype=debug \
             -Ddefault_library=shared \
             -Dscanner=false \
@@ -109,13 +72,8 @@ jobs:
             -Dlibraries=true \
             --wipe
 
-      - name: Dump Meson log
+      - name: Show Meson logs
         if: always()
         run: |
           echo "===== MESON LOG ====="
-
-          if [ -f build-wayland/meson-logs/meson-log.txt ]; then
-              cat build-wayland/meson-logs/meson-log.txt
-          else
-              echo "meson-log.txt not found"
-          fi
+          cat build-wayland/meson-logs/meson-log.txt || true
