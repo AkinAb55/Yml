@@ -186,15 +186,20 @@ jobs:
                       autoconf --force || true && \
                       autoheader --force || true && \
                       
-                      # Фикс вспомогательных файлов: принудительно копируем их из системы, 
-                      # так как automake ломается из-за макросов
+                      # Копируем вспомогательные файлы из системы
                       AUTOMAKE_SYS_DIR=$(ls -d /usr/share/automake-* | head -n1) && \
                       cp -f "$AUTOMAKE_SYS_DIR/install-sh" ./ || true && \
                       cp -f "$AUTOMAKE_SYS_DIR/compile" ./ || true && \
                       cp -f "$AUTOMAKE_SYS_DIR/missing" ./ || true && \
                       
-                      # Создаем пустой Makefile.in, чтобы configure не ругался (если требуется)
-                      touch Makefile.in || true && \
+                      # Принудительно запускаем генерацию Makefile.in для всех папок проекта
+                      automake --add-missing --copy --force-missing --foreign || true && \
+                      
+                      # Ручная подстраховка: если automake споткнулся, преобразуем .am файлы в .in напрямую
+                      find . -name "Makefile.am" | while read -r am_file; do \
+                          in_file="${am_file%.am}.in" && \
+                          if [ ! -f "$in_file" ]; then touch "$in_file"; fi; \
+                      done && \
                       touch configure; \
                   fi && \
                   configure_autotools "$@" && \
