@@ -1,4 +1,4 @@
-name: Debug Xwayland Libffi (Fix Host Path)
+name: Debug Xwayland Libffi (Force Fix)
 
 on:
   push:
@@ -19,14 +19,12 @@ jobs:
           ref: 'main'
           submodules: 'recursive'
 
-      # Установка Java
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
 
-      # Установка Android SDK/NDK
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
@@ -35,7 +33,6 @@ jobs:
           sdkmanager --install "ndk;27.2.12479018"
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
 
-      # Установка окружения сборщика (Вернули meson и ninja!)
       - name: Install Build Host Toolchain
         run: |
           sudo apt-get update
@@ -56,9 +53,6 @@ jobs:
             curl \
             python3
 
-          echo "ACLOCAL_PATH=/usr/share/aclocal:/usr/share/aclocal-1.16" >> $GITHUB_ENV
-          echo "ACLOCAL_FLAGS=-I /usr/share/aclocal -I /usr/share/aclocal-1.16" >> $GITHUB_ENV
-
       # Подготовка скриптов
       - name: Prepare Build Scripts & Verify Deps
         run: |
@@ -68,14 +62,9 @@ jobs:
       # Включаем МАКСИМАЛЬНЫЙ ВЫВОД ЛОГОВ
       - name: Inject Max Verbose Flags into Script
         run: |
-          # Включаем трассировку bash команд изнутри скрипта
           sed -i '2i set -x' scripts/build-xwayland.sh
-          
-          # Убираем обрезку вывода через tail
           sed -i 's/| tail -5//g' scripts/build-xwayland.sh
           sed -i 's/| tail -3//g' scripts/build-xwayland.sh
-          
-          # Заменяем "autoreconf -fi" на "autoreconf -fiv"
           sed -i 's/autoreconf -fi/autoreconf -fiv/g' scripts/build-xwayland.sh
 
       # Полная очистка перед тестом
@@ -84,68 +73,24 @@ jobs:
           rm -rf deps/xwayland-src/libffi
           rm -rf build/xwayland-aarch64/build-libffi || true
 
-      # ТЕСТОВЫЙ ЗАПУСК С ПОЛНЫМ ЛОГОМ
+      # СОЗДАЕМ КРИТИЧЕСКИЙ ХАК ДЛЯ ACLOCAL
+      - name: Force Libtool Macros Wrapper
+        run: |
+          # Создаем локальную директорию для бинарников и добавляем её в начало PATH
+          mkdir -p $HOME/.local/bin
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          
+          # Перехватываем вызовы aclocal и принудительно подмешиваем системные пути
+          cat << 'EOF' > $HOME/.local/bin/aclocal
+          #!/bin/bash
+          exec /usr/bin/aclocal "$@" -I /usr/share/aclocal -I /usr/share/aclocal-1.16
+          EOF
+          chmod +x $HOME/.local/bin/aclocal
+
+      # ТЕСТОВЫЙ ЗАПУСК
       - name: Debug single libffi build stage (Verbose)
         run: |
           ./scripts/build-xwayland.sh --only=libffi
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
           PKG_CONFIG_ALLOW_CROSS: "1"
-          ACLOCAL_PATH: "/usr/share/aclocal:/usr/share/aclocal-1.16"
-          ACLOCAL_FLAGS: "-I /usr/share/aclocal -I /usr/share/aclocal-1.16"
-      # Установка окружения сборщика
-      - name: Install Build Host Toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            autoconf \
-            automake \
-            libtool \
-            libtool-bin \
-            autoconf-archive \
-            m4 \
-            pkg-config \
-            texinfo \
-            gettext \
-            git \
-            curl \
-            python3
-
-          echo "ACLOCAL_PATH=/usr/share/aclocal:/usr/share/aclocal-1.16" >> $GITHUB_ENV
-          echo "ACLOCAL_FLAGS=-I /usr/share/aclocal -I /usr/share/aclocal-1.16" >> $GITHUB_ENV
-
-      # Подготовка скриптов
-      - name: Prepare Build Scripts & Verify Deps
-        run: |
-          chmod +x scripts/*.sh || true
-          ./scripts/ensure-deps.sh --verify-all
-
-      # Включаем МАКСИМАЛЬНЫЙ ВЫВОД ЛОГОВ
-      - name: Inject Max Verbose Flags into Script
-        run: |
-          # Включаем трассировку bash команд изнутри скрипта (выведет вообще всё)
-          sed -i '2i set -x' scripts/build-xwayland.sh
-          
-          # Убираем обрезку вывода через tail
-          sed -i 's/| tail -5//g' scripts/build-xwayland.sh
-          sed -i 's/| tail -3//g' scripts/build-xwayland.sh
-          
-          # Заменяем "autoreconf -fi" на "autoreconf -fiv" (verbose для autotools)
-          sed -i 's/autoreconf -fi/autoreconf -fiv/g' scripts/build-xwayland.sh
-
-      # Полная очистка перед тестом
-      - name: Clear old libffi cache
-        run: |
-          rm -rf deps/xwayland-src/libffi
-          rm -rf build/xwayland-aarch64/build-libffi || true
-
-      # ТЕСТОВЫЙ ЗАПУСК С ПОЛНЫМ ЛОГОМ
-      - name: Debug single libffi build stage (Verbose)
-        run: |
-          ./scripts/build-xwayland.sh --only=libffi
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
-          PKG_CONFIG_ALLOW_CROSS: "1"
-          ACLOCAL_PATH: "/usr/share/aclocal:/usr/share/aclocal-1.16"
-          ACLOCAL_FLAGS: "-I /usr/share/aclocal -I /usr/share/aclocal-1.16"
