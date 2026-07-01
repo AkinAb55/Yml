@@ -1,164 +1,71 @@
-name: TAWC REAL FIXED WAYLAND/XCB/XWAYLAND TEST
+name: Test Native Scripts (Xwayland Fast-Track)
 
 on:
-  workflow_dispatch:
-  push:
-    branches: [ main ]
+  workflow_dispatch: # Запуск вручную в один клик для тестов
 
 jobs:
-  build:
+  test-native-build:
     runs-on: ubuntu-24.04
-
-    env:
-      PKG_CONFIG_ALLOW_CROSS: "1"
-      WAYLAND_SCANNER: /usr/local/bin/wayland-scanner
-
     steps:
+      # 1. Клонируем репозиторий со всеми вложенными модулями
+      - name: Checkout TAWC Repository
+        uses: actions/checkout@v4
+        with:
+          repository: 'wmww/tawc'
+          ref: 'main'
+          submodules: 'recursive'
 
-    # =========================
-    # 1. Checkout FULL TREE
-    # =========================
-    - name: Checkout TAWC
-      uses: actions/checkout@v4
-      with:
-        repository: wmww/tawc
-        submodules: recursive
-        fetch-depth: 0
+      # 2. Ставим Android SDK и NDK (нужен строго для bionic-сборки Xwayland)
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
 
-    # =========================
-    # 2. Host deps
-    # =========================
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          build-essential meson ninja-build pkg-config \
-          autoconf automake libtool m4 gettext \
-          python3 curl git \
-          libx11-dev libxcb1-dev libxau-dev \
-          libffi-dev libdrm-dev
+      # Устанавливаем NDK, который требует проект
+      - name: Install NDK 27
+        run: |
+          sdkmanager --install "ndk;27.2.12479018"
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
+          echo "ANDROID_HOME=${ANDROID_SDK_ROOT}" >> $GITHUB_ENV
 
-    # =========================
-    # 3. HOST WAYLAND SCANNER
-    # =========================
-    - name: Build Wayland Scanner (host)
-      run: |
-        rm -rf /tmp/wayland
-        curl -L https://gitlab.freedesktop.org/wayland/wayland/-/archive/1.25.0/wayland-1.25.0.tar.gz | tar -xz -C /tmp
-        mv /tmp/wayland-1.25.0 /tmp/wayland
+      # 3. Минимальный набор инструментов хоста для компиляции C/C++ и кодогенерации
+      - name: Install Build Host Toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential meson ninja-build pkg-config patchelf \
+            autoconf automake libtool libtool-bin bison flex gperf gettext texinfo \
+            python3-pip python3-mako python3-lxml python3-setuptools \
+            xsltproc wayland-protocols curl perl git \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu # Для Mesa/Hybris glibc частей
+            
+          sudo pip3 install --upgrade meson ninja --break-system-packages
 
-        meson setup /tmp/wayland/build /tmp/wayland \
-          --prefix=/usr/local \
-          -Dtests=false \
-          -Ddocumentation=false \
-          -Dlibraries=false
+      # 4. Накатываем Rust (необходим для smithay и ffi-частей Mesa)
+      - name: Set up Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: 'aarch64-linux-android, x86_64-linux-android, aarch64-unknown-linux-gnu, x86_64-unknown-linux-gnu'
 
-        ninja -C /tmp/wayland/build
-        sudo ninja -C /tmp/wayland/build install
+      # 5. Права на исполнение скриптов и скачивание/валидация апстрим-зависимостей
+      - name: Sync and Verify Pinned Dependencies
+        run: |
+          find scripts/ -type f -name "*.sh" -exec chmod +x {} +
+          ./scripts/ensure-deps.sh --verify-all
 
-        echo "=== SCANNER VERIFY ==="
-        which wayland-scanner
-        wayland-scanner --version
+      # 6. ТЕСТОВЫЙ ЗАПУСК СБОРКИ НАПРЯМУЮ (БЕЗ GRADLE)
+      # Запускаем сборку Xwayland для архитектуры aarch64.
+      # Вы можете добавить сюда и другие скрипты, например: ./scripts/build-mesa-gfxstream.sh
+      - name: Execute Fast-Track Xwayland Build
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+          PKG_CONFIG_ALLOW_CROSS: "1"
+        run: |
+          echo "==> Starting isolated Xwayland compilation..."
+          ./scripts/build-xwayland.sh --abi=aarch64
 
-    # =========================
-    # 4. Android NDK
-    # =========================
-    - name: Setup NDK
-      uses: android-actions/setup-android@v3
-
-    - name: Install NDK 27
-      run: |
-        sdkmanager "ndk;27.2.12479018"
-        echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
-
-    # =========================
-    # 5. CROSS FILE (STRICT NO-LEAK)
-    # =========================
-    - name: Generate cross file
-      run: |
-        mkdir -p build
-
-        cat > build/android-cross.txt << 'EOF'
-        [binaries]
-        c = '/usr/local/lib/android/sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang'
-        cpp = '/usr/local/lib/android/sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android29-clang++'
-        ar = '/usr/local/lib/android/sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar'
-        strip = '/usr/local/lib/android/sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
-        pkg-config = 'pkg-config'
-
-        [host_machine]
-        system = 'android'
-        cpu_family = 'aarch64'
-        cpu = 'aarch64'
-        endian = 'little'
-
-        [properties]
-        pkg_config_libdir = ''
-        needs_exe_wrapper = true
-        EOF
-
-    # =========================
-    # 6. DEBUG TREE (IMPORTANT FIX)
-    # =========================
-    - name: Debug source tree
-      run: |
-        echo "=== FULL DEP TREE ==="
-        ls -R deps/xwayland-src || true
-
-    # =========================
-    # 7. FIND WAYLAND SOURCE (FIX FOR YOUR ERROR)
-    # =========================
-    - name: Resolve Wayland source path
-      run: |
-        WAYLAND_SRC=$(find deps/xwayland-src -type d -path "*wayland*/src" | head -n 1)
-
-        echo "WAYLAND_SRC=$WAYLAND_SRC" >> $GITHUB_ENV
-
-        if [ ! -d "$WAYLAND_SRC" ]; then
-          echo "❌ Wayland source NOT FOUND"
-          exit 1
-        fi
-
-        echo "✔ Wayland source: $WAYLAND_SRC"
-
-    # =========================
-    # 8. BUILD SYSROOT
-    # =========================
-    - name: Build Wayland (Android sysroot)
-      run: |
-        mkdir -p /tmp/sysroot
-
-        export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/usr/local/share/pkgconfig"
-
-        meson setup build-wayland "$WAYLAND_SRC" \
-          --cross-file build/android-cross.txt \
-          --prefix=/tmp/sysroot \
-          --buildtype=debug \
-          -Dtests=false \
-          -Ddocumentation=false \
-          -Ddtd_validation=false \
-          -Dscanner=false \
-          -Dlibraries=true \
-          --wipe
-
-        ninja -C build-wayland install
-
-    # =========================
-    # 9. VERIFY SYSROOT OUTPUT
-    # =========================
-    - name: Verify sysroot
-      if: always()
-      run: |
-        echo "===== SYSROOT PC FILES ====="
-        find /tmp/sysroot -name "*.pc" -exec cat {} \; || true
-
-        echo "===== SYSROOT LIBS ====="
-        find /tmp/sysroot -name "*.so*" -ls || true
-
-        echo "===== WAYLAND CHECK ====="
-        pkg-config --modversion wayland-client || true
-        pkg-config --modversion wayland-server || true
-        pkg-config --modversion wayland-egl || true
-
-        echo "===== SCANNER ====="
-        wayland-scanner --version
+      # 7. Проверяем, что бинарник и библиотеки успешно создались в папке префикса
+      - name: Check Build Artifacts
+        run: |
+          echo "==> Validating generated artifacts structure:"
+          ls -la build/xwayland-aarch64/install/bin/
+          ls -la build/xwayland-aarch64/install/lib/
