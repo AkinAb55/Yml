@@ -1,4 +1,4 @@
-name: Test Wayland Cross-Compile (Fix Scanner)
+name: Ultimate Wayland Cross-Compile Test
 
 on:
   push:
@@ -36,9 +36,14 @@ jobs:
           mkdir -p /tmp/wayland-native-src
           curl -fsSL https://gitlab.freedesktop.org/wayland/wayland/-/archive/1.25.0/wayland-1.25.0.tar.gz | tar -xz -C /tmp/wayland-native-src --strip-components=1
           cd /tmp/wayland-native-src
-          meson setup build --prefix=/opt/wayland-build -Ddocumentation=false -Dtests=false -Dlibraries=false
+          meson setup build --prefix=/usr/local -Ddocumentation=false -Dtests=false -Dlibraries=false
           ninja -C build
           sudo ninja -C build install
+          
+          echo "=== VERIFY HOST SCANNER ==="
+          which wayland-scanner
+          wayland-scanner --version
+          pkg-config --modversion wayland-scanner || true
 
       - name: Overwrite with Fixed build-xwayland.sh
         run: |
@@ -78,7 +83,8 @@ jobs:
           
           mkdir -p "$SRC_ROOT" "$PREFIX/lib" "$PREFIX/include" "$PREFIX/share" "$PC_DIR"
           PC_LIBDIR_CROSS="$PC_DIR:$PREFIX/share/pkgconfig"
-          export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16:$PREFIX/share/aclocal"
+          
+          export ACLOCAL_PATH="/usr/local/share/aclocal:/usr/share/aclocal:/usr/share/aclocal-1.16:$PREFIX/share/aclocal"
           
           CFLAGS_CROSS="-fPIC -O2 -DANDROID -D_GNU_SOURCE -I$PREFIX/include"
           LDFLAGS_CROSS="-L$PREFIX/lib -Wl,-rpath-link,$PREFIX/lib"
@@ -91,7 +97,6 @@ jobs:
           CROSS_FILE="$OUT_DIR/android-cross.ini"
           mkdir -p "$OUT_DIR"
           
-          # Прописываем путь к сканеру и принудительно переопределяем его для build-machine
           cat >"$CROSS_FILE" <<EON
           [binaries]
           c = '$CC'
@@ -100,26 +105,36 @@ jobs:
           strip = '$STRIP'
           ld = '$LD'
           pkg-config = 'pkg-config'
-          wayland-scanner = '/opt/wayland-build/bin/wayland-scanner'
-          
           [built-in options]
           c_args = ['-fPIC', '-O2', '-DANDROID', '-D_GNU_SOURCE', '-I$PREFIX/include']
           cpp_args = ['-fPIC', '-O2', '-DANDROID', '-D_GNU_SOURCE', '-I$PREFIX/include']
           c_link_args = ['-L$PREFIX/lib', '-Wl,-rpath-link,$PREFIX/lib']
           cpp_link_args = ['-L$PREFIX/lib', '-Wl,-rpath-link,$PREFIX/lib']
-          
           [host_machine]
           system = 'android'
           cpu_family = 'aarch64'
           cpu = 'aarch64'
           endian = 'little'
-          
           [properties]
           pkg_config_libdir = '$PC_DIR:$PREFIX/share/pkgconfig'
           EON
           
+          echo "=== GENERATED CROSS FILE ==="
+          cat "$CROSS_FILE"
+          
           configure_autotools() {
-              PKG_CONFIG_LIBDIR="$PC_LIBDIR_CROSS" ./configure --host="$TRIPLE" --prefix="$PREFIX" --libdir="$PREFIX/lib" CC="$CC" CXX="$CXX" AR="$AR" RANLIB="$RANLIB" STRIP="$STRIP" CFLAGS="$CFLAGS_CROSS" CPPFLAGS="-I$PREFIX/include" LDFLAGS="$LDFLAGS_CROSS" PKG_CONFIG="pkg-config" "$@"
+              PKG_CONFIG_LIBDIR="$PC_LIBDIR_CROSS" \
+              PKG_CONFIG_PATH="" \
+              ./configure \
+                  --host="$TRIPLE" \
+                  --prefix="$PREFIX" \
+                  --libdir="$PREFIX/lib" \
+                  CC="$CC" CXX="$CXX" AR="$AR" RANLIB="$RANLIB" STRIP="$STRIP" \
+                  CFLAGS="$CFLAGS_CROSS" \
+                  CPPFLAGS="-I$PREFIX/include" \
+                  LDFLAGS="$LDFLAGS_CROSS" \
+                  PKG_CONFIG="pkg-config" \
+                  "$@"
           }
           
           build_meson() {
@@ -127,32 +142,33 @@ jobs:
               local build="$OUT_DIR/build-$name"
               mkdir -p "$build"
               
-              # Передаем явную нативную утилиту через встроенное свойство Meson: -Dwayland-scanner=...
+              # Полностью изолируем сборку от хостовых .pc файлов Ubuntu!
+              PKG_CONFIG_PATH="$PC_LIBDIR_CROSS" \
               meson setup "$build" "$SRC_ROOT/$name" \
                   --cross-file "$CROSS_FILE" \
                   --prefix="$PREFIX" \
                   --libdir=lib \
                   --buildtype=release \
                   -Ddefault_library=shared \
-                  -Dwayland-scanner=/opt/wayland-build/bin/wayland-scanner \
+                  --wipe --reconfigure \
                   "$@"
-                  
               ninja -C "$build" install
           }
           
-          build_autotools() {
-              local name="$1"; shift
-              ( cd "$SRC_ROOT/$name" && if [ ! -f configure ]; then
-                  rm -rf autom4te.cache config.cache aclocal.m4
-                  libtoolize --force --copy && aclocal -I m4 -I /usr/share/aclocal --force && autoconf --force && autoheader --force || true
-                  cp -f $(ls -d /usr/share/automake-* | head -n1)/{install-sh,compile,missing} ./ || true
-                  automake --add-missing --copy --force-missing --foreign || true
-                  touch configure
-              fi && configure_autotools "$@" && make -j"$(nproc)" && make install )
+          stage_libffi() {
+              clone_pinned libffi
+              ( cd "$SRC_ROOT/libffi" && \
+                configure_autotools --disable-multi-os-directory --disable-docs && \
+                make -j"$(nproc)" && \
+                make install )
           }
           
-          stage_libffi() { clone_pinned libffi; build_autotools libffi --disable-multi-os-directory --disable-docs; }
-          stage_wayland() { clone_pinned wayland; build_meson wayland -Dscanner=false -Dtests=false -Ddocumentation=false -Ddtd_validation=false -Dlibraries=true; }
+          stage_wayland() {
+              clone_pinned wayland
+              # scanner=false означает не собирать сканер для Android, 
+              # но Meson автоматически найдет нативный из PATH (/usr/local/bin)
+              build_meson wayland -Dscanner=false -Dtests=false -Ddocumentation=false -Ddtd_validation=false -Dlibraries=true
+          }
           
           if [ "$ONLY" = "libffi" ]; then stage_libffi; elif [ "$ONLY" = "wayland" ]; then stage_libffi; stage_wayland; fi
           EOF
@@ -161,15 +177,36 @@ jobs:
       - name: Run Test Build (Libffi + Wayland)
         run: |
           ./scripts/ensure-deps.sh --verify-all
-          export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16"
+          export ACLOCAL_PATH="/usr/local/share/aclocal:/usr/share/aclocal:/usr/share/aclocal-1.16"
+          export PATH="/usr/local/bin:${PATH}"
           ./scripts/build-xwayland.sh --only=wayland
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
           PKG_CONFIG_ALLOW_CROSS: "1"
 
-      - name: Verify Generated Files
+      - name: MAXIMUM DIAGNOSTIC DUMP (Verify Output Artifacts)
+        if: always()
         run: |
-          echo "=== Check .pc files ==="
-          ls -l build/xwayland-aarch64/install/lib/pkgconfig/ || true
-          echo "=== Check .so files ==="
-          ls -l build/xwayland-aarch64/install/lib/ || true
+          echo "======================================================="
+          echo "  🔍 STRUCTURAL DUMP OF GENERATED TARGET FILES"
+          echo "======================================================="
+          
+          TARGET_PREFIX="build/xwayland-aarch64/install"
+          
+          if [ -d "$TARGET_PREFIX" ]; then
+            echo "--- Found install directory at $TARGET_PREFIX ---"
+            
+            echo "=== 1. ALL GENERATED PC FILES ==="
+            find "$TARGET_PREFIX" -name "*.pc" -exec echo "📍 {}" \; -exec cat {} \; -exec echo "---------------------------------------" \;
+            
+            echo "=== 2. ALL GENERATED SHARED LIBRARIES (.so) ==="
+            find "$TARGET_PREFIX" -name "*.so*" -ls
+            
+            echo "=== 3. ALL GENERATED HEADERS (.h) ==="
+            find "$TARGET_PREFIX/include" -type f -ls || echo "No headers found!"
+            
+          else
+            echo "❌ ERROR: Target install directory does not exist! Build failed before installation."
+            echo "=== MESON LOGS ==="
+            cat build/xwayland-aarch64/build-wayland/meson-logs/meson-log.txt || echo "No meson logs found."
+          fi
