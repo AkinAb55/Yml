@@ -1,40 +1,63 @@
-name: Debug Xwayland Libffi (Failsafe Local Patch)
+name: Test Libffi Fix
 
 on:
-  push:
-    branches:
-      - main
-      - master
   workflow_dispatch:
 
 jobs:
-  build-apk:
+  test-libffi:
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout TAWC Repository
+      - name: Checkout TAWC
         uses: actions/checkout@v4
         with:
           repository: 'wmww/tawc'
           ref: 'main'
-          submodules: 'recursive'
 
-      # Установка Java
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-
-      # Установка Android SDK/NDK
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Specific NDK (27.2.12479018)
+      - name: Install Dependencies
         run: |
-          sdkmanager --install "ndk;27.2.12479018"
-          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
+          sudo apt-get update
+          sudo apt-get install -y \
+            autoconf automake libtool libtool-bin autoconf-archive \
+            meson ninja-build pkg-config python3 git curl
 
+      - name: Prepare Scripts
+        run: |
+          chmod +x scripts/*.sh || true
+          ./scripts/ensure-deps.sh --verify-all
+
+      - name: Quick Libffi Fix + Build
+        run: |
+          # Обёртки
+          mkdir -p $HOME/.local/bin
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+          cat << 'EOF' > $HOME/.local/bin/aclocal
+#!/bin/bash
+exec /usr/bin/aclocal "$@" -I /usr/share/aclocal -I /usr/share/aclocal-1.16 -I m4 --force
+EOF
+
+          cat << 'EOF' > $HOME/.local/bin/autoreconf
+#!/bin/bash
+export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16:${ACLOCAL_PATH:-}"
+exec /usr/bin/autoreconf "$@"
+EOF
+
+          chmod +x $HOME/.local/bin/aclocal $HOME/.local/bin/autoreconf
+          export PATH="$HOME/.local/bin:$PATH"
+
+          # Патч скрипта
+          sed -i 's/autoreconf -fi/autoreconf -fiv --install/g' scripts/build-xwayland.sh
+
+          # Принудительный libtoolize перед autogen
+          sed -i '/NOCONFIGURE=1 .*autogen.sh/ i \ \ \ \ \ \ (cd "$src" \&\& libtoolize --force --copy \&\& aclocal -I m4 --force || true)' scripts/build-xwayland.sh
+
+          # Чистка и запуск
+          rm -rf deps/xwayland-src/libffi build/xwayland-aarch64 2>/dev/null || true
+          ./scripts/build-xwayland.sh --only=libffi
+        env:
+          ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/27.2.12479018
+          PKG_CONFIG_ALLOW_CROSS: "1"
       # Установка окружения сборщика
       - name: Install Build Host Toolchain
         run: |
