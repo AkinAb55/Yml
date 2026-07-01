@@ -1,58 +1,9 @@
-name: Debug Xwayland Libffi (Failsafe Local Patch)
-
-on:
-  push:
-    branches: [ main, master ]
-  workflow_dispatch:
-
-jobs:
-  build-apk:
-    runs-on: ubuntu-24.04
-    steps:
-      - name: Checkout TAWC Repository
-        uses: actions/checkout@v4
-        with:
-          repository: 'wmww/tawc'
-          ref: 'main'
-          submodules: 'recursive'
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Specific NDK
-        run: |
-          sdkmanager --install "ndk;27.2.12479018"
-          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
-
-      - name: Install Build Host Toolchain
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential meson ninja-build autoconf automake libtool libtool-bin \
-            autoconf-archive m4 pkg-config texinfo gettext git curl python3
-
-      - name: Prepare Build Scripts & Deps
-        run: |
-          chmod +x scripts/*.sh || true
-          ./scripts/ensure-deps.sh --verify-all
-
-      - name: Inject Max Verbose Flags
-        run: |
-          sed -i '2i set -x' scripts/build-xwayland.sh
-          sed -i 's/2>\/dev\/null//g' scripts/build-xwayland.sh
-          sed -i 's/autoreconf -fi/autoreconf -fiv/g' scripts/build-xwayland.sh
-
-      - name: Fix Libtool + Libffi (Main Fix)
+- name: Fix build_autotools function (Final Version)
         run: |
           mkdir -p $HOME/.local/bin
           echo "$HOME/.local/bin" >> $GITHUB_PATH
           
+          # 1. Создаем правильные обертки для инструментов автосборки
           cat > $HOME/.local/bin/aclocal << 'EOL'
           #!/bin/bash
           exec /usr/bin/aclocal "$@" -I /usr/share/aclocal -I /usr/share/aclocal-1.16 -I m4 --force
@@ -66,17 +17,37 @@ jobs:
           
           chmod +x $HOME/.local/bin/aclocal $HOME/.local/bin/autoreconf
           export PATH="$HOME/.local/bin:$PATH"
-          
-          # Патч скрипта
-          sed -i 's/autoreconf -fi/autoreconf -fiv --install/g' scripts/build-xwayland.sh
-          # Добавляем libtoolize + aclocal перед autogen
-          sed -i '/NOCONFIGURE=1 .*autogen.sh/ i \ \ \ \ \ \ (cd "$src" \&\& libtoolize --force --copy \&\& aclocal -I m4 --force || true)' scripts/build-xwayland.sh
-          # Чистка libffi
-          rm -rf deps/xwayland-src/libffi build/xwayland-aarch64/build-libffi* 2>/dev/null || true
 
-      - name: Debug single libffi build stage
-        run: |
-          ./scripts/build-xwayland.sh --only=libffi
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
-          PKG_CONFIG_ALLOW_CROSS: "1"
+          # 2. Создаем новую функцию с исправленной логикой генерации конфигов
+          cat > /tmp/fixed_build_autotools << 'FIXED'
+          build_autotools() {
+              local name="$1"; shift
+              local src="$SRC_ROOT/$name"
+              ( cd "$src" && \
+                  if { [ -f .tawc-autotools-host ] && [ "$(cat .tawc-autotools-host)" != "$TRIPLE" ]; } || \
+                     { [ ! -f .tawc-autotools-host ] && [ -f Makefile ]; }; then \
+                      make distclean >/dev/null 2>&1 || make clean >/dev/null 2>&1 || true; \
+                      rm -f config.cache; \
+                  fi && \
+                  if [ ! -f configure ]; then \
+                      echo "==> Running fixed autogen for $name" && \
+                      libtoolize --force --copy && \
+                      aclocal -I m4 --force && \
+                      autoreconf -fiv --install && \
+                      touch configure; \
+                  fi && \
+                  configure_autotools "$@" && \
+                  make -j"$(nproc)" && \
+                  make install && \
+                  printf '%s\n' "$TRIPLE" > .tawc-autotools-host )
+          }
+          FIXED
+
+          # 3. Полностью удаляем оригинальную однострочную функцию из скрипта
+          sed -i '/build_autotools() {/,/}/d' scripts/build-xwayland.sh
+          
+          # 4. Внедряем нашу новую исправленную функцию в тело скрипта
+          cat /tmp/fixed_build_autotools >> scripts/build-xwayland.sh
+
+          # 5. Очищаем старые артефакты libffi перед сборкой
+          rm -rf deps/xwayland-src/libffi build/xwayland-aarch64 2>/dev/null || true
