@@ -1,4 +1,4 @@
-name: Debug Xwayland Libffi (Deep Test)
+name: Debug Xwayland Libffi (Failsafe Local Patch)
 
 on:
   push:
@@ -35,6 +35,65 @@ jobs:
           sdkmanager --install "ndk;27.2.12479018"
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
 
+      # Установка окружения сборщика
+      - name: Install Build Host Toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            meson \
+            ninja-build \
+            autoconf \
+            automake \
+            libtool \
+            libtool-bin \
+            autoconf-archive \
+            m4 \
+            pkg-config \
+            texinfo \
+            gettext \
+            git \
+            curl \
+            python3
+
+      # Подготовка скриптов и скачивание зависимостей (включая клонирование libffi)
+      - name: Prepare Build Scripts & Pre-clone Deps
+        run: |
+          chmod +x scripts/*.sh || true
+          ./scripts/ensure-deps.sh --verify-all
+
+      # Включаем МАКСИМАЛЬНЫЙ ВЫВОД ЛОГОВ (Патчим скрытие вывода в build-xwayland.sh)
+      - name: Inject Max Verbose Flags
+        run: |
+          # Включаем трассировку bash команд изнутри скрипта
+          sed -i '2i set -x' scripts/build-xwayland.sh
+          
+          # Убираем глушение потока ошибок (2>/dev/null) в строке генерации autotools
+          sed -i 's/2>\/dev\/null//g' scripts/build-xwayland.sh
+          
+          # Заменяем "autoreconf -fi" на "autoreconf -fiv" для детального трейса
+          sed -i 's/autoreconf -fi/autoreconf -fiv/g' scripts/build-xwayland.sh
+
+      # ТОЧЕЧНЫЙ ФИКС: Подбрасываем макросы Libtool прямо в исходники libffi
+      - name: Inject Libtool Macros into Libffi Local Folder
+        run: |
+          # Создаем структуру папок, если вдруг её нет
+          mkdir -p deps/xwayland-src/libffi/m4
+          
+          # Копируем критически важные макросы хоста напрямую в локальную m4 проекта
+          cp /usr/share/aclocal/libtool.m4 deps/xwayland-src/libffi/m4/
+          cp /usr/share/aclocal/lt*.m4 deps/xwayland-src/libffi/m4/
+          
+          echo "=== Local m4 directory contents ==="
+          ls -la deps/xwayland-src/libffi/m4/
+
+      # ТЕСТОВЫЙ ЗАПУСК С ПОЛНЫМ ЛОГОМ
+      - name: Debug single libffi build stage (Verbose)
+        run: |
+          ./scripts/build-xwayland.sh --only=libffi
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
+          PKG_CONFIG_ALLOW_CROSS: "1"
       # Установка окружения сборщика
       - name: Install Build Host Toolchain
         run: |
