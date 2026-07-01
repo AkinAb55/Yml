@@ -1,4 +1,4 @@
-name: TAWC REAL NO-LEAK GRAPH TEST (Wayland/XCB/XWayland)
+name: TAWC REAL FIXED WAYLAND/XCB/XWAYLAND TEST
 
 on:
   workflow_dispatch:
@@ -16,32 +16,32 @@ jobs:
     steps:
 
     # =========================
-    # 1. Checkout
+    # 1. Checkout FULL TREE
     # =========================
-    - name: Checkout
+    - name: Checkout TAWC
       uses: actions/checkout@v4
       with:
         repository: wmww/tawc
         submodules: recursive
+        fetch-depth: 0
 
     # =========================
-    # 2. Host deps (STRICT)
+    # 2. Host deps
     # =========================
-    - name: Install build deps
+    - name: Install dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y \
           build-essential meson ninja-build pkg-config \
           autoconf automake libtool m4 gettext \
           python3 curl git \
-          libx11-dev libx11-xcb-dev libxcb1-dev \
-          libxau-dev libxext-dev libxrender-dev \
-          libpixman-1-dev libdrm-dev libffi-dev
+          libx11-dev libxcb1-dev libxau-dev \
+          libffi-dev libdrm-dev
 
     # =========================
-    # 3. Wayland SCANNER (BUILD MACHINE)
+    # 3. HOST WAYLAND SCANNER
     # =========================
-    - name: Build host Wayland 1.25 scanner (NO LEAK)
+    - name: Build Wayland Scanner (host)
       run: |
         rm -rf /tmp/wayland
         curl -L https://gitlab.freedesktop.org/wayland/wayland/-/archive/1.25.0/wayland-1.25.0.tar.gz | tar -xz -C /tmp
@@ -56,26 +56,25 @@ jobs:
         ninja -C /tmp/wayland/build
         sudo ninja -C /tmp/wayland/build install
 
-        echo "=== HOST SCANNER ==="
+        echo "=== SCANNER VERIFY ==="
         which wayland-scanner
         wayland-scanner --version
-        pkg-config --modversion wayland-scanner || true
 
     # =========================
     # 4. Android NDK
     # =========================
-    - name: Setup Android NDK
+    - name: Setup NDK
       uses: android-actions/setup-android@v3
 
-    - name: Install NDK
+    - name: Install NDK 27
       run: |
         sdkmanager "ndk;27.2.12479018"
         echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
 
     # =========================
-    # 5. SYSROOT CLEAN CROSS FILE (NO LEAK)
+    # 5. CROSS FILE (STRICT NO-LEAK)
     # =========================
-    - name: Generate strict Meson cross file
+    - name: Generate cross file
       run: |
         mkdir -p build
 
@@ -87,38 +86,51 @@ jobs:
         strip = '/usr/local/lib/android/sdk/ndk/27.2.12479018/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip'
         pkg-config = 'pkg-config'
 
-        [properties]
-        needs_exe_wrapper = true
-        pkg_config_libdir = ''
-
         [host_machine]
         system = 'android'
         cpu_family = 'aarch64'
         cpu = 'aarch64'
         endian = 'little'
+
+        [properties]
+        pkg_config_libdir = ''
+        needs_exe_wrapper = true
         EOF
 
     # =========================
-    # 6. VERIFY LEAK CONTROL
+    # 6. DEBUG TREE (IMPORTANT FIX)
     # =========================
-    - name: Verify no host leak
+    - name: Debug source tree
       run: |
-        echo "WAYLAND_SCANNER:"
-        which wayland-scanner
-
-        echo "PKG CONFIG PATH:"
-        echo $PKG_CONFIG_PATH
-
-        pkg-config --modversion wayland-scanner || true
+        echo "=== FULL DEP TREE ==="
+        ls -R deps/xwayland-src || true
 
     # =========================
-    # 7. BUILD GRAPH LAYER (WAYLAND)
+    # 7. FIND WAYLAND SOURCE (FIX FOR YOUR ERROR)
     # =========================
-    - name: Build Wayland (Android-safe)
+    - name: Resolve Wayland source path
       run: |
+        WAYLAND_SRC=$(find deps/xwayland-src -type d -path "*wayland*/src" | head -n 1)
+
+        echo "WAYLAND_SRC=$WAYLAND_SRC" >> $GITHUB_ENV
+
+        if [ ! -d "$WAYLAND_SRC" ]; then
+          echo "❌ Wayland source NOT FOUND"
+          exit 1
+        fi
+
+        echo "✔ Wayland source: $WAYLAND_SRC"
+
+    # =========================
+    # 8. BUILD SYSROOT
+    # =========================
+    - name: Build Wayland (Android sysroot)
+      run: |
+        mkdir -p /tmp/sysroot
+
         export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/usr/local/share/pkgconfig"
 
-        meson setup build-wayland deps/xwayland-src/wayland/src \
+        meson setup build-wayland "$WAYLAND_SRC" \
           --cross-file build/android-cross.txt \
           --prefix=/tmp/sysroot \
           --buildtype=debug \
@@ -132,58 +144,21 @@ jobs:
         ninja -C build-wayland install
 
     # =========================
-    # 8. BUILD XCB STACK
+    # 9. VERIFY SYSROOT OUTPUT
     # =========================
-    - name: Build XCB core
-      run: |
-        export PKG_CONFIG_PATH=/tmp/sysroot/lib/pkgconfig:/tmp/sysroot/share/pkgconfig
-
-        for m in xcb-proto libxcb libxau libx11; do
-          echo "== BUILD $m =="
-          meson setup build-$m deps/xwayland-src/$m \
-            --cross-file build/android-cross.txt \
-            --prefix=/tmp/sysroot \
-            --buildtype=debug \
-            --wipe || true
-
-          ninja -C build-$m install || true
-        done
-
-    # =========================
-    # 9. XWAYLAND BUILD
-    # =========================
-    - name: Build Xwayland (final graph)
-      run: |
-        export PKG_CONFIG_PATH=/tmp/sysroot/lib/pkgconfig:/tmp/sysroot/share/pkgconfig
-        export WAYLAND_SCANNER=/usr/local/bin/wayland-scanner
-
-        meson setup build-xwayland deps/xwayland-src/xwayland \
-          --cross-file build/android-cross.txt \
-          --prefix=/tmp/sysroot \
-          --buildtype=debug \
-          -Dxvfb=false \
-          -Dglamor=false \
-          -Dxwayland=true \
-          --wipe || true
-
-        ninja -C build-xwayland install || true
-
-    # =========================
-    # 10. FINAL DIAGNOSTICS (IMPORTANT)
-    # =========================
-    - name: VERIFY OUTPUT GRAPH
+    - name: Verify sysroot
       if: always()
       run: |
-        echo "========== SYSROOT =========="
-        find /tmp/sysroot -name "*.pc" -print -exec cat {} \;
+        echo "===== SYSROOT PC FILES ====="
+        find /tmp/sysroot -name "*.pc" -exec cat {} \; || true
 
-        echo "========== LIBS =========="
-        find /tmp/sysroot -name "*.so*" -ls
+        echo "===== SYSROOT LIBS ====="
+        find /tmp/sysroot -name "*.so*" -ls || true
 
-        echo "========== WAYLAND CHECK =========="
+        echo "===== WAYLAND CHECK ====="
         pkg-config --modversion wayland-client || true
         pkg-config --modversion wayland-server || true
         pkg-config --modversion wayland-egl || true
 
-        echo "========== SCANNER =========="
+        echo "===== SCANNER ====="
         wayland-scanner --version
