@@ -5,17 +5,13 @@ on:
   push:
     branches: [ main ]
 
-env:
-  NDK_VERSION: "27.2.12479018"   # поменяйте на 29 если нужно (например "29.0.3")
-  NDK_API: "29"
-
 jobs:
   xwayland-test:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     steps:
       - name: Checkout repo
-        uses: actions/actions/checkout@v4
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: recursive
@@ -38,15 +34,15 @@ jobs:
         uses: android-actions/setup-android@v3
         with:
           api-level: 29
-          ndk: ${{ env.NDK_VERSION }}
+          ndk: 27.2.12479018
           components: |
             platform-tools
             "platforms;android-29"
-            "ndk;${{ env.NDK_VERSION }}"
+            "ndk;27.2.12479018"
 
       - name: Export NDK env
         run: |
-          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
           echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}" >> $GITHUB_ENV
           echo "${HOME}/.local/bin" >> $GITHUB_PATH
         shell: bash
@@ -59,10 +55,9 @@ jobs:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
         shell: bash
 
-      - name: "Preflight: wayland-scanner & autotools preregeneration"
+      - name: Preflight: wayland-scanner & autotools preregeneration
         run: |
           set -ex
-          # wayland-scanner fallback build if missing
           if ! command -v wayland-scanner >/dev/null 2>&1; then
             TMP=/tmp/wayland-native
             rm -rf "$TMP"; mkdir -p "$TMP"
@@ -74,7 +69,7 @@ jobs:
             chmod +x $HOME/.local/bin/wayland-scanner
             echo "WAYLAND_SCANNER installed to $HOME/.local/bin"
           fi
-          # prereg autotools in known dirs
+
           PREFIX="$PWD/build/autotools-prefix"
           mkdir -p "$PREFIX"
           export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16:${PREFIX}/share/aclocal:$ACLOCAL_PATH"
@@ -94,14 +89,13 @@ jobs:
           pkg-config --version || true
           meson --version || true
           ninja --version || true
-          echo "ANDROID_NDK_HOME=${ANDROID_NDK_HOME}"
+          echo "ANDROID_NDK_HOME=${ANDROID_NDK_HOME:-unset}"
         shell: bash
 
       - name: Run scripts/build-xwayland.sh (verbose)
         run: |
           set -ex
           chmod +x scripts/build-xwayland.sh
-          # run with --clean for reproducibility
           bash -x scripts/build-xwayland.sh --clean
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
