@@ -1,385 +1,134 @@
-name: Build TAWC — Full Monolithic Build (staged)
+name: Build Xwayland Test (no Gradle, verbose)
 
 on:
+  workflow_dispatch:
   push:
     branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch:
 
 env:
-  ANDROID_NDK_VERSION: "27.2.12479018"
-  ANDROID_COMPILE_SDK: "36"
-  TAWC_ABIS: "arm64-v8a,x86_64"
-  TIMEOUT_MINUTES_HEAVY: 360
+  NDK_VERSION: "27.2.12479018"   # поменяйте на 29 если нужно (например "29.0.3")
+  NDK_API: "29"
 
 jobs:
-  prepare-deps:
-    name: Prepare & verify vendored deps
+  xwayland-test:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    outputs:
-      deps-key: ${{ steps.cache-deps.outputs.cache-hit }}
+    timeout-minutes: 180
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
         with:
-          repository: 'wmww/tawc'
-          ref: 'main'
           fetch-depth: 0
           submodules: recursive
 
-      - name: Install small tooling for ensure-deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends git curl
-        shell: bash
-
-      - name: Ensure vendored deps (clone + verify)
-        run: |
-          set -ex
-          ./scripts/ensure-deps.sh --verify-all || true
-          # Ensure termux-app (settings.gradle.kts depends on it)
-          ./scripts/ensure-deps.sh termux-app
-          # Ensure major deps used later
-          ./scripts/ensure-deps.sh libhybris smithay xwayland mesa rutabaga_gfx gfxstream || true
-        shell: bash
-
-      - name: Cache deps directory (quick restore between runs)
-        uses: actions/cache@v4
-        id: cache-deps
-        with:
-          path: deps
-          key: deps-list-${{ hashFiles('deps/deps.list') }}-v1
-          restore-keys: deps-list-
-      
-      - name: Upload deps checkout as artifact (for subsequent jobs)
-        uses: actions/upload-artifact@v4
-        with:
-          name: tawc-deps
-          path: deps
-          if-no-files-found: error
-
-  native-build:
-    name: Native cross-builds — libhybris, Mesa, Xwayland, proot, tawcroot
-    runs-on: ubuntu-24.04
-    needs: prepare-deps
-    timeout-minutes: ${{ env.TIMEOUT_MINUTES_HEAVY }}
-    steps:
-      - name: Checkout repo (shallow from workflow workspace)
-        uses: actions/checkout@v4
-        with:
-          repository: 'wmww/tawc'
-          ref: 'main'
-          fetch-depth: 0
-          submodules: recursive
-
-      - name: Download vendored deps artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: tawc-deps
-          path: deps
-
-      - name: Install host packages (heavy native build prerequisites)
+      - name: Install minimal host packages
         run: |
           set -ex
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential git cmake meson ninja-build pkg-config \
+            build-essential git curl cmake meson ninja-build pkg-config \
             python3 python3-pip python3-setuptools python3-distutils \
-            autoconf automake libtool libtool-bin libxml2-utils xsltproc \
-            libwayland-dev wayland-protocols libxkbcommon-dev \
-            libx11-dev libxcb1-dev libxcb-xkb-dev libx11-xcb-dev \
-            libffi-dev libegl1-mesa-dev libgles-dev libdrm-dev libepoxy-dev \
-            curl unzip bc patchelf gettext bison flex texinfo gperf \
-            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            gcc-x86-64-linux-gnu g++-x86-64-linux-gnu pkgconf
+            autoconf automake libtool libtool-bin autoconf-archive m4 \
+            xsltproc libxml2-utils xmlto pkgconf libffi-dev libexpat1-dev \
+            libx11-dev libxcb1-dev libxkbcommon-dev libdrm-dev libpixman-1-dev \
+            patchelf gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu || true
           sudo pip3 install --upgrade meson ninja --break-system-packages || true
         shell: bash
 
       - name: Setup Android SDK & NDK
         uses: android-actions/setup-android@v3
         with:
-          api-level: ${{ env.ANDROID_COMPILE_SDK }}
-          ndk: ${{ env.ANDROID_NDK_VERSION }}
+          api-level: 29
+          ndk: ${{ env.NDK_VERSION }}
           components: |
             platform-tools
-            "platforms;android-${{ env.ANDROID_COMPILE_SDK }}"
-            "build-tools;36.0.0"
-            "ndk;${{ env.ANDROID_NDK_VERSION }}"
+            "platforms;android-29"
+            "ndk;${{ env.NDK_VERSION }}"
 
       - name: Export NDK env
         run: |
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${NDK_VERSION}" >> $GITHUB_ENV
           echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}" >> $GITHUB_ENV
-          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}" >> $GITHUB_ENV
-          echo "PATH=${HOME}/.cargo/bin:${PATH}" >> $GITHUB_PATH
+          echo "${HOME}/.local/bin" >> $GITHUB_PATH
+        shell: bash
 
-      - name: Ensure wayland-scanner and xml tools available (fallback build)
+      - name: Ensure vendored deps (critical for xwayland)
         run: |
           set -ex
-          if command -v wayland-scanner >/dev/null 2>&1 ; then
-            echo "wayland-scanner present: $(which wayland-scanner)"
-          else
-            echo "wayland-scanner missing; building host wayland-scanner from deps checkout"
-            SRC=deps/xwayland-src/wayland
-            if [ ! -d "$SRC" ]; then
-              ./scripts/ensure-deps.sh wayland
-            fi
-            mkdir -p build-host-wayland
-            meson setup build-host-wayland "$SRC" || meson setup --wipe build-host-wayland "$SRC"
-            ninja -C build-host-wayland wayland-scanner
+          ./scripts/ensure-deps.sh wayland wayland-protocols xwayland xkbcomp xkeyboard-config xorgproto xcb-proto libxcb libx11 libxkbfile pixman libdrm libxshmfence libmd || true
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+        shell: bash
+
+      - name: Preflight: wayland-scanner & autotools preregeneration
+        run: |
+          set -ex
+          # wayland-scanner fallback build if missing
+          if ! command -v wayland-scanner >/dev/null 2>&1; then
+            TMP=/tmp/wayland-native
+            rm -rf "$TMP"; mkdir -p "$TMP"
+            curl -fsSL https://gitlab.freedesktop.org/wayland/wayland/-/archive/1.25.0/wayland-1.25.0.tar.gz | tar -xz -C "$TMP" --strip-components=1
+            (cd "$TMP" && meson setup build --prefix=$HOME/.local -Ddocumentation=false -Dtests=false -Dlibraries=false)
+            ninja -C "$TMP/build" wayland-scanner
             mkdir -p $HOME/.local/bin
-            cp build-host-wayland/wayland-scanner $HOME/.local/bin/
+            cp "$TMP/build/wayland-scanner" $HOME/.local/bin/
             chmod +x $HOME/.local/bin/wayland-scanner
-            echo "$HOME/.local/bin" >> $GITHUB_PATH
-            echo "WAYLAND_SCANNER=$HOME/.local/bin/wayland-scanner" >> $GITHUB_ENV
+            echo "WAYLAND_SCANNER installed to $HOME/.local/bin"
           fi
-          wayland-scanner --version || true
+
+          # prereg autotools in known dirs
+          PREFIX="$PWD/build/autotools-prefix"
+          mkdir -p "$PREFIX"
+          export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16:${PREFIX}/share/aclocal:$ACLOCAL_PATH"
+          export PKG_CONFIG_LIBDIR="${PREFIX}/lib/pkgconfig:${PREFIX}/share/pkgconfig:${PKG_CONFIG_LIBDIR:-}"
+          for d in deps/libhybris/hybris deps/xwayland-src/*; do
+            if [ -f "$d/configure.ac" ]; then
+              echo "=> prereg $d"
+              (cd "$d" && libtoolize --force --copy || true && aclocal -I m4 -I /usr/share/aclocal -I "${PREFIX}/share/aclocal" || true && autoconf --force || true && autoheader --force || true && automake --add-missing --copy --foreign || true && autoreconf -vfi || true)
+            fi
+          done
         shell: bash
 
-      - name: Build libhybris (glibc aarch64 cross) and pack asset
+      - name: Diagnostic versions
         run: |
           set -ex
-          ./scripts/build-libhybris.sh --clean
+          which wayland-scanner || true; wayland-scanner --version || true
+          pkg-config --version || true
+          meson --version || true
+          ninja --version || true
+          echo "ANDROID_NDK_HOME=${ANDROID_NDK_HOME}"
+        shell: bash
+
+      - name: Run scripts/build-xwayland.sh (verbose)
+        run: |
+          set -ex
+          chmod +x scripts/build-xwayland.sh
+          # run with --clean for reproducibility
+          bash -x scripts/build-xwayland.sh --clean
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
-        shell: bash
-
-      - name: Build libxkbcommon for ABIs
-        run: |
-          set -ex
-          ./scripts/build-libxkbcommon.sh --abi=aarch64 || true
-          ./scripts/build-libxkbcommon.sh --abi=x86_64 || true
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
-        shell: bash
-
-      - name: Build proot & tawcroot native libraries
-        run: |
-          set -ex
-          ./scripts/build-proot.sh --abi=aarch64 || true
-          ./scripts/build-proot.sh --abi=x86_64 || true
-          tawcroot/build.sh --abi=aarch64 || true
-          tawcroot/build.sh --abi=x86_64 || true
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
-        shell: bash
-
-      - name: Build gfxstream backend (if present)
-        run: |
-          set -ex
-          if [ -f scripts/build-gfxstream-backend.sh ]; then
-            ./scripts/build-gfxstream-backend.sh --abi=aarch64 || true
-            ./scripts/build-gfxstream-backend.sh --abi=x86_64 || true
-          else
-            echo "skip: no gfxstream backend build script"
-          fi
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
-        shell: bash
-
-      - name: Build Mesa gfxstream / Mesa-Zink (long)
-        run: |
-          set -ex
-          if [ -f scripts/build-mesa-gfxstream.sh ]; then
-            bash -x scripts/build-mesa-gfxstream.sh --abi=aarch64 || true
-            bash -x scripts/build-mesa-gfxstream.sh --abi=x86_64 || true
-          else
-            echo "skip: no scripts/build-mesa-gfxstream.sh"
-          fi
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
-        shell: bash
-
-      - name: Build Xwayland (bionic) and stage
-        run: |
-          set -ex
-          bash -x scripts/build-xwayland.sh --abi=aarch64 || true
-          bash -x scripts/build-xwayland.sh --abi=x86_64 || true
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
-        shell: bash
-
-      - name: Package native assets (jniLibs + assets)
-        run: |
-          set -ex
-          mkdir -p native-assets
-          # copy jniLibs and packed assets into artifact dir
-          cp -a app/src/main/jniLibs native-assets/ || true
-          cp -a app/src/main/assets native-assets/ || true
-          # include Xwayland install/share if produced
-          if [ -d build/xwayland-aarch64/install ]; then
-            cp -a build/xwayland-aarch64/install native-assets/xwayland-aarch64-install || true
-          fi
-          if [ -d build/xwayland-x86_64/install ]; then
-            cp -a build/xwayland-x86_64/install native-assets/xwayland-x86_64-install || true
-          fi
-        shell: bash
-
-      - name: Upload native-assets artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: tawc-native-assets
-          path: native-assets
-          if-no-files-found: warn
-
-  compositor-build:
-    name: Build Rust compositor (libcompositor.so per ABI)
-    runs-on: ubuntu-24.04
-    needs: native-build
-    timeout-minutes: 120
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-        with:
-          repository: 'wmww/tawc'
-          ref: 'main'
-          fetch-depth: 0
-          submodules: recursive
-
-      - name: Download deps artifact (for smithay, rutabaga patches)
-        uses: actions/download-artifact@v4
-        with:
-          name: tawc-deps
-          path: deps
-
-      - name: Download native-assets (so we can stage libs later)
-        uses: actions/download-artifact@v4
-        with:
-          name: tawc-native-assets
-          path: native-assets
-
-      - name: Setup Rust + cargo-ndk
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          source $HOME/.cargo/env
-          rustup default stable
-          rustup target add aarch64-linux-android x86_64-linux-android
-          cargo install --locked cargo-ndk || true
-          echo "${HOME}/.cargo/bin" >> $GITHUB_PATH
-        shell: bash
-
-      - name: Ensure Android NDK env
-        uses: android-actions/setup-android@v3
-        with:
-          ndk: ${{ env.ANDROID_NDK_VERSION }}
-        shell: bash
-
-      - name: Build compositor for ABIs
-        run: |
-          set -ex
-          source $HOME/.cargo/env || true
-          export ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}
-          # build for arm64
-          cargo ndk --target aarch64-linux-android --platform 29 --release build --manifest-path=compositor/Cargo.toml || true
-          # build for x86_64
-          cargo ndk --target x86_64-linux-android --platform 29 --release build --manifest-path=compositor/Cargo.toml || true
-          # stage built so into jniLibs locations expected by Gradle
-          mkdir -p app/src/main/jniLibs/arm64-v8a app/src/main/jniLibs/x86_64
-          cp -a compositor/target/aarch64-linux-android/release/libcompositor.so app/src/main/jniLibs/arm64-v8a/ || true
-          cp -a compositor/target/x86_64-linux-android/release/libcompositor.so app/src/main/jniLibs/x86_64/ || true
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
-        shell: bash
-
-      - name: Upload compositor libs (staged jniLibs)
-        uses: actions/upload-artifact@v4
-        with:
-          name: tawc-compositor-libs
-          path: app/src/main/jniLibs
-          if-no-files-found: warn
-
-  assemble-apk:
-    name: Assemble APK (Gradle) — consumes native assets + compositor libs
-    runs-on: ubuntu-24.04
-    needs: [native-build, compositor-build]
-    timeout-minutes: 120
-    steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-        with:
-          repository: 'wmww/tawc'
-          ref: 'main'
-          fetch-depth: 0
-          submodules: recursive
-
-      - name: Download native-assets
-        uses: actions/download-artifact@v4
-        with:
-          name: tawc-native-assets
-          path: native-assets
-
-      - name: Download compositor libs (jniLibs)
-        uses: actions/download-artifact@v4
-        with:
-          name: tawc-compositor-libs
-          path: app/src/main/jniLibs
-
-      - name: Copy native assets into app tree
-        run: |
-          set -ex
-          # copy jniLibs if present
-          if [ -d native-assets/jniLibs ]; then
-            rsync -a native-assets/jniLibs/ app/src/main/jniLibs/ || true
-          fi
-          # copy packed assets (libhybris tar, mesa, xwayland/share.tar)
-          if [ -d native-assets/assets ]; then
-            rsync -a native-assets/assets/ app/src/main/assets/ || true
-          fi
-          # copy any Xwayland install share tar
-          if [ -f native-assets/xwayland-aarch64-install/share.tar ]; then
-            mkdir -p app/src/main/assets/xwayland
-            cp native-assets/xwayland-aarch64-install/share.tar app/src/main/assets/xwayland/share.tar
-          fi
-        shell: bash
-
-      - name: Install JDK and Android SDK
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-          cache: gradle
-
-      - name: Setup Android SDK & NDK (for Gradle)
-        uses: android-actions/setup-android@v3
-        with:
-          api-level: ${{ env.ANDROID_COMPILE_SDK }}
-          ndk: ${{ env.ANDROID_NDK_VERSION }}
-          components: |
-            platform-tools
-            "platforms;android-${{ env.ANDROID_COMPILE_SDK }}"
-            "build-tools;36.0.0"
-            "ndk;${{ env.ANDROID_NDK_VERSION }}"
-
-      - name: Gradle assembleDebug (full monolithic)
-        run: |
-          set -ex
-          ./gradlew assembleDebug \
-            -PtawcAbis=${{ env.TAWC_ABIS }} \
-            -PtawcMethods=tawcroot,proot,chroot \
-            -PtawcGraphics=libhybris,libhybris-zink,gfxstream,cpu \
-            -PtawcXwayland=true \
-            -PtawcAllFilesAccess=true \
-            --no-daemon --stacktrace
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
-          ANDROID_SDK_ROOT: ${{ env.ANDROID_SDK_ROOT }}
-          RUSTFLAGS: "-A warnings"
           PKG_CONFIG_ALLOW_CROSS: "1"
         shell: bash
 
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: tawc-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
+      - name: List produced artifacts & run readelf checks
+        run: |
+          set -ex
+          for dir in build/xwayland-*; do
+            [ -d "$dir/install" ] || continue
+            echo "==> $dir/install contents"
+            find "$dir/install" -maxdepth 4 -type f -printf "%p %s\n" | sed -n '1,200p' || true
+            for lib in "$dir/install/lib"/*.so*; do
+              [ -f "$lib" ] || continue
+              echo "--- $lib ---"
+              file "$lib" || true
+              readelf -h "$lib" || true
+              readelf -d "$lib" || true
+            done
+          done
+        shell: bash
 
-      - name: Upload full artifacts (jniLibs / assets) for debugging
+      - name: Upload built install trees (artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: tawc-final-assets
-          path: |
-            app/src/main/jniLibs
-            app/src/main/assets
+          name: xwayland-install
+          path: build/xwayland-*/install
           if-no-files-found: warn
