@@ -15,7 +15,7 @@ jobs:
     timeout-minutes: 180
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/actions/checkout@v4
         with:
           fetch-depth: 0
           submodules: recursive
@@ -59,7 +59,7 @@ jobs:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
         shell: bash
 
-      - name: Preflight: wayland-scanner & autotools preregeneration
+      - name: "Preflight: wayland-scanner & autotools preregeneration"
         run: |
           set -ex
           # wayland-scanner fallback build if missing
@@ -74,7 +74,6 @@ jobs:
             chmod +x $HOME/.local/bin/wayland-scanner
             echo "WAYLAND_SCANNER installed to $HOME/.local/bin"
           fi
-
           # prereg autotools in known dirs
           PREFIX="$PWD/build/autotools-prefix"
           mkdir -p "$PREFIX"
