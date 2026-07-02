@@ -63,7 +63,10 @@ jobs:
             rm -rf "$TMP"; mkdir -p "$TMP"
             curl -fsSL https://gitlab.freedesktop.org/wayland/wayland/-/archive/1.25.0/wayland-1.25.0.tar.gz | tar -xz -C "$TMP" --strip-components=1
             (cd "$TMP" && meson setup build --prefix=$HOME/.local -Ddocumentation=false -Dtests=false -Dlibraries=false)
-            ninja -C "$TMP/build" wayland-scanner
+            
+            # Исправлено: собираем весь проект, так как таргет 'wayland-scanner' скрыт при -Dlibraries=false
+            meson compile -C "$TMP/build"
+            
             mkdir -p $HOME/.local/bin
             cp "$TMP/build/wayland-scanner" $HOME/.local/bin/
             chmod +x $HOME/.local/bin/wayland-scanner
