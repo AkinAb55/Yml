@@ -1,4 +1,5 @@
-name: Build Xwayland Complete Monolith
+name: Build Xwayland Complete Monolithic
+
 on:
   push:
     branches: [ main, master ]
@@ -54,21 +55,22 @@ jobs:
 
       - name: Overwrite with Failsafe build-xwayland.sh
         run: |
+          # Полностью перезаписываем scripts/build-xwayland.sh с фиксом для font-util
           cat > scripts/build-xwayland.sh << 'EOF'
           #!/bin/bash
           set -exuo pipefail
-
+          
           SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
           REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
           source "$SCRIPT_DIR/lib/deps.sh"
-
+          
           SRC_ROOT="$REPO_DIR/deps/xwayland-src"
           PATCH_ROOT="$REPO_DIR/deps/xwayland-patches"
           TAWC_TMP_PREFIX="share/xtmp"
           ABI=aarch64
           CLEAN=0
           ONLY=""
-
+          
           for arg in "$@"; do
               case "$arg" in
                   --abi=aarch64|--abi=arm64|--abi=arm64-v8a) ABI=aarch64 ;;
@@ -78,22 +80,22 @@ jobs:
                   *) echo "ERROR: unknown arg: $arg" >&2; exit 1 ;;
               esac
           done
-
+          
           OUT_DIR="$REPO_DIR/build/xwayland-$ABI"
           PREFIX="$OUT_DIR/install"
           PC_DIR="$PREFIX/lib/pkgconfig"
-
+          
           if [ -z "${ANDROID_NDK_HOME:-}" ]; then
               DEFAULT_SDK="${ANDROID_HOME:-$HOME/Android/Sdk}"
               if [ -d "$DEFAULT_SDK/ndk" ]; then
                   ANDROID_NDK_HOME="$DEFAULT_SDK/ndk/$(ls -1 "$DEFAULT_SDK/ndk" | sort -V | tail -1)"
               fi
           fi
-
+          
           NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
           NDK_SYSROOT="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
           NDK_API=29
-
+          
           case "$ABI" in
               aarch64)
                   TRIPLE=aarch64-linux-android
@@ -106,7 +108,7 @@ jobs:
                   MESON_CPU=x86_64
                   ;;
           esac
-
+          
           CC="$NDK_BIN/${TRIPLE}${NDK_API}-clang"
           CXX="$NDK_BIN/${TRIPLE}${NDK_API}-clang++"
           AR="$NDK_BIN/llvm-ar"
@@ -114,46 +116,47 @@ jobs:
           STRIP="$NDK_BIN/llvm-strip"
           NM="$NDK_BIN/llvm-nm"
           LD="$NDK_BIN/ld.lld"
-
+          
           mkdir -p "$SRC_ROOT" "$PREFIX/lib" "$PREFIX/include" "$PREFIX/share" "$PC_DIR"
           PC_LIBDIR_CROSS="$PC_DIR:$PREFIX/share/pkgconfig"
-
+          
           export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16:$PREFIX/share/aclocal"
-
+          
           CFLAGS_CROSS="-fPIC -O2 -DANDROID -D_GNU_SOURCE -I$PREFIX/include"
           LDFLAGS_CROSS="-L$PREFIX/lib -Wl,-rpath-link,$PREFIX/lib"
-
+          
           clone_pinned() {
               local name="$1"
               local patch_dir="$PATCH_ROOT/$name"
               dep_apply_patches "$name" "$patch_dir" "s|@TAWC_TMP_PREFIX@|$TAWC_TMP_PREFIX|g"
           }
-
+          
           CROSS_FILE="$OUT_DIR/android-cross.ini"
           gen_meson_cross() {
-              # Безопасный стриминг без heredoc-конфликтов
-              echo "[binaries]" > "$CROSS_FILE"
-              echo "c       = '$CC'" >> "$CROSS_FILE"
-              echo "cpp     = '$CXX'" >> "$CROSS_FILE"
-              echo "ar      = '$AR'" >> "$CROSS_FILE"
-              echo "strip   = '$STRIP'" >> "$CROSS_FILE"
-              echo "ld      = '$LD'" >> "$CROSS_FILE"
-              echo "pkg-config = 'pkg-config'" >> "$CROSS_FILE"
-              echo "[built-in options]" >> "$CROSS_FILE"
-              echo "c_args = ['-fPIC', '-O2', '-DANDROID', '-D_GNU_SOURCE', '-I$PREFIX/include']" >> "$CROSS_FILE"
-              echo "cpp_args = ['-fPIC', '-O2', '-DANDROID', '-D_GNU_SOURCE', '-I$PREFIX/include']" >> "$CROSS_FILE"
-              echo "c_link_args = ['-L$PREFIX/lib', '-Wl,-rpath-link,$PREFIX/lib']" >> "$CROSS_FILE"
-              echo "cpp_link_args = ['-L$PREFIX/lib', '-Wl,-rpath-link,$PREFIX/lib']" >> "$CROSS_FILE"
-              echo "[host_machine]" >> "$CROSS_FILE"
-              echo "system = 'android'" >> "$CROSS_FILE"
-              echo "cpu_family = '$MESON_CPU_FAMILY'" >> "$CROSS_FILE"
-              echo "cpu = '$MESON_CPU'" >> "$CROSS_FILE"
-              echo "endian = 'little'" >> "$CROSS_FILE"
-              echo "[properties]" >> "$CROSS_FILE"
-              echo "pkg_config_libdir = '$PC_DIR:$PREFIX/share/pkgconfig'" >> "$CROSS_FILE"
+              cat >"$CROSS_FILE" <<EON
+          [binaries]
+          c       = '$CC'
+          cpp     = '$CXX'
+          ar      = '$AR'
+          strip   = '$STRIP'
+          ld      = '$LD'
+          pkg-config = 'pkg-config'
+          [built-in options]
+          c_args = ['-fPIC', '-O2', '-DANDROID', '-D_GNU_SOURCE', '-I$PREFIX/include']
+          cpp_args = ['-fPIC', '-O2', '-DANDROID', '-D_GNU_SOURCE', '-I$PREFIX/include']
+          c_link_args = ['-L$PREFIX/lib', '-Wl,-rpath-link,$PREFIX/lib']
+          cpp_link_args = ['-L$PREFIX/lib', '-Wl,-rpath-link,$PREFIX/lib']
+          [host_machine]
+          system = 'android'
+          cpu_family = '$MESON_CPU_FAMILY'
+          cpu = '$MESON_CPU'
+          endian = 'little'
+          [properties]
+          pkg_config_libdir = '$PC_DIR:$PREFIX/share/pkgconfig'
+          EON
           }
           gen_meson_cross
-
+          
           configure_autotools() {
               local extra=("$@")
               PKG_CONFIG_LIBDIR="$PC_LIBDIR_CROSS" \
@@ -169,7 +172,7 @@ jobs:
                   PKG_CONFIG="pkg-config" \
                   "${extra[@]}"
           }
-
+          
           build_meson() {
               local name="$1"; shift
               local src="$SRC_ROOT/$name"
@@ -180,7 +183,7 @@ jobs:
               fi
               ninja -C "$build" install
           }
-
+          
           build_autotools() {
               local name="$1"; shift
               local src="$SRC_ROOT/$name"
@@ -208,9 +211,9 @@ jobs:
                   make install && \
                   printf '%s\n' "$TRIPLE" > .tawc-autotools-host )
           }
-
+          
           stage_should_run() { [ -z "$ONLY" ] || [ "$ONLY" = "$1" ]; }
-
+          
           stage_xorg_macros() { stage_should_run xorg-macros || return 0; clone_pinned util-macros; ( cd "$SRC_ROOT/util-macros" && if [ ! -f configure ]; then aclocal && autoheader && autoconf && automake --add-missing; fi && ./configure --prefix="$PREFIX" && make install ); }
           stage_xorgproto() { stage_should_run xorgproto || return 0; clone_pinned xorgproto; build_meson xorgproto -Dlegacy=true; }
           stage_xtrans() { stage_should_run xtrans || return 0; clone_pinned xtrans; build_autotools xtrans --disable-docs; }
@@ -234,7 +237,7 @@ jobs:
           stage_xkbcomp() { stage_should_run xkbcomp || return 0; clone_pinned xkbcomp; build_autotools xkbcomp; }
           stage_xkeyboard_config() { stage_should_run xkeyboard-config || return 0; clone_pinned xkeyboard-config; build_meson xkeyboard-config -Dxorg-rules-symlinks=false -Dcompat-rules=false; local link="$PREFIX/share/X11/xkb"; if [ -L "$link" ]; then ( cd "$PREFIX/share/X11" && rm xkb && ln -s ../xkeyboard-config-2 xkb ); fi; }
           stage_xwayland() { stage_should_run xwayland || return 0; clone_pinned xwayland; build_meson xwayland -Dxvfb=false -Dglamor=false -Dtawc=true -Ddri3=false -Ddrm=false -Dglx=false -Dxres=false -Dxv=false -Dxinerama=false -Dxf86bigfont=false -Dscreensaver=false -Dxselinux=false -Dxdmcp=false -Dxdm-auth-1=false -Dsecure-rpc=false -Dipv6=false -Dlisten_tcp=false -Dlisten_local=true -Dlisten_unix=true -Dsystemd_notify=false -Dinput_thread=false -Dlibunwind=false -Dxwayland_ei=false -Dsha1=libmd -Dxkb_default_rules=evdev -Dxkb_dir="files/xwayland/share/X11/xkb" -Dxkb_bin_dir="files/xwayland/bin" -Dxkb_output_dir="$TAWC_TMP_PREFIX/xkb"; }
-
+          
           stage_xorg_macros
           stage_xorgproto
           stage_xtrans
@@ -258,7 +261,7 @@ jobs:
           stage_xkeyboard_config
           stage_xkbcomp
           stage_xwayland
-
+          
           echo "==> done. Built into $PREFIX"
           EOF
           chmod +x scripts/build-xwayland.sh
@@ -271,9 +274,3 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
           PKG_CONFIG_ALLOW_CROSS: "1"
-
-      - name: Upload Xwayland Install Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: xwayland-android-aarch64
-          path: build/xwayland-aarch64/install/
