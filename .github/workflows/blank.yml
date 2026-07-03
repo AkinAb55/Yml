@@ -39,16 +39,18 @@ jobs:
           if [ ! -d "$REAL_NDK_PATH" ]; then REAL_NDK_PATH="$ANDROID_HOME/ndk-bundle"; fi
           echo "ANDROID_NDK_HOME=$REAL_NDK_PATH" >> $GITHUB_ENV
 
-      - name: Upgrade libffi to v3.6.0 in Manifest
+      - name: Upgrade libffi and Hotfix build script
         run: |
-          echo "=== Исходная строка libffi в deps.list ==="
-          grep "libffi" deps/deps.list || true
-
-          # Подменяем старый коммит и тег v3.5.2 на точный коммит релиза v3.6.0
+          # 1. Переключаем манифест TAWC на сборку libffi v3.6.0
           sed -i 's|e2eda0cf72a0598b44278cc91860ea402273fa29\tv3.5.2|f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf\tv3.6.0|g' deps/deps.list
 
-          echo "=== Обновленная строка libffi в deps.list ==="
-          grep "libffi" deps/deps.list
+          # 2. Модифицируем скрипт build-xwayland.sh налету.
+          # Мы заставим его полностью вырезать макрос LT_SYS_SYMBOL_USCORE и связанный блок if/fi
+          # из configure.ac прямо перед тем, как запустится autogen.sh
+          sed -i '/build_autotools libffi/i \  sed -i "/LT_SYS_SYMBOL_USCORE/,/fi/d" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh
+
+          echo "=== Проверка инъекции патча в скрипт сборки ==="
+          grep -C 3 "build_autotools libffi" scripts/build-xwayland.sh
 
       - name: Fix Autotools Environment Globally
         run: |
