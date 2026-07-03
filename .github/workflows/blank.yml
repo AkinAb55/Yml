@@ -1,5 +1,4 @@
-name: Debug XCB-Proto and LibXCB ONLY
-
+name: Build Xwayland Complete Monolith
 on:
   push:
     branches: [ main, master ]
@@ -16,6 +15,12 @@ jobs:
           ref: 'main'
           submodules: 'recursive'
 
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
@@ -23,161 +28,51 @@ jobs:
         run: |
           sdkmanager --install "ndk;27.2.12479018"
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
+
       - name: Install Build Host Toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             build-essential meson ninja-build autoconf automake libtool libtool-bin \
-            autoconf-archive m4 pkg-config git curl python3 python3-pip
+            autoconf-archive m4 pkg-config texinfo gettext git curl python3 \
+            libffi-dev libexpat1-dev xmlto
+
+      - name: Compile Native Wayland Scanner (v1.25.0)
+        run: |
+          mkdir -p /tmp/wayland-native
+          curl -fsSL https://gitlab.freedesktop.org/wayland/wayland/-/archive/1.25.0/wayland-1.25.0.tar.gz | tar -xz -C /tmp/wayland-native --strip-components=1
+          cd /tmp/wayland-native
+          meson setup build --prefix=/usr/local -Ddocumentation=false -Dtests=false -Dlibraries=false
+          ninja -C build
+          sudo ninja -C build install
+          wayland-scanner --version
+
       - name: Prepare Build Scripts & Deps
         run: |
-          chmod +x scripts/*.sh || true
+          find scripts/ -type f -name "*.sh" -exec chmod +x {} +
           ./scripts/ensure-deps.sh --verify-all
-      - name: Overwrite with Targeted Build Script
+
+      - name: Surgical Patch for libffi & Autotools
         run: |
-          cat > scripts/build-xwayland.sh << 'EOF'
-          #!/bin/bash
-          set -exuo pipefail
+          # 1. Форсируем autoreconf искать макросы в m4 папках проекта и системных директориях хоста
+          sed -i 's|autoreconf -fi|autoreconf -vfi -I m4 -I /usr/share/aclocal|g' scripts/build-xwayland.sh
           
-          SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-          REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-          source "$SCRIPT_DIR/lib/deps.sh"
+          # 2. Убираем подавление ошибок (2>/dev/null), чтобы видеть логи autogen.sh
+          sed -i 's/2>\/dev\/null//g' scripts/build-xwayland.sh
           
-          SRC_ROOT="$REPO_DIR/deps/xwayland-src"
-          PATCH_ROOT="$REPO_DIR/deps/xwayland-patches"
-          TAWC_TMP_PREFIX="share/xtmp"
-          ABI=aarch64
-          
-          OUT_DIR="$REPO_DIR/build/xwayland-$ABI"
-          PREFIX="$OUT_DIR/install"
-          PC_DIR="$PREFIX/lib/pkgconfig"
-          TRIPLE=aarch64-linux-android
-          
-          NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
-          CC="$NDK_BIN/${TRIPLE}29-clang"
-          CXX="$NDK_BIN/${TRIPLE}29-clang++"
-          AR="$NDK_BIN/llvm-ar"
-          RANLIB="$NDK_BIN/llvm-ranlib"
-          STRIP="$NDK_BIN/llvm-strip"
-          LD="$NDK_BIN/ld.lld"
-          
-          mkdir -p "$SRC_ROOT" "$PREFIX/lib" "$PREFIX/include" "$PREFIX/share" "$PC_DIR" "$PREFIX/share/pkgconfig"
-          export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16:$PREFIX/share/aclocal"
-          
-          PC_LIBDIR_CROSS="$PC_DIR:$PREFIX/share/pkgconfig"
-          CROSS_FILE="$OUT_DIR/android-cross.ini"
-          
-          cat >"$CROSS_FILE" <<EON
-          [binaries]
-          c       = '$CC'
-          cpp     = '$CXX'
-          ar      = '$AR'
-          strip   = '$STRIP'
-          ld      = '$LD'
-          pkg-config = 'pkg-config'
-          [built-in options]
-          c_args = ['-fPIC', '-O2', '-DANDROID', '-D_GNU_SOURCE', '-I$PREFIX/include']
-          cpp_args = ['-fPIC', '-O2', '-DANDROID', '-D_GNU_SOURCE', '-I$PREFIX/include']
-          c_link_args = ['-L$PREFIX/lib', '-Wl,-rpath-link,$PREFIX/lib']
-          cpp_link_args = ['-L$PREFIX/lib', '-Wl,-rpath-link,$PREFIX/lib']
-          [host_machine]
-          system = 'android'
-          cpu_family = 'aarch64'
-          cpu = 'aarch64'
-          endian = 'little'
-          [properties]
-          pkg_config_libdir = '$PC_LIBDIR_CROSS'
-          EON
-          
-          CFLAGS_CROSS="-fPIC -O2 -DANDROID -D_GNU_SOURCE -I$PREFIX/include"
-          LDFLAGS_CROSS="-L$PREFIX/lib -Wl,-rpath-link,$PREFIX/lib"
-          
-          clone_pinned() {
-              local name="$1"
-              local patch_dir="$PATCH_ROOT/$name"
-              dep_apply_patches "$name" "$patch_dir" "s|@TAWC_TMP_PREFIX@|$TAWC_TMP_PREFIX|g"
-          }
-          
-          configure_autotools() {
-              PKG_CONFIG_LIBDIR="$PC_LIBDIR_CROSS" \
-              PKG_CONFIG_PATH="" \
-              ./configure \
-                  --host="$TRIPLE" \
-                  --prefix="$PREFIX" \
-                  --libdir="$PREFIX/lib" \
-                  CC="$CC" CXX="$CXX" AR="$AR" RANLIB="$RANLIB" STRIP="$STRIP" \
-                  CFLAGS="$CFLAGS_CROSS" \
-                  CPPFLAGS="-I$PREFIX/include" \
-                  LDFLAGS="$LDFLAGS_CROSS" \
-                  PKG_CONFIG="pkg-config" \
-                  "$@"
-          }
-          build_meson() {
-              local name="$1"; shift
-              local src="$SRC_ROOT/$name"
-              local build="$OUT_DIR/build-$name"
-              mkdir -p "$build"
-              if [ ! -f "$build/build.ninja" ]; then
-                  meson setup "$build" "$src" --cross-file "$CROSS_FILE" --prefix="$PREFIX" --libdir=lib --buildtype=release -Ddefault_library=shared "$@"
-              fi
-              ninja -C "$build" install
-          }
-          build_autotools() {
-              local name="$1"; shift
-              local src="$SRC_ROOT/$name"
-              ( cd "$src" && \
-                  if [ ! -f configure ] || [ ! -s configure ]; then \
-                      rm -rf autom4te.cache config.cache aclocal.m4 configure && \
-                      libtoolize --force --copy && \
-                      aclocal -I m4 -I /usr/share/aclocal -I "$PREFIX/share/aclocal" --force && \
-                      autoconf --force && \
-                      autoheader --force || true && \
-                      automake --add-missing --copy --foreign || true && \
-                      chmod +x configure || true; \
-                  fi && \
-                  configure_autotools "$@" && \
-                  make -j"$(nproc)" && \
-                  make install )
-          }
-          stage_xorg_macros() {
-              clone_pinned util-macros
-              ( cd "$SRC_ROOT/util-macros" && \
-                if [ ! -f configure ]; then \
-                    aclocal && autoconf && automake --add-missing --copy || true; \
-                fi && \
-                ./configure --prefix="$PREFIX" && \
-                make install )
-          }
-          stage_xorgproto() { clone_pinned xorgproto; build_meson xorgproto -Dlegacy=true; }
-          stage_libxau() { clone_pinned libxau; build_autotools libxau; }
-          stage_xcb_proto() {
-              clone_pinned xcb-proto
-              ( cd "$SRC_ROOT/xcb-proto" && \
-                if [ ! -f configure ]; then \
-                    aclocal && autoconf && automake --add-missing --copy || true; \
-                fi && \
-                PKG_CONFIG_LIBDIR="$PC_LIBDIR_CROSS" ./configure --prefix="$PREFIX" PYTHON=python3 && \
-                make install )
-          }
-          
-          stage_libxcb() {
-              clone_pinned libxcb
-              build_autotools libxcb --disable-devel-docs --without-doxygen PYTHON=python3 XCBPROTO_CFLAGS="-I$PREFIX/include" XCBPROTO_LIBS=""
-          }
-          
-          stage_xorg_macros
-          stage_xorgproto
-          stage_libxau
-          stage_xcb_proto
-          stage_libxcb
-          
-          echo "==> Изолированный тест XCB + Xau завершен!"
-          EOF
-          chmod +x scripts/build-xwayland.sh
-      - name: Run XCB Target Test
+          # 3. Дописываем правильные системные пути макросов к уже существующему ACLOCAL_PATH в скрипте
+          sed -i 's|export ACLOCAL_PATH="$PREFIX/share/aclocal:${ACLOCAL_PATH:-}"|export ACLOCAL_PATH="$PREFIX/share/aclocal:/usr/share/aclocal:/usr/share/aclocal-1.16:${ACLOCAL_PATH:-}"|g' scripts/build-xwayland.sh
+
+      - name: Run Complete Xwayland Build Pipeline
         run: |
           export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16"
-          ./scripts/build-xwayland.sh
+          ./scripts/build-xwayland.sh --abi=aarch64
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
-          
+          PKG_CONFIG_ALLOW_CROSS: "1"
+
+      - name: Upload Xwayland Install Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: xwayland-android-aarch64
+          path: build/xwayland-aarch64/install/
