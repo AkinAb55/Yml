@@ -4,9 +4,7 @@ on:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
-  schedule:
-    - cron: '0 2 * * *'          # Автоматический запуск каждую ночь в 02:00 UTC
-  workflow_dispatch:            # Кнопка ручного запуска в интерфейсе GitHub
+  workflow_dispatch:
 
 jobs:
   build-apk:
@@ -174,14 +172,19 @@ jobs:
               local name="$1"; shift
               local src="$SRC_ROOT/$name"
               ( cd "$src" && \
-                  if [ ! -f configure ] || [ ! -s configure ]; then \
+                  if [ -f autogen.sh ]; then \
+                      ./autogen.sh || true; \
+                  elif [ ! -f configure ] || [ ! -s configure ]; then \
                       rm -rf autom4te.cache config.cache aclocal.m4 configure && \
                       libtoolize --force --copy && \
                       aclocal -I m4 -I /usr/share/aclocal -I "$PREFIX/share/aclocal" --force && \
-                      autoconf --force && \
                       autoheader --force || true && \
+                      autoconf --force && \
                       automake --add-missing --copy --foreign || true && \
                       chmod +x configure || true; \
+                  fi && \
+                  if [ -f configure ]; then \
+                      sed -i 's|LT_SYS_SYMBOL_USCORE||g' configure || true; \
                   fi && \
                   configure_autotools "$@" && \
                   make -j"$(nproc)" && \
