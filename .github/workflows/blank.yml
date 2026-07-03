@@ -28,32 +28,25 @@ jobs:
 
       - name: Setup Android NDK via SDKManager
         run: |
-          # Принудительно ставим нужную версию NDK и проверяем, куда она легла
           echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;${{ env.ANDROID_NDK_VERSION }}"
-          
-          # Определяем реальный путь к NDK
           REAL_NDK_PATH="$ANDROID_HOME/ndk/${{ env.ANDROID_NDK_VERSION }}"
-          if [ ! -d "$REAL_NDK_PATH" ]; then
-            REAL_NDK_PATH="$ANDROID_HOME/ndk-bundle"
-          fi
-          
-          echo "=== Реальный путь к NDK ==="
-          echo "FOUND_NDK=$REAL_NDK_PATH"
-          ls -la "$REAL_NDK_PATH" || true
-          
-          # Записываем правильный путь в глобальное окружение
+          if [ ! -d "$REAL_NDK_PATH" ]; then REAL_NDK_PATH="$ANDROID_HOME/ndk-bundle"; fi
           echo "ANDROID_NDK_HOME=$REAL_NDK_PATH" >> $GITHUB_ENV
 
-      - name: Fix Autotools Environment
+      - name: Fix Autotools Environment & Inject Macros
         run: |
           echo "ACLOCAL_PATH=/usr/share/aclocal" >> $GITHUB_ENV
           echo "VERBOSE=1" >> $GITHUB_ENV
 
       - name: Run TAWC Xwayland Build (Trace Mode)
         run: |
-          # Делаем скрипты исполняемыми
           find . -name "*.sh" -exec chmod +x {} + 2>/dev/null || true
           
-          # Запуск сборки Xwayland с явной передачей переменной на всякий случай
+          # КРИТИЧЕСКОЕ ЛЕЧЕНИЕ LIBFFI:
+          # Принудительно создаем папку m4 в libffi (если её нет) и копируем
+          # туда системные макросы libtool, чтобы утилиты не теряли LT_SYS_SYMBOL_USCORE
+          mkdir -p deps/xwayland-src/libffi/m4
+          cp /usr/share/aclocal/libtool.m4 deps/xwayland-src/libffi/m4/
+          
           export ANDROID_NDK_HOME="${{ env.ANDROID_NDK_HOME }}"
           bash -x scripts/build-xwayland.sh --abi=aarch64
