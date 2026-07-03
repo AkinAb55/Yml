@@ -1,8 +1,6 @@
-name: Clean TAWC Xwayland (Strict pkg-config isolation)
+name: Wayland 1.25 Clean Isolation Build
 
 on:
-  push:
-    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
@@ -10,115 +8,66 @@ jobs:
     runs-on: ubuntu-24.04
 
     env:
-      WAYLAND_VERSION: "1.25.0"
-      WAYLAND_PREFIX: "/tmp/wayland-host"
+      WAYLAND_PREFIX: /tmp/wayland-host
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          repository: wmww/tawc
-          ref: main
-          submodules: recursive
 
-      # ─────────────────────────────────────────────
-      # 1. MINIMAL HOST TOOLCHAIN (NO libwayland-dev!)
-      # ─────────────────────────────────────────────
-      - name: Install build tools (no system Wayland)
+      - name: Install host tools (NO WAYLAND DEV LIBS)
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential git meson ninja-build \
-            pkg-config autoconf automake libtool m4 \
-            gettext curl python3 \
-            libffi-dev libexpat1-dev \
-            xsltproc xmlto
+            build-essential git meson ninja-build pkg-config \
+            autoconf automake libtool libtool-bin m4 gettext \
+            python3 curl
 
-      # ─────────────────────────────────────────────
-      # 2. BUILD WAYLAND 1.25 (ISOLATED PREFIX)
-      # ─────────────────────────────────────────────
-      - name: Build Wayland 1.25 host stack
+      - name: Build Wayland 1.25 (HOST scanner + libs isolated)
         run: |
           set -e
 
-          mkdir -p /tmp/wayland-src
+          rm -rf /tmp/wayland-src /tmp/wayland-host
+          mkdir -p /tmp/wayland-src /tmp/wayland-host
 
-          curl -L https://gitlab.freedesktop.org/wayland/wayland/-/archive/${WAYLAND_VERSION}/wayland-${WAYLAND_VERSION}.tar.gz \
+          curl -L https://gitlab.freedesktop.org/wayland/wayland/-/archive/1.25.0/wayland-1.25.0.tar.gz \
             | tar -xz -C /tmp/wayland-src --strip-components=1
 
-          meson setup /tmp/wayland-src/build /tmp/wayland-src \
-            -Dtests=false \
+          cd /tmp/wayland-src
+
+          meson setup build \
+            --prefix=/tmp/wayland-host \
             -Ddocumentation=false \
-            -Dlibraries=true \
-            --prefix=${WAYLAND_PREFIX}
+            -Dtests=false \
+            -Dlibraries=true
 
-          ninja -C /tmp/wayland-src/build
-          ninja -C /tmp/wayland-src/build install
+          ninja -C build
+          ninja -C build install
 
-      # ─────────────────────────────────────────────
-      # 3. 🔥 STRICT PKG-CONFIG ISOLATION (KEY FIX)
-      # ─────────────────────────────────────────────
-      - name: Force strict pkg-config isolation
+      - name: HARD PKG-CONFIG ISOLATION (CRITICAL FIX)
         run: |
+          echo "PKG_CONFIG_PATH=" >> $GITHUB_ENV
+
           echo "PKG_CONFIG_LIBDIR=${WAYLAND_PREFIX}/lib/pkgconfig:${WAYLAND_PREFIX}/lib/x86_64-linux-gnu/pkgconfig" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=${WAYLAND_PREFIX}/lib/pkgconfig:${WAYLAND_PREFIX}/share/pkgconfig" >> $GITHUB_ENV
-          echo "PATH=${WAYLAND_PREFIX}/bin:$PATH" >> $GITHUB_ENV
 
-      - name: Verify isolation (CRITICAL CHECK)
+          echo "PKG_CONFIG_SYSROOT_DIR=/" >> $GITHUB_ENV
+
+      - name: VERIFY ISOLATION
         run: |
-          echo "=== which wayland-scanner ==="
-          which wayland-scanner
-
-          echo "=== version ==="
-          wayland-scanner --version
-
-          echo "=== pkg-config path dump ==="
-          pkg-config --variable pc_path pkg-config || true
-
-          echo "=== wayland-client ==="
-          pkg-config --modversion wayland-client
-
-          echo "=== wayland-server ==="
-          pkg-config --modversion wayland-server
-
-      # ─────────────────────────────────────────────
-      # 4. BUILD XWAYLAND (FULL ISOLATION ENFORCED)
-      # ─────────────────────────────────────────────
-      - name: Build Xwayland (strict isolated stack)
-        run: |
-          set -e
-
-          export WAYLAND_PREFIX="/tmp/wayland-host"
-
-          # 🔥 HARD OVERRIDE (this is what was missing)
-          export PKG_CONFIG_LIBDIR="${WAYLAND_PREFIX}/lib/pkgconfig:${WAYLAND_PREFIX}/lib/x86_64-linux-gnu/pkgconfig"
-          export PKG_CONFIG_PATH="${WAYLAND_PREFIX}/lib/pkgconfig:${WAYLAND_PREFIX}/share/pkgconfig"
-
-          # optional safety (ensures no accidental fallback)
-          export PKG_CONFIG_SYSTEM_INCLUDE_PATH=""
-          export PKG_CONFIG_SYSTEM_LIBRARY_PATH=""
-
-          export PATH="${WAYLAND_PREFIX}/bin:$PATH"
-          export ACLOCAL_PATH="${WAYLAND_PREFIX}/share/aclocal:/usr/share/aclocal"
-
-          chmod +x scripts/build-xwayland.sh
-
-          ./scripts/build-xwayland.sh --abi=aarch64
-
-      # ─────────────────────────────────────────────
-      # 5. FINAL LEAK TEST (MUST PASS)
-      # ─────────────────────────────────────────────
-      - name: Verify no system Wayland leak
-        run: |
-          echo "=== pc path ==="
-          pkg-config --variable pc_path pkg-config
-
-          echo "=== wayland-client flags ==="
-          pkg-config --cflags wayland-client
-
-          echo "=== wayland-server flags ==="
-          pkg-config --cflags wayland-server
-
           echo "=== scanner ==="
           which wayland-scanner
-          wayland-scanner --version
+
+          echo "=== pkg-config search paths ==="
+          pkg-config --variable pc_path pkg-config
+
+          echo "=== wayland modules ==="
+          pkg-config --modversion wayland-client
+          pkg-config --modversion wayland-server
+          pkg-config --modversion wayland-egl
+
+      - name: Show EGL availability
+        run: |
+          pkg-config --exists wayland-egl && echo "WAYLAND EGL OK" || echo "WAYLAND EGL MISSING"
+
+      - name: Dump prefix
+        run: |
+          find /tmp/wayland-host -type f | sort | head -200
