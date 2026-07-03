@@ -1,120 +1,163 @@
-name: Build Xwayland Complete Monolith
+name: Debug buildXwaylandArm64-v8a
+
 on:
-  push:
-    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
-  build-apk:
+  debug-xwayland:
     runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/29.0.13846066
+
     steps:
-      - name: Checkout TAWC Repository
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          repository: 'wmww/tawc'
-          ref: 'main'
-          submodules: 'recursive'
 
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Specific NDK
+      - name: Show system info
         run: |
-          sdkmanager --install "ndk;27.2.12479018"
-          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> $GITHUB_ENV
+          set -x
+          uname -a
+          lsb_release -a || true
+          env | sort
+          df -h
+          free -h
+          nproc
 
-      - name: Install Build Host Toolchain
+      - name: Install build dependencies
         run: |
+          set -ex
+
           sudo apt-get update
+
           sudo apt-get install -y \
-            build-essential meson ninja-build autoconf automake libtool libtool-bin \
-            autoconf-archive m4 pkg-config texinfo gettext git curl python3 \
-            libffi-dev libexpat1-dev xmlto
+            meson \
+            ninja-build \
+            pkg-config \
+            autoconf \
+            automake \
+            libtool \
+            m4 \
+            make \
+            perl \
+            python3 \
+            python3-pip \
+            python3-setuptools \
+            python3-mako \
+            python3-jinja2 \
+            python3-libxml2 \
+            xsltproc \
+            flex \
+            bison \
+            gettext \
+            gperf \
+            xutils-dev \
+            libxml2-utils \
+            curl \
+            git \
+            patch
 
-      - name: Compile Native Wayland Scanner (v1.25.0)
+      - name: Verify tools
         run: |
-          mkdir -p /tmp/wayland-native
-          curl -fsSL https://gitlab.freedesktop.org/wayland/wayland/-/archive/1.25.0/wayland-1.25.0.tar.gz | tar -xz -C /tmp/wayland-native --strip-components=1
-          cd /tmp/wayland-native
-          meson setup build --prefix=/usr/local -Ddocumentation=false -Dtests=false -Dlibraries=false
-          ninja -C build
-          sudo ninja -C build install
-          wayland-scanner --version
+          set -x
 
-      - name: Prepare Build Scripts & Deps
+          which meson
+          meson --version
+
+          which ninja
+          ninja --version
+
+          which autoreconf
+          autoreconf --version
+
+          which libtoolize
+          libtoolize --version
+
+          which aclocal
+          aclocal --version
+
+          which pkg-config
+          pkg-config --version
+
+          which python3
+          python3 --version
+
+          echo "NDK:"
+          ls -la "$ANDROID_NDK_HOME"
+
+      - name: Enable bash tracing
         run: |
-          find scripts/ -type f -name "*.sh" -exec chmod +x {} +
-          ./scripts/ensure-deps.sh --verify-all
+          echo 'export PS4="+ [\${BASH_SOURCE##*/}:\${LINENO}] "' >> ~/.bashrc
 
-      - name: Inject Dynamic Autotools Builder
+      - name: Run build-xwayland
+        shell: bash
+        continue-on-error: true
         run: |
-          # Внедряем адаптивную проверку на необходимость запуска autoheader и создания папки m4
-          python3 -c '
-          with open("scripts/build-xwayland.sh", "r") as f:
-              code = f.read()
+          set -Eeuxo pipefail
 
-          start_idx = code.find("build_autotools() {")
-          end_idx = code.find("stage_should_run() {")
+          mkdir -p logs
 
-          if start_idx != -1 and end_idx != -1:
-              new_function = """build_autotools() {
-              local name="$1"; shift
-              local src="$SRC_ROOT/$name"
-              echo "==> Custom compiling autotools project: $name"
-              ( cd "$src" && \\
-                  rm -rf autom4te.cache config.cache aclocal.m4 configure config.status Makefile include/Makefile.in include/Makefile && \\
-                  export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16:$PREFIX/share/aclocal" && \\
-                  echo "==> Running forced complete autotools bootstrap for $name" && \\
-                  touch README ChangeLog AUTHORS NEWS && \\
-                  mkdir -p m4 && \\
-                  libtoolize --copy --force && \\
-                  aclocal -I m4 -I /usr/share/aclocal --force && \\
-                  if grep -q "AC_CONFIG_HEADERS" configure.ac; then \\
-                      echo "==> Found AC_CONFIG_HEADERS, running autoheader..." && \\
-                      autoheader --force; \\
-                  fi && \\
-                  automake --add-missing --copy --foreign && \\
-                  autoconf --force && \\
-                  chmod +x configure && \\
-                  configure_autotools "$@" && \\
-                  make -j"$(nproc)" && \\
-                  make install && \\
-                  printf "%s\\n" "$TRIPLE" > .tawc-autotools-host )
-          }
+          bash -x scripts/build-xwayland.sh \
+            2>&1 | tee logs/build-xwayland.log
 
-          """
-              patched_code = code[:start_idx] + new_function + code[end_idx:]
-              with open("scripts/build-xwayland.sh", "w") as f:
-                  f.write(patched_code)
-              print("SUCCESS: Dynamic build_autotools step injected!")
-          else:
-              print("ERROR: Functions not found!")
-              exit(1)
-          '
-
-          # Исправляем базовый сброс ACLOCAL_PATH в скрипте
-          sed -i 's|export ACLOCAL_PATH="$PREFIX/share/aclocal:${ACLOCAL_PATH:-}"|export ACLOCAL_PATH="$PREFIX/share/aclocal:/usr/share/aclocal:/usr/share/aclocal-1.16:${ACLOCAL_PATH:-}"|g' scripts/build-xwayland.sh
-          
-          # Убираем обрезку логов tail
-          sed -i 's/| tail -5//g' scripts/build-xwayland.sh || true
-          sed -i 's/| tail -3//g' scripts/build-xwayland.sh || true
-
-      - name: Run Complete Xwayland Build Pipeline
+      - name: Show build directory
+        if: always()
         run: |
-          export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16"
-          ./scripts/build-xwayland.sh --abi=aarch64
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
-          PKG_CONFIG_ALLOW_CROSS: "1"
+          set +e
 
-      - name: Upload Xwayland Install Artifacts
+          echo "========== BUILD =========="
+          find build -maxdepth 3
+
+          echo
+          echo "========== INSTALL =========="
+          find build/xwayland-aarch64 -maxdepth 3
+
+      - name: Dump configure logs
+        if: always()
+        run: |
+          set +e
+
+          mkdir -p logs/configure
+
+          find deps/xwayland-src \
+            -name config.log \
+            -exec cp --parents {} logs/configure \;
+
+          find build \
+            -name meson-log.txt \
+            -exec cp --parents {} logs/configure \;
+
+      - name: Show last configure logs
+        if: always()
+        run: |
+          set +e
+
+          find deps/xwayland-src -name config.log | while read f; do
+            echo
+            echo "======================================"
+            echo "$f"
+            echo "======================================"
+            tail -200 "$f"
+          done
+
+          find build -name meson-log.txt | while read f; do
+            echo
+            echo "======================================"
+            echo "$f"
+            echo "======================================"
+            tail -200 "$f"
+          done
+
+      - name: Upload logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: xwayland-android-aarch64
-          path: build/xwayland-aarch64/install/
+          name: xwayland-debug
+          path: |
+            logs
+            build/**/meson-logs/**
+            deps/**/config.log
+            build/**/build.ninja
+            build/**/android-cross.ini
