@@ -44,8 +44,8 @@ jobs:
           # 1. Клонируем ту же версию Wayland, что используется в проекте
           git clone --branch 1.25.0 https://gitlab.freedesktop.org/wayland/wayland.git /tmp/wayland-host
           
-          # 2. Настраиваем конфигурацию и собираем проект нативно для хоста (без документации и тестов)
-          meson setup /tmp/wayland-host/build /tmp/wayland-host -Ddocumentation=false -Dtests=false -Dlibraries=false
+          # 2. Настраиваем конфигурацию (библиотеки включены по умолчанию, чтобы сгенерировался .pc файл)
+          meson setup /tmp/wayland-host/build /tmp/wayland-host -Ddocumentation=false -Dtests=false
           ninja -C /tmp/wayland-host/build
           
           # 3. Создаем изолированную папку бинарников для раннера
@@ -89,5 +89,4 @@ jobs:
           find . -name "*.sh" -exec chmod +x {} + 2>/dev/null || true
           
           export ANDROID_NDK_HOME="${{ env.ANDROID_NDK_HOME }}"
-          bash -x scripts/build-xwayland.sh --abi=aarch64          export ANDROID_NDK_HOME="${{ env.ANDROID_NDK_HOME }}"
           bash -x scripts/build-xwayland.sh --abi=aarch64
