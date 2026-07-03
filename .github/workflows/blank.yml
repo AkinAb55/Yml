@@ -4,44 +4,31 @@ on:
   workflow_dispatch:
 
 jobs:
-  debug-xwayland:
+  build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 120
 
     env:
       DEBIAN_FRONTEND: noninteractive
-      ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/29.0.13846066
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Show system info
-        run: |
-          set -x
-          uname -a
-          lsb_release -a || true
-          env | sort
-          df -h
-          free -h
-          nproc
+      - uses: actions/checkout@v4
 
       - name: Install build dependencies
         run: |
-          set -ex
+          set -euxo pipefail
 
           sudo apt-get update
 
           sudo apt-get install -y \
-            meson \
-            ninja-build \
-            pkg-config \
             autoconf \
             automake \
             libtool \
             m4 \
             make \
-            perl \
+            ninja-build \
+            meson \
+            pkg-config \
             python3 \
             python3-pip \
             python3-setuptools \
@@ -51,17 +38,50 @@ jobs:
             xsltproc \
             flex \
             bison \
+            curl \
+            git \
+            patch \
+            perl \
             gettext \
             gperf \
             xutils-dev \
-            libxml2-utils \
-            curl \
-            git \
-            patch
+            libxml2-utils
 
-      - name: Verify tools
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: |
+          set -eux
+
+          yes | sdkmanager --licenses
+
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;29.0.13846066"
+
+      - name: Detect NDK
+        run: |
+          set -eux
+
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+
+          export NDK=$(find "$ANDROID_SDK_ROOT/ndk" -mindepth 1 -maxdepth 1 | sort -V | tail -1)
+
+          echo "Found NDK: $NDK"
+
+          echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
+
+          ls -la "$NDK"
+
+      - name: Show environment
         run: |
           set -x
+
+          env | sort
 
           which meson
           meson --version
@@ -84,12 +104,7 @@ jobs:
           which python3
           python3 --version
 
-          echo "NDK:"
-          ls -la "$ANDROID_NDK_HOME"
-
-      - name: Enable bash tracing
-        run: |
-          echo 'export PS4="+ [\${BASH_SOURCE##*/}:\${LINENO}] "' >> ~/.bashrc
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
 
       - name: Run build-xwayland
         shell: bash
@@ -99,65 +114,51 @@ jobs:
 
           mkdir -p logs
 
+          export PS4='+ ${BASH_SOURCE}:${LINENO}: '
+
           bash -x scripts/build-xwayland.sh \
-            2>&1 | tee logs/build-xwayland.log
+            2>&1 | tee logs/build.log
 
-      - name: Show build directory
-        if: always()
-        run: |
-          set +e
-
-          echo "========== BUILD =========="
-          find build -maxdepth 3
-
-          echo
-          echo "========== INSTALL =========="
-          find build/xwayland-aarch64 -maxdepth 3
-
-      - name: Dump configure logs
+      - name: Collect configure logs
         if: always()
         run: |
           set +e
 
           mkdir -p logs/configure
 
-          find deps/xwayland-src \
-            -name config.log \
-            -exec cp --parents {} logs/configure \;
+          find deps -name config.log -exec cp --parents {} logs/configure \;
 
-          find build \
-            -name meson-log.txt \
-            -exec cp --parents {} logs/configure \;
+          find build -name meson-log.txt -exec cp --parents {} logs/configure \;
 
-      - name: Show last configure logs
+      - name: Dump last logs
         if: always()
         run: |
           set +e
 
-          find deps/xwayland-src -name config.log | while read f; do
+          echo "========== CONFIG.LOG =========="
+
+          find deps -name config.log | while read f; do
             echo
-            echo "======================================"
-            echo "$f"
-            echo "======================================"
+            echo "##### $f #####"
             tail -200 "$f"
           done
+
+          echo
+          echo "========== MESON LOGS =========="
 
           find build -name meson-log.txt | while read f; do
             echo
-            echo "======================================"
-            echo "$f"
-            echo "======================================"
+            echo "##### $f #####"
             tail -200 "$f"
           done
 
-      - name: Upload logs
+      - name: Upload debug logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: xwayland-debug
+          if-no-files-found: warn
           path: |
-            logs
-            build/**/meson-logs/**
+            logs/**
+            build/**
             deps/**/config.log
-            build/**/build.ninja
-            build/**/android-cross.ini
