@@ -1,5 +1,4 @@
-name: Fix Xwayland
-
+name: Debug Xwayland Only
 on:
   workflow_dispatch:
 
@@ -8,57 +7,41 @@ env:
   ANDROID_COMPILE_SDK: "36"
 
 jobs:
-  build-xwayland:
+  test-xwayland-fix:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
-          repository: 'wmww/tawc'
-          ref: 'main'
           submodules: recursive
 
-      - name: Install tools
+      - name: Install required tools & autotools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential autoconf automake libtool libtool-bin \
-            perl xsltproc gettext xutils-dev meson ninja-build pkg-config \
-            libwayland-dev wayland-protocols
-        shell: bash
+          sudo apt-get install -y \
+            build-essential git cmake meson ninja-build pkg-config \
+            autoconf automake libtool libtool-bin m4 gettext bison flex \
+            libwayland-dev wayland-protocols libxkbcommon-dev \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu curl textutils tar
 
-      - name: Setup Android
+      - name: Setup Android NDK
         uses: android-actions/setup-android@v3
         with:
           api-level: ${{ env.ANDROID_COMPILE_SDK }}
           ndk: ${{ env.ANDROID_NDK_VERSION }}
 
-      - name: Fix ENV
+      - name: Fix Autotools Environment
         run: |
-          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}" >> $GITHUB_ENV
-          echo "ANDROID_NDK_HOME=\( {ANDROID_SDK_ROOT}/ndk/ \){ANDROID_NDK_VERSION}" >> $GITHUB_ENV
-          echo "PATH=\( {HOME}/.local/bin: \){PATH}" >> $GITHUB_PATH
-          echo "ANDROID_NDK_HOME=\( {ANDROID_SDK_ROOT}/ndk/ \){ANDROID_NDK_VERSION}"  # debug
-        shell: bash
+          # Передаем NDK в окружение раннера
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}" >> $GITHUB_ENV
+          # Жестко прокидываем системный путь к макросам libtool
+          echo "ACLOCAL_PATH=/usr/share/aclocal" >> $GITHUB_ENV
+          # Включаем verbose-вывод для утилит сборки
+          echo "VERBOSE=1" >> $GITHUB_ENV
 
-      - name: Check NDK
+      - name: Run Xwayland Build (Trace Mode)
         run: |
-          echo "NDK HOME: $ANDROID_NDK_HOME"
-          ls "${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/" | grep aarch64 || echo "No aarch64 clang"
-        shell: bash
-
-      - name: Ensure deps
-        run: ./scripts/ensure-deps.sh xwayland-src || true
-
-      - name: Build Xwayland
-        run: |
-          set -x
-          bash -x scripts/build-xwayland.sh --abi=aarch64 --clean 2>&1 | tee xwayland.log
-        shell: bash
-
-      - name: Upload log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: xwayland-log
-          path: xwayland.log
+          chmod +x scripts/*.sh
+          # -x активирует вывод каждой исполняемой строки скрипта,
+          # мы сразу увидим детальный лог падения, если макрос не вылечился
+          bash -x scripts/build-xwayland.sh --abi=aarch64
