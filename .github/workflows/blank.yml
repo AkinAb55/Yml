@@ -1,6 +1,12 @@
 name: Debug TAWC Xwayland Only
 on:
-  workflow_dispatch:
+  push:
+    branches: [ main, master ]  # Автоматически при вашем коммите в YML-репо
+  pull_request:
+    branches: [ main, master ]
+  schedule:
+    - cron: '0 2 * * *'          # Автоматически каждую ночь в 02:00 UTC
+  workflow_dispatch:            # Ручная кнопка тоже остается на всякий случай
 
 env:
   ANDROID_NDK_VERSION: "27.2.12479018"
@@ -33,20 +39,15 @@ jobs:
           if [ ! -d "$REAL_NDK_PATH" ]; then REAL_NDK_PATH="$ANDROID_HOME/ndk-bundle"; fi
           echo "ANDROID_NDK_HOME=$REAL_NDK_PATH" >> $GITHUB_ENV
 
-      - name: Fix Autotools Environment & Inject Macros
+      - name: Fix Autotools Environment Globally
         run: |
           echo "ACLOCAL_PATH=/usr/share/aclocal" >> $GITHUB_ENV
+          echo "ACLOCAL=aclocal -I /usr/share/aclocal" >> $GITHUB_ENV
           echo "VERBOSE=1" >> $GITHUB_ENV
 
       - name: Run TAWC Xwayland Build (Trace Mode)
         run: |
           find . -name "*.sh" -exec chmod +x {} + 2>/dev/null || true
-          
-          # КРИТИЧЕСКОЕ ЛЕЧЕНИЕ LIBFFI:
-          # Принудительно создаем папку m4 в libffi (если её нет) и копируем
-          # туда системные макросы libtool, чтобы утилиты не теряли LT_SYS_SYMBOL_USCORE
-          mkdir -p deps/xwayland-src/libffi/m4
-          cp /usr/share/aclocal/libtool.m4 deps/xwayland-src/libffi/m4/
           
           export ANDROID_NDK_HOME="${{ env.ANDROID_NDK_HOME }}"
           bash -x scripts/build-xwayland.sh --abi=aarch64
