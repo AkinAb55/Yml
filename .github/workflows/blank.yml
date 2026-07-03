@@ -1,4 +1,4 @@
-name: Debug Xwayland Build
+name: Fix Xwayland
 
 on:
   workflow_dispatch:
@@ -6,101 +6,59 @@ on:
 env:
   ANDROID_NDK_VERSION: "27.2.12479018"
   ANDROID_COMPILE_SDK: "36"
-  TAWC_ABIS: "arm64-v8a"
 
 jobs:
-  xwayland-debug:
+  build-xwayland:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 60
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           repository: 'wmww/tawc'
           ref: 'main'
           submodules: recursive
 
-      - name: Install host tools (усилено)
+      - name: Install tools
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential git meson ninja-build pkg-config \
-            autoconf automake libtool libtool-bin perl xsltproc gettext xutils-dev \
-            libwayland-dev wayland-protocols libxkbcommon-dev libx11-dev libxcb1-dev \
-            curl unzip bc patchelf bison flex
+            build-essential autoconf automake libtool libtool-bin \
+            perl xsltproc gettext xutils-dev meson ninja-build pkg-config \
+            libwayland-dev wayland-protocols
         shell: bash
 
-      - name: Setup Android SDK & NDK
+      - name: Setup Android
         uses: android-actions/setup-android@v3
         with:
           api-level: ${{ env.ANDROID_COMPILE_SDK }}
           ndk: ${{ env.ANDROID_NDK_VERSION }}
-          components: platform-tools "platforms;android-\( {{ env.ANDROID_COMPILE_SDK }}" "build-tools;36.0.0" "ndk; \){{ env.ANDROID_NDK_VERSION }}"
 
-      - name: Export env (исправлено)
+      - name: Fix ENV
         run: |
           echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}" >> $GITHUB_ENV
           echo "ANDROID_NDK_HOME=\( {ANDROID_SDK_ROOT}/ndk/ \){ANDROID_NDK_VERSION}" >> $GITHUB_ENV
           echo "PATH=\( {HOME}/.local/bin: \){PATH}" >> $GITHUB_PATH
-          echo "ANDROID_NDK_HOME=\( {ANDROID_SDK_ROOT}/ndk/ \){ANDROID_NDK_VERSION}" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=\( {ANDROID_SDK_ROOT}/ndk/ \){ANDROID_NDK_VERSION}"  # debug
         shell: bash
 
-      - name: Verify NDK
+      - name: Check NDK
         run: |
-          ls -la ${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android*-clang || echo "NDK not found!"
-          echo "ANDROID_NDK_HOME = ${ANDROID_NDK_HOME}"
+          echo "NDK HOME: $ANDROID_NDK_HOME"
+          ls "${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/" | grep aarch64 || echo "No aarch64 clang"
         shell: bash
 
       - name: Ensure deps
         run: ./scripts/ensure-deps.sh xwayland-src || true
-        shell: bash
 
-      - name: Build Xwayland Arm64 (максимальный debug)
+      - name: Build Xwayland
         run: |
           set -x
-          echo "=== Starting Xwayland build ==="
-          bash -x scripts/build-xwayland.sh --abi=aarch64 --clean 2>&1 | tee xwayland-build.log
-          echo "=== Build finished with code $? ==="
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+          bash -x scripts/build-xwayland.sh --abi=aarch64 --clean 2>&1 | tee xwayland.log
         shell: bash
 
       - name: Upload log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: xwayland-full-log
-          path: xwayland-build.log
-      - name: Setup Android SDK & NDK
-        uses: android-actions/setup-android@v3
-        with:
-          api-level: ${{ env.ANDROID_COMPILE_SDK }}
-          ndk: ${{ env.ANDROID_NDK_VERSION }}
-
-      - name: Export env
-        run: |
-          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}" >> $GITHUB_ENV
-          echo "ANDROID_NDK_HOME=\( {ANDROID_SDK_ROOT}/ndk/ \){ANDROID_NDK_VERSION}" >> $GITHUB_ENV
-          echo "PATH=\( {HOME}/.local/bin: \){PATH}" >> $GITHUB_PATH
-
-      - name: Ensure deps
-        run: |
-          ./scripts/ensure-deps.sh --verify-all || true
-          ./scripts/ensure-deps.sh xwayland-src libhybris || true
-
-      - name: Build Xwayland Arm64 (с максимальным выводом)
-        run: |
-          set -x
-          echo "=== Starting Xwayland build ==="
-          bash -x scripts/build-xwayland.sh --abi=aarch64 --clean 2>&1 | tee xwayland-build.log
-          echo "=== Build finished. Exit code: $? ==="
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
-        shell: bash
-
-      - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: xwayland-build-log
-          path: xwayland-build.log
+          name: xwayland-log
+          path: xwayland.log
