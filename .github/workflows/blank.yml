@@ -1,12 +1,12 @@
 name: Debug TAWC Xwayland Only
 on:
   push:
-    branches: [ main, master ]  # Автоматически при вашем коммите в YML-репо
+    branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
   schedule:
-    - cron: '0 2 * * *'          # Автоматически каждую ночь в 02:00 UTC
-  workflow_dispatch:            # Ручная кнопка тоже остается на всякий случай
+    - cron: '0 2 * * *'
+  workflow_dispatch:
 
 env:
   ANDROID_NDK_VERSION: "27.2.12479018"
@@ -39,10 +39,20 @@ jobs:
           if [ ! -d "$REAL_NDK_PATH" ]; then REAL_NDK_PATH="$ANDROID_HOME/ndk-bundle"; fi
           echo "ANDROID_NDK_HOME=$REAL_NDK_PATH" >> $GITHUB_ENV
 
+      - name: Upgrade libffi to v3.6.0 in Manifest
+        run: |
+          echo "=== Исходная строка libffi в deps.list ==="
+          grep "libffi" deps/deps.list || true
+
+          # Подменяем старый коммит и тег v3.5.2 на официальный релиз v3.6.0
+          sed -i 's|e2eda0cf72a0598b44278cc91860ea402273fa29\tv3.5.2|3f99da1d2795bd58b76df479f60cb021b34e569c\tv3.6.0|g' deps/deps.list
+
+          echo "=== Обновленная строка libffi в deps.list ==="
+          grep "libffi" deps/deps.list
+
       - name: Fix Autotools Environment Globally
         run: |
           echo "ACLOCAL_PATH=/usr/share/aclocal" >> $GITHUB_ENV
-          echo "ACLOCAL=aclocal -I /usr/share/aclocal" >> $GITHUB_ENV
           echo "VERBOSE=1" >> $GITHUB_ENV
 
       - name: Run TAWC Xwayland Build (Trace Mode)
