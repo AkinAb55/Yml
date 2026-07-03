@@ -52,9 +52,9 @@ jobs:
           find scripts/ -type f -name "*.sh" -exec chmod +x {} +
           ./scripts/ensure-deps.sh --verify-all
 
-      - name: Inject Smart Autotools Builder
+      - name: Inject Smart Autotools Builder (With Autoheader)
         run: |
-          # Переписываем функцию build_autotools на гарантированно рабочий вариант бутстрапа
+          # Внедряем autoheader в цепочку сборки для генерации fficonfig.h.in
           python3 -c '
           with open("scripts/build-xwayland.sh", "r") as f:
               code = f.read()
@@ -74,6 +74,7 @@ jobs:
                   touch README ChangeLog AUTHORS NEWS && \\
                   libtoolize --copy --force && \\
                   aclocal -I m4 -I /usr/share/aclocal --force && \\
+                  autoheader --force && \\
                   automake --add-missing --copy --foreign && \\
                   autoconf --force && \\
                   chmod +x configure && \\
@@ -87,7 +88,7 @@ jobs:
               patched_code = code[:start_idx] + new_function + code[end_idx:]
               with open("scripts/build-xwayland.sh", "w") as f:
                   f.write(patched_code)
-              print("SUCCESS: Smart build_autotools has been injected!")
+              print("SUCCESS: Autoheader step successfully injected into build_autotools!")
           else:
               print("ERROR: Functions not found!")
               exit(1)
