@@ -1,199 +1,87 @@
-name: Diagnose Wayland 1.25
-
+name: Debug TAWC Xwayland Only
 on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
   workflow_dispatch:
 
 env:
   ANDROID_NDK_VERSION: "27.2.12479018"
+  ANDROID_COMPILE_SDK: "36"
 
 jobs:
-  diagnose:
+  test-xwayland-fix:
     runs-on: ubuntu-24.04
-
     steps:
-      - name: Checkout TAWC
+      - name: Checkout TAWC Repository
         uses: actions/checkout@v4
         with:
-          repository: wmww/tawc
-          ref: main
+          repository: 'wmww/tawc'
+          ref: 'main'
           submodules: recursive
 
-      - name: Install host packages
+      - name: Install Host Build Tools & Autotools
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential \
-            git \
-            meson \
-            ninja-build \
-            pkg-config \
-            python3 \
-            curl \
-            autoconf \
-            automake \
-            libtool \
-            gettext \
-            bison \
-            flex \
-            xsltproc \
-            libxml2-utils
+            build-essential git cmake meson ninja-build pkg-config \
+            autoconf automake libtool libtool-bin m4 gettext bison flex \
+            libwayland-dev wayland-protocols libxkbcommon-dev \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu curl tar
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          ndk: ${{ env.ANDROID_NDK_VERSION }}
-
-      - name: Export NDK
+      - name: Setup Android NDK via SDKManager
         run: |
-          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}" >> $GITHUB_ENV
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;${{ env.ANDROID_NDK_VERSION }}"
+          REAL_NDK_PATH="$ANDROID_HOME/ndk/${{ env.ANDROID_NDK_VERSION }}"
+          if [ ! -d "$REAL_NDK_PATH" ]; then REAL_NDK_PATH="$ANDROID_HOME/ndk-bundle"; fi
+          echo "ANDROID_NDK_HOME=$REAL_NDK_PATH" >> $GITHUB_ENV
 
-      - name: Ensure deps
+      - name: Compile Native wayland-scanner v1.25.0 for Host
         run: |
-          chmod +x scripts/*.sh || true
-          ./scripts/ensure-deps.sh --verify-all || true
+          # 1. Клонируем ту же версию Wayland, что используется в проекте
+          git clone --branch 1.25.0 https://gitlab.freedesktop.org/wayland/wayland.git /tmp/wayland-host
+          
+          # 2. Настраиваем конфигурацию и компилируем только сканер
+          meson setup /tmp/wayland-host/build /tmp/wayland-host -Ddocumentation=false -Dtests=false -Dlibraries=false
+          ninja -C /tmp/wayland-host/build
+          
+          # 3. Создаем изолированную папку бинарников для раннера
+          mkdir -p /home/runner/bin
+          
+          # 4. Копируем скомпилированный сканер в наш PATH
+          cp /tmp/wayland-host/build/src/wayland-scanner /home/runner/bin/wayland-scanner
+          chmod +x /home/runner/bin/wayland-scanner
+          
+          # 5. Добавляем в PATH раннера
+          echo "/home/runner/bin" >> $GITHUB_PATH
 
-      - name: Build host Wayland 1.25
+      - name: Upgrade libffi, wayland-scanner and Hotfix build script
         run: |
-          set -ex
+          # 1. Переключаем манифест TAWC на сборку libffi v3.6.0 (Уже проверено, работает!)
+          sed -i 's|e2eda0cf72a0598b44278cc91860ea402273fa29\tv3.5.2|f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf\tv3.6.0|g' deps/deps.list
+          
+          # 2. Безопасная модификация configure.ac для libffi
+          sed -i '/build_autotools libffi/i \  sed -i "s|LT_SYS_SYMBOL_USCORE|sys_symbol_underscore=no|g" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh
+          
+          # 3. ХОТФИКС ДЛЯ WAYLAND-SCANNER:
+          # Инжектируем явное указание пути к нашемуwayland-scanner в генератор кросс-файла Meson внутри оригинального скрипта.
+          # Строка 'wayland-scanner = '\''/home/runner/bin/wayland-scanner'\''' встанет прямо в секцию [binaries] кросс-файла.
+          sed -i "/\[binaries\]/a \wayland-scanner = '/home/runner/bin/wayland-scanner'" scripts/build-xwayland.sh
+          
+          echo "=== Проверка инъекции патчей в скрипт сборки ==="
+          grep -C 5 "build_autotools libffi" scripts/build-xwayland.sh || true
+          echo "--- Проверка генератора кросс-файла ---"
+          grep -A 10 "\[binaries\]" scripts/build-xwayland.sh || true
 
-          PREFIX="$HOME/wayland-host"
-
-          git clone \
-            --depth=1 \
-            --branch 1.25.0 \
-            https://gitlab.freedesktop.org/wayland/wayland.git \
-            /tmp/wayland
-
-          meson setup \
-            /tmp/wayland/build \
-            /tmp/wayland \
-            --prefix="$PREFIX" \
-            -Ddocumentation=false \
-            -Dtests=false
-
-          ninja -C /tmp/wayland/build
-
-          ninja -C /tmp/wayland/build install
-
-      - name: Full diagnostics
+      - name: Fix Autotools Environment Globally
         run: |
-          set +e
+          echo "ACLOCAL_PATH=/usr/share/aclocal" >> $GITHUB_ENV
+          echo "VERBOSE=1" >> $GITHUB_ENV
 
-          PREFIX="$HOME/wayland-host"
-
-          mkdir diagnostics
-
-          exec > >(tee diagnostics/report.txt)
-          exec 2>&1
-
-          echo "==============================="
-          echo "HOST WAYLAND"
-          echo "==============================="
-
-          echo
-          echo "===== PATH ====="
-          echo "$PATH"
-
-          echo
-          echo "===== PREFIX ====="
-          echo "$PREFIX"
-
-          echo
-          echo "===== INSTALL TREE ====="
-          find "$PREFIX" | sort
-
-          echo
-          echo "===== BIN ====="
-          ls -lah "$PREFIX/bin"
-
-          echo
-          echo "===== WAYLAND VERSION ====="
-          "$PREFIX/bin/wayland-scanner" --version
-
-          echo
-          echo "===== ALL .pc FILES ====="
-          find "$PREFIX" -name "*.pc" -print | sort
-
-          echo
-          echo "===== WAYLAND*.PC ====="
-          find "$PREFIX" -name "wayland*.pc" -print
-
-          echo
-          echo "===== SCANNER.PC ====="
-          find "$PREFIX" -name "wayland-scanner.pc"
-
-          echo
-          echo "===== PKGCONFIG DIRS ====="
-          find "$PREFIX" -type d -name pkgconfig
-
-          echo
-          echo "===== TRY EACH PKGCONFIG ====="
-
-          for d in $(find "$PREFIX" -type d -name pkgconfig)
-          do
-              echo
-              echo "DIR = $d"
-
-              PKG_CONFIG_PATH="$d" \
-              pkg-config --list-all | grep wayland || true
-
-              PKG_CONFIG_PATH="$d" \
-              pkg-config --modversion wayland-scanner || true
-
-              PKG_CONFIG_PATH="$d" \
-              pkg-config --modversion wayland-client || true
-
-              PKG_CONFIG_PATH="$d" \
-              pkg-config --modversion wayland-server || true
-          done
-
-          echo
-          echo "===== SYSTEM PKGCONFIG ====="
-
-          pkg-config --list-all | grep wayland || true
-
-          pkg-config --modversion wayland-scanner || true
-
-          pkg-config --modversion wayland-client || true
-
-          pkg-config --modversion wayland-server || true
-
-          echo
-          echo "===== WHICH ====="
-
-          which pkg-config
-
-          which wayland-scanner || true
-
-          echo
-          echo "===== ENV ====="
-
-          env | sort
-
-      - name: Run original build (expected to fail)
-        continue-on-error: true
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/${{ env.ANDROID_NDK_VERSION }}
-          PKG_CONFIG_ALLOW_CROSS: "1"
+      - name: Run TAWC Xwayland Build (Trace Mode)
         run: |
-          export PATH="$HOME/wayland-host/bin:$PATH"
-
-          export PKG_CONFIG_PATH="$HOME/wayland-host/lib/pkgconfig:$HOME/wayland-host/share/pkgconfig:$PKG_CONFIG_PATH"
-
+          find . -name "*.sh" -exec chmod +x {} + 2>/dev/null || true
+          
+          export ANDROID_NDK_HOME="${{ env.ANDROID_NDK_ENV }}"
           bash -x scripts/build-xwayland.sh --abi=aarch64
-
-      - name: Collect Meson logs
-        if: always()
-        run: |
-          mkdir -p diagnostics
-
-          find build -name meson-log.txt -exec cp --parents {} diagnostics/ \; || true
-
-          find build -name android-cross.ini -exec cp --parents {} diagnostics/ \; || true
-
-      - name: Upload diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: wayland-diagnostics
-          path: diagnostics
