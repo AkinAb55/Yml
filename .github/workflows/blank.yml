@@ -52,16 +52,21 @@ jobs:
           find scripts/ -type f -name "*.sh" -exec chmod +x {} +
           ./scripts/ensure-deps.sh --verify-all
 
-      - name: Surgical Patch for libffi & Autotools
+      - name: Absolute Autotools Sequence Fix
         run: |
-          # 1. Форсируем autoreconf искать макросы в m4 папках проекта и системных директориях хоста
-          sed -i 's|autoreconf -fi|autoreconf -vfi -I m4 -I /usr/share/aclocal|g' scripts/build-xwayland.sh
+          # Разворачиваем кастомную пошаговую генерацию вместо слепого autoreconf
+          # Сначала копируем макросы libtool, затем принудительно собираем aclocal, и только потом пускаем configure
+          SED_REPLACE="libtoolize --copy --force \&\& aclocal -I m4 -I /usr/share/aclocal --force \&\& autoreconf -fi"
           
-          # 2. Убираем подавление ошибок (2>/dev/null), чтобы видеть логи autogen.sh
-          sed -i 's/2>\/dev\/null//g' scripts/build-xwayland.sh
+          # Заменяем проблемный кусок в build_autotools()
+          sed -i "s|if \[ ! -f configure \]; then NOCONFIGURE=1 ./autogen.sh 2>/dev/null \|\| autoreconf -fi; fi|if [ ! -f configure ]; then $SED_REPLACE; fi|g" scripts/build-xwayland.sh
           
-          # 3. Дописываем правильные системные пути макросов к уже существующему ACLOCAL_PATH в скрипте
+          # Дописываем правильные системные пути макросов к существующему ACLOCAL_PATH
           sed -i 's|export ACLOCAL_PATH="$PREFIX/share/aclocal:${ACLOCAL_PATH:-}"|export ACLOCAL_PATH="$PREFIX/share/aclocal:/usr/share/aclocal:/usr/share/aclocal-1.16:${ACLOCAL_PATH:-}"|g' scripts/build-xwayland.sh
+          
+          # Убираем скрытие логов через tail, чтобы полностью видеть процесс
+          sed -i 's/| tail -5//g' scripts/build-xwayland.sh || true
+          sed -i 's/| tail -3//g' scripts/build-xwayland.sh || true
 
       - name: Run Complete Xwayland Build Pipeline
         run: |
