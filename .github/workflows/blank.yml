@@ -22,7 +22,7 @@ jobs:
             build-essential git cmake meson ninja-build pkg-config \
             autoconf automake libtool libtool-bin m4 gettext bison flex \
             libwayland-dev wayland-protocols libxkbcommon-dev \
-            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu curl textutils tar
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu curl tar
 
       - name: Setup Android NDK
         uses: android-actions/setup-android@v3
@@ -32,16 +32,11 @@ jobs:
 
       - name: Fix Autotools Environment
         run: |
-          # Передаем NDK в окружение раннера
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}" >> $GITHUB_ENV
-          # Жестко прокидываем системный путь к макросам libtool
           echo "ACLOCAL_PATH=/usr/share/aclocal" >> $GITHUB_ENV
-          # Включаем verbose-вывод для утилит сборки
           echo "VERBOSE=1" >> $GITHUB_ENV
 
       - name: Run Xwayland Build (Trace Mode)
         run: |
           chmod +x scripts/*.sh
-          # -x активирует вывод каждой исполняемой строки скрипта,
-          # мы сразу увидим детальный лог падения, если макрос не вылечился
           bash -x scripts/build-xwayland.sh --abi=aarch64
