@@ -1,4 +1,4 @@
-name: Test Host Wayland 1.25
+name: Diagnose Wayland 1.25
 
 on:
   workflow_dispatch:
@@ -7,7 +7,7 @@ env:
   ANDROID_NDK_VERSION: "27.2.12479018"
 
 jobs:
-  test:
+  diagnose:
     runs-on: ubuntu-24.04
 
     steps:
@@ -35,8 +35,8 @@ jobs:
             gettext \
             bison \
             flex \
-            libxml2-utils \
-            xsltproc
+            xsltproc \
+            libxml2-utils
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
@@ -47,16 +47,16 @@ jobs:
         run: |
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}" >> $GITHUB_ENV
 
-      #####################################################
-      # BUILD HOST WAYLAND 1.25
-      #####################################################
+      - name: Ensure deps
+        run: |
+          chmod +x scripts/*.sh || true
+          ./scripts/ensure-deps.sh --verify-all || true
 
       - name: Build host Wayland 1.25
         run: |
-
           set -ex
 
-          PREFIX=$HOME/wayland-host
+          PREFIX="$HOME/wayland-host"
 
           git clone \
             --depth=1 \
@@ -67,7 +67,7 @@ jobs:
           meson setup \
             /tmp/wayland/build \
             /tmp/wayland \
-            --prefix=$PREFIX \
+            --prefix="$PREFIX" \
             -Ddocumentation=false \
             -Dtests=false
 
@@ -75,48 +75,125 @@ jobs:
 
           ninja -C /tmp/wayland/build install
 
-          echo "$PREFIX/bin" >> $GITHUB_PATH
-
-          echo "PKG_CONFIG_PATH=$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig" >> $GITHUB_ENV
-
-      #####################################################
-      # VERIFY
-      #####################################################
-
-      - name: Verify host Wayland
+      - name: Full diagnostics
         run: |
+          set +e
 
-          export PATH="$HOME/wayland-host/bin:$PATH"
-          export PKG_CONFIG_PATH="$HOME/wayland-host/lib/pkgconfig:$HOME/wayland-host/share/pkgconfig"
+          PREFIX="$HOME/wayland-host"
 
-          echo "==== which ===="
-          which wayland-scanner
+          mkdir diagnostics
 
-          echo "==== version ===="
-          wayland-scanner --version
+          exec > >(tee diagnostics/report.txt)
+          exec 2>&1
 
-          echo "==== pkg-config ===="
-          pkg-config --modversion wayland-scanner
+          echo "==============================="
+          echo "HOST WAYLAND"
+          echo "==============================="
 
-          echo "==== pc file ===="
-          pkg-config --variable pcfiledir wayland-scanner
+          echo
+          echo "===== PATH ====="
+          echo "$PATH"
 
-      #####################################################
-      # ORIGINAL SCRIPT
-      #####################################################
+          echo
+          echo "===== PREFIX ====="
+          echo "$PREFIX"
 
-      - name: Ensure deps
-        run: |
-          chmod +x scripts/*.sh
-          ./scripts/ensure-deps.sh --verify-all
+          echo
+          echo "===== INSTALL TREE ====="
+          find "$PREFIX" | sort
 
-      - name: Run original build-xwayland.sh
+          echo
+          echo "===== BIN ====="
+          ls -lah "$PREFIX/bin"
+
+          echo
+          echo "===== WAYLAND VERSION ====="
+          "$PREFIX/bin/wayland-scanner" --version
+
+          echo
+          echo "===== ALL .pc FILES ====="
+          find "$PREFIX" -name "*.pc" -print | sort
+
+          echo
+          echo "===== WAYLAND*.PC ====="
+          find "$PREFIX" -name "wayland*.pc" -print
+
+          echo
+          echo "===== SCANNER.PC ====="
+          find "$PREFIX" -name "wayland-scanner.pc"
+
+          echo
+          echo "===== PKGCONFIG DIRS ====="
+          find "$PREFIX" -type d -name pkgconfig
+
+          echo
+          echo "===== TRY EACH PKGCONFIG ====="
+
+          for d in $(find "$PREFIX" -type d -name pkgconfig)
+          do
+              echo
+              echo "DIR = $d"
+
+              PKG_CONFIG_PATH="$d" \
+              pkg-config --list-all | grep wayland || true
+
+              PKG_CONFIG_PATH="$d" \
+              pkg-config --modversion wayland-scanner || true
+
+              PKG_CONFIG_PATH="$d" \
+              pkg-config --modversion wayland-client || true
+
+              PKG_CONFIG_PATH="$d" \
+              pkg-config --modversion wayland-server || true
+          done
+
+          echo
+          echo "===== SYSTEM PKGCONFIG ====="
+
+          pkg-config --list-all | grep wayland || true
+
+          pkg-config --modversion wayland-scanner || true
+
+          pkg-config --modversion wayland-client || true
+
+          pkg-config --modversion wayland-server || true
+
+          echo
+          echo "===== WHICH ====="
+
+          which pkg-config
+
+          which wayland-scanner || true
+
+          echo
+          echo "===== ENV ====="
+
+          env | sort
+
+      - name: Run original build (expected to fail)
+        continue-on-error: true
         env:
-          PKG_CONFIG_ALLOW_CROSS: "1"
           ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/${{ env.ANDROID_NDK_VERSION }}
+          PKG_CONFIG_ALLOW_CROSS: "1"
         run: |
-
           export PATH="$HOME/wayland-host/bin:$PATH"
-          export PKG_CONFIG_PATH="$HOME/wayland-host/lib/pkgconfig:$HOME/wayland-host/share/pkgconfig"
+
+          export PKG_CONFIG_PATH="$HOME/wayland-host/lib/pkgconfig:$HOME/wayland-host/share/pkgconfig:$PKG_CONFIG_PATH"
 
           bash -x scripts/build-xwayland.sh --abi=aarch64
+
+      - name: Collect Meson logs
+        if: always()
+        run: |
+          mkdir -p diagnostics
+
+          find build -name meson-log.txt -exec cp --parents {} diagnostics/ \; || true
+
+          find build -name android-cross.ini -exec cp --parents {} diagnostics/ \; || true
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wayland-diagnostics
+          path: diagnostics
