@@ -20,21 +20,57 @@ jobs:
           ref: 'main'
           submodules: recursive
 
-      - name: Install ALL host tools (усилено для Xwayland)
+      - name: Install host tools (усилено)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential git cmake meson ninja-build pkg-config \
-            autoconf automake libtool libtool-bin \
-            perl xsltproc gettext xutils-dev \
-            libwayland-dev wayland-protocols libxkbcommon-dev \
-            libx11-dev libxcb1-dev libxcb-xkb-dev libx11-xcb-dev \
-            libffi-dev libegl1-mesa-dev libgles-dev libdrm-dev libepoxy-dev \
-            curl unzip bc patchelf bison flex texinfo gperf \
-            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            pkgconf
+            build-essential git meson ninja-build pkg-config \
+            autoconf automake libtool libtool-bin perl xsltproc gettext xutils-dev \
+            libwayland-dev wayland-protocols libxkbcommon-dev libx11-dev libxcb1-dev \
+            curl unzip bc patchelf bison flex
         shell: bash
 
+      - name: Setup Android SDK & NDK
+        uses: android-actions/setup-android@v3
+        with:
+          api-level: ${{ env.ANDROID_COMPILE_SDK }}
+          ndk: ${{ env.ANDROID_NDK_VERSION }}
+          components: platform-tools "platforms;android-\( {{ env.ANDROID_COMPILE_SDK }}" "build-tools;36.0.0" "ndk; \){{ env.ANDROID_NDK_VERSION }}"
+
+      - name: Export env (исправлено)
+        run: |
+          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=\( {ANDROID_SDK_ROOT}/ndk/ \){ANDROID_NDK_VERSION}" >> $GITHUB_ENV
+          echo "PATH=\( {HOME}/.local/bin: \){PATH}" >> $GITHUB_PATH
+          echo "ANDROID_NDK_HOME=\( {ANDROID_SDK_ROOT}/ndk/ \){ANDROID_NDK_VERSION}" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Verify NDK
+        run: |
+          ls -la ${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android*-clang || echo "NDK not found!"
+          echo "ANDROID_NDK_HOME = ${ANDROID_NDK_HOME}"
+        shell: bash
+
+      - name: Ensure deps
+        run: ./scripts/ensure-deps.sh xwayland-src || true
+        shell: bash
+
+      - name: Build Xwayland Arm64 (максимальный debug)
+        run: |
+          set -x
+          echo "=== Starting Xwayland build ==="
+          bash -x scripts/build-xwayland.sh --abi=aarch64 --clean 2>&1 | tee xwayland-build.log
+          echo "=== Build finished with code $? ==="
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+        shell: bash
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xwayland-full-log
+          path: xwayland-build.log
       - name: Setup Android SDK & NDK
         uses: android-actions/setup-android@v3
         with:
