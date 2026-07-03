@@ -52,19 +52,58 @@ jobs:
           find scripts/ -type f -name "*.sh" -exec chmod +x {} +
           ./scripts/ensure-deps.sh --verify-all
 
-      - name: Absolute Autotools Sequence Fix
+      - name: Overwrite build_autotools with Ironclad Version
         run: |
-          # Разворачиваем кастомную пошаговую генерацию вместо слепого autoreconf
-          # Сначала копируем макросы libtool, затем принудительно собираем aclocal, и только потом пускаем configure
-          SED_REPLACE="libtoolize --copy --force \&\& aclocal -I m4 -I /usr/share/aclocal --force \&\& autoreconf -fi"
-          
-          # Заменяем проблемный кусок в build_autotools()
-          sed -i "s|if \[ ! -f configure \]; then NOCONFIGURE=1 ./autogen.sh 2>/dev/null \|\| autoreconf -fi; fi|if [ ! -f configure ]; then $SED_REPLACE; fi|g" scripts/build-xwayland.sh
-          
-          # Дописываем правильные системные пути макросов к существующему ACLOCAL_PATH
+          # Используем Python для гарантированной замены всей функции целиком без проблем с экранированием bash
+          python3 -c '
+          with open("scripts/build-xwayland.sh", "r") as f:
+              code = f.read()
+
+          # Находим старую функцию build_autotools
+          start_idx = code.find("build_autotools() {")
+          # Находим конец функции (следующая функция или стадия)
+          end_idx = code.find("stage_should_run() {")
+
+          if start_idx != -1 and end_idx != -1:
+              # Наша новая, абсолютно стабильная пошаговая функция сборки
+              new_function = """build_autotools() {
+              local name="$1"; shift
+              local src="$SRC_ROOT/$name"
+              echo "==> Custom compiling autotools project: $name"
+              ( cd "$src" && \\
+                  if { [ -f .tawc-autotools-host ] && [ "$(cat .tawc-autotools-host)" != "$TRIPLE" ]; } || \\
+                     { [ ! -f .tawc-autotools-host ] && [ -f Makefile ]; }; then \\
+                      make distclean >/dev/null 2>&1 || make clean >/dev/null 2>&1 || true; \\
+                      rm -f config.cache; \\
+                  fi && \\
+                  if [ ! -f configure ]; then \\
+                      echo "==> Running manual bootstrap sequence for $name" && \\
+                      libtoolize --copy --force && \\
+                      aclocal -I m4 -I /usr/share/aclocal --force && \\
+                      autoconf --force && \\
+                      automake --add-missing --copy --foreign || true; \\
+                  fi && \\
+                  configure_autotools "$@" && \\
+                  make -j"$(nproc)" && \\
+                  make install && \\
+                  printf "%s\\n" "$TRIPLE" > .tawc-autotools-host )
+          }
+
+          """
+              # Заменяем кусок кода
+              patched_code = code[:start_idx] + new_function + code[end_idx:]
+              with open("scripts/build-xwayland.sh", "w") as f:
+                  f.write(patched_code)
+              print("SUCCESS: build_autotools() has been atomically patched!")
+          else:
+              print("ERROR: Could not find target functions for patching!")
+              exit(1)
+          '
+
+          # Дополнительно чиним затирание системного ACLOCAL_PATH в начале скрипта
           sed -i 's|export ACLOCAL_PATH="$PREFIX/share/aclocal:${ACLOCAL_PATH:-}"|export ACLOCAL_PATH="$PREFIX/share/aclocal:/usr/share/aclocal:/usr/share/aclocal-1.16:${ACLOCAL_PATH:-}"|g' scripts/build-xwayland.sh
           
-          # Убираем скрытие логов через tail, чтобы полностью видеть процесс
+          # Убираем обрезку вывода логов
           sed -i 's/| tail -5//g' scripts/build-xwayland.sh || true
           sed -i 's/| tail -3//g' scripts/build-xwayland.sh || true
 
