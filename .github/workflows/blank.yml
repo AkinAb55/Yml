@@ -44,7 +44,7 @@ jobs:
           # 1. Клонируем ту же версию Wayland, что используется в проекте
           git clone --branch 1.25.0 https://gitlab.freedesktop.org/wayland/wayland.git /tmp/wayland-host
           
-          # 2. Настраиваем конфигурацию (библиотеки включены по умолчанию, чтобы сгенерировался .pc файл)
+          # 2. Настраиваем конфигурацию и компилируем
           meson setup /tmp/wayland-host/build /tmp/wayland-host -Ddocumentation=false -Dtests=false
           ninja -C /tmp/wayland-host/build
           
@@ -55,10 +55,9 @@ jobs:
           cp /tmp/wayland-host/build/src/wayland-scanner /home/runner/bin/wayland-scanner
           chmod +x /home/runner/bin/wayland-scanner
           
-          # 5. Перенаправляем pkg-config на наш новый сгенерированный файл .pc
-          # Чтобы кросс-Meson для Android видел правильную версию 1.25.0 вместо системной 1.22.0
+          # 5. Копируем .pc файл из директории генерации Meson (meson-private)
           mkdir -p /home/runner/pkgconfig
-          cp /tmp/wayland-host/build/src/wayland-scanner.pc /home/runner/pkgconfig/wayland-scanner.pc
+          cp /tmp/wayland-host/build/meson-private/wayland-scanner.pc /home/runner/pkgconfig/wayland-scanner.pc
           
           # Подменяем путь к бинарнику внутри самого .pc файла, чтобы он указывал на наш новый сканер
           sed -i 's|wayland_scanner=.*|wayland_scanner=/home/runner/bin/wayland-scanner|g' /home/runner/pkgconfig/wayland-scanner.pc
@@ -69,11 +68,10 @@ jobs:
 
       - name: Upgrade libffi and Hotfix build script
         run: |
-          # 1. Переключаем манифест TAWC на сборку libffi v3.6.0 (используем правильный коммит релиза)
+          # 1. Переключаем манифест TAWC на сборку libffi v3.6.0
           sed -i 's|e2eda0cf72a0598b44278cc91860ea402273fa29\tv3.5.2|f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf\tv3.6.0|g' deps/deps.list
 
-          # 2. Безопасная модификация configure.ac для libffi:
-          # Заменяем удаленный в Ubuntu 24.04 макрос LT_SYS_SYMBOL_USCORE на инициализацию переменной
+          # 2. Безопасная модификация configure.ac для libffi
           sed -i '/build_autotools libffi/i \  sed -i "s|LT_SYS_SYMBOL_USCORE|sys_symbol_underscore=no|g" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh
 
           echo "=== Проверка инъекции патча в скрипт сборки ==="
