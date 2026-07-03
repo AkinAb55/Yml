@@ -5,8 +5,8 @@ on:
   pull_request:
     branches: [ main, master ]
   schedule:
-    - cron: '0 2 * * *'
-  workflow_dispatch:
+    - cron: '0 2 * * *'          # Автоматический запуск каждую ночь в 02:00 UTC
+  workflow_dispatch:            # Кнопка ручного запуска в интерфейсе GitHub
 
 env:
   ANDROID_NDK_VERSION: "27.2.12479018"
@@ -41,30 +41,39 @@ jobs:
 
       - name: Compile Native wayland-scanner v1.25.0 for Host
         run: |
-          # Клонируем ту же версию Wayland, что используется в проекте
+          # 1. Клонируем ту же версию Wayland, что используется в проекте
           git clone --branch 1.25.0 https://gitlab.freedesktop.org/wayland/wayland.git /tmp/wayland-host
           
-          # Собираем только scanner и библиотеки для хоста (Ubuntu)
-          meson setup /tmp/wayland-host/build /tmp/wayland-host -Ddocumentation=false -Dtests=false
-          ninja -C /tmp/wayland-host/build install-wayland-scanner
+          # 2. Настраиваем конфигурацию и собираем проект нативно для хоста (без документации и тестов)
+          meson setup /tmp/wayland-host/build /tmp/wayland-host -Ddocumentation=false -Dtests=false -Dlibraries=false
+          ninja -C /tmp/wayland-host/build
           
-          # Создаем локальную директорию бинарников и делаем ссылку на свежий сканер
+          # 3. Создаем изолированную папку бинарников для раннера
           mkdir -p /home/runner/bin
-          ln -sf /usr/local/bin/wayland-scanner /home/runner/bin/wayland-scanner
           
-          # Принудительно заменяем старый .pc файл, чтобы pkg-config отдавал версию 1.25.0
-          sudo cp /tmp/wayland-host/build/src/wayland-scanner.pc /usr/share/pkgconfig/wayland-scanner.pc || \
-          sudo cp /tmp/wayland-host/build/src/wayland-scanner.pc /usr/lib/x86_64-linux-gnu/pkgconfig/wayland-scanner.pc
+          # 4. Копируем скомпилированный сканер в наш PATH
+          cp /tmp/wayland-host/build/src/wayland-scanner /home/runner/bin/wayland-scanner
+          chmod +x /home/runner/bin/wayland-scanner
+          
+          # 5. Перенаправляем pkg-config на наш новый сгенерированный файл .pc
+          # Чтобы кросс-Meson для Android видел правильную версию 1.25.0 вместо системной 1.22.0
+          mkdir -p /home/runner/pkgconfig
+          cp /tmp/wayland-host/build/src/wayland-scanner.pc /home/runner/pkgconfig/wayland-scanner.pc
+          
+          # Подменяем путь к бинарнику внутри самого .pc файла, чтобы он указывал на наш новый сканер
+          sed -i 's|wayland_scanner=.*|wayland_scanner=/home/runner/bin/wayland-scanner|g' /home/runner/pkgconfig/wayland-scanner.pc
 
-          # Добавляем наш бинарник в начало PATH раннера
+          # Экспортируем пути в глобальное окружение GitHub Actions
           echo "/home/runner/bin" >> $GITHUB_PATH
+          echo "PKG_CONFIG_PATH=/home/runner/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
 
       - name: Upgrade libffi and Hotfix build script
         run: |
-          # 1. Переключаем манифест TAWC на сборку libffi v3.6.0
+          # 1. Переключаем манифест TAWC на сборку libffi v3.6.0 (используем правильный коммит релиза)
           sed -i 's|e2eda0cf72a0598b44278cc91860ea402273fa29\tv3.5.2|f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf\tv3.6.0|g' deps/deps.list
 
-          # 2. Безопасная модификация configure.ac для libffi (исправление прошлой ошибки)
+          # 2. Безопасная модификация configure.ac для libffi:
+          # Заменяем удаленный в Ubuntu 24.04 макрос LT_SYS_SYMBOL_USCORE на инициализацию переменной
           sed -i '/build_autotools libffi/i \  sed -i "s|LT_SYS_SYMBOL_USCORE|sys_symbol_underscore=no|g" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh
 
           echo "=== Проверка инъекции патча в скрипт сборки ==="
@@ -80,4 +89,5 @@ jobs:
           find . -name "*.sh" -exec chmod +x {} + 2>/dev/null || true
           
           export ANDROID_NDK_HOME="${{ env.ANDROID_NDK_HOME }}"
+          bash -x scripts/build-xwayland.sh --abi=aarch64          export ANDROID_NDK_HOME="${{ env.ANDROID_NDK_HOME }}"
           bash -x scripts/build-xwayland.sh --abi=aarch64
