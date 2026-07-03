@@ -52,37 +52,31 @@ jobs:
           find scripts/ -type f -name "*.sh" -exec chmod +x {} +
           ./scripts/ensure-deps.sh --verify-all
 
-      - name: Overwrite build_autotools with Ironclad Version
+      - name: Inject Smart Autotools Builder
         run: |
-          # Используем Python для гарантированной замены всей функции целиком без проблем с экранированием bash
+          # Переписываем функцию build_autotools на гарантированно рабочий вариант бутстрапа
           python3 -c '
           with open("scripts/build-xwayland.sh", "r") as f:
               code = f.read()
 
-          # Находим старую функцию build_autotools
           start_idx = code.find("build_autotools() {")
-          # Находим конец функции (следующая функция или стадия)
           end_idx = code.find("stage_should_run() {")
 
           if start_idx != -1 and end_idx != -1:
-              # Наша новая, абсолютно стабильная пошаговая функция сборки
               new_function = """build_autotools() {
               local name="$1"; shift
               local src="$SRC_ROOT/$name"
               echo "==> Custom compiling autotools project: $name"
               ( cd "$src" && \\
-                  if { [ -f .tawc-autotools-host ] && [ "$(cat .tawc-autotools-host)" != "$TRIPLE" ]; } || \\
-                     { [ ! -f .tawc-autotools-host ] && [ -f Makefile ]; }; then \\
-                      make distclean >/dev/null 2>&1 || make clean >/dev/null 2>&1 || true; \\
-                      rm -f config.cache; \\
-                  fi && \\
-                  if [ ! -f configure ]; then \\
-                      echo "==> Running manual bootstrap sequence for $name" && \\
-                      libtoolize --copy --force && \\
-                      aclocal -I m4 -I /usr/share/aclocal --force && \\
-                      autoconf --force && \\
-                      automake --add-missing --copy --foreign || true; \\
-                  fi && \\
+                  rm -rf autom4te.cache config.cache aclocal.m4 configure config.status Makefile include/Makefile.in include/Makefile && \\
+                  export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16:$PREFIX/share/aclocal" && \\
+                  echo "==> Running forced complete autotools bootstrap for $name" && \\
+                  touch README ChangeLog AUTHORS NEWS && \\
+                  libtoolize --copy --force && \\
+                  aclocal -I m4 -I /usr/share/aclocal --force && \\
+                  automake --add-missing --copy --foreign && \\
+                  autoconf --force && \\
+                  chmod +x configure && \\
                   configure_autotools "$@" && \\
                   make -j"$(nproc)" && \\
                   make install && \\
@@ -90,20 +84,19 @@ jobs:
           }
 
           """
-              # Заменяем кусок кода
               patched_code = code[:start_idx] + new_function + code[end_idx:]
               with open("scripts/build-xwayland.sh", "w") as f:
                   f.write(patched_code)
-              print("SUCCESS: build_autotools() has been atomically patched!")
+              print("SUCCESS: Smart build_autotools has been injected!")
           else:
-              print("ERROR: Could not find target functions for patching!")
+              print("ERROR: Functions not found!")
               exit(1)
           '
 
-          # Дополнительно чиним затирание системного ACLOCAL_PATH в начале скрипта
+          # Исправляем базовый сброс ACLOCAL_PATH в скрипте
           sed -i 's|export ACLOCAL_PATH="$PREFIX/share/aclocal:${ACLOCAL_PATH:-}"|export ACLOCAL_PATH="$PREFIX/share/aclocal:/usr/share/aclocal:/usr/share/aclocal-1.16:${ACLOCAL_PATH:-}"|g' scripts/build-xwayland.sh
           
-          # Убираем обрезку вывода логов
+          # Убираем обрезку логов tail
           sed -i 's/| tail -5//g' scripts/build-xwayland.sh || true
           sed -i 's/| tail -3//g' scripts/build-xwayland.sh || true
 
