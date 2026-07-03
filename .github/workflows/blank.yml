@@ -52,18 +52,21 @@ jobs:
           find scripts/ -type f -name "*.sh" -exec chmod +x {} +
           ./scripts/ensure-deps.sh --verify-all
 
-      - name: Patch ACLOCAL_PATH overwrite bug (The Core Fix)
+      - name: Atomic Patch for Autotools & ACLOCAL_PATH
         run: |
-          # Жёстко чиним затирание системных макросов в скрипте сборки Xwayland
-          sed -i 's|export ACLOCAL_PATH="$PREFIX/share/aclocal"|export ACLOCAL_PATH="$PREFIX/share/aclocal:/usr/share/aclocal:/usr/share/aclocal-1.16"|g' scripts/build-xwayland.sh
+          # 1. Жестко инжектим исправление путей ACLOCAL прямо в начало функции build_autotools
+          # Это гарантирует, что при сборке любого autotools-пакета (включая libffi) макросы либтула будут найдены
+          sed -i '/build_autotools\(\) {/a \    export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16:${PREFIX}/share/aclocal"' scripts/build-xwayland.sh
           
-          # Убираем обрезку логов через tail, чтобы видеть полные ошибки компиляции
+          # 2. На всякий случай чистим все явные переопределения переменной внутри скрипта
+          sed -i 's|export ACLOCAL_PATH=.*|export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16:${PREFIX}/share/aclocal"|g' scripts/build-xwayland.sh
+          
+          # 3. Отключаем обрезку логов tail, чтобы видеть процесс до конца
           sed -i 's/| tail -5//g' scripts/build-xwayland.sh || true
           sed -i 's/| tail -3//g' scripts/build-xwayland.sh || true
 
       - name: Run Complete Xwayland Build Pipeline
         run: |
-          # Перед запуском объявляем глобальный путь для Autotools на хосте
           export ACLOCAL_PATH="/usr/share/aclocal:/usr/share/aclocal-1.16"
           ./scripts/build-xwayland.sh --abi=aarch64
         env:
