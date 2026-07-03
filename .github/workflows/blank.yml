@@ -1,161 +1,70 @@
-name: xwayland-debug-build
+name: Debug Xwayland Build
 
 on:
   workflow_dispatch:
 
+env:
+  ANDROID_NDK_VERSION: "27.2.12479018"
+  ANDROID_COMPILE_SDK: "36"
+  TAWC_ABIS: "arm64-v8a"
+
 jobs:
-  build:
+  xwayland-debug:
     runs-on: ubuntu-24.04
-
-    env:
-      DEBIAN_FRONTEND: noninteractive
-      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
-
+    timeout-minutes: 90
     steps:
-      # ─────────────────────────────────────────────
-      # 1. CHECKOUT (CRITICAL)
-      # ─────────────────────────────────────────────
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          repository: 'wmww/tawc'
+          ref: 'main'
+          submodules: recursive
 
-      # ─────────────────────────────────────────────
-      # 2. SYSTEM TOOLS
-      # ─────────────────────────────────────────────
-      - name: Install build dependencies
+      - name: Install ALL host tools (усилено для Xwayland)
         run: |
-          set -euxo pipefail
-
           sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential git cmake meson ninja-build pkg-config \
+            autoconf automake libtool libtool-bin \
+            perl xsltproc gettext xutils-dev \
+            libwayland-dev wayland-protocols libxkbcommon-dev \
+            libx11-dev libxcb1-dev libxcb-xkb-dev libx11-xcb-dev \
+            libffi-dev libegl1-mesa-dev libgles-dev libdrm-dev libepoxy-dev \
+            curl unzip bc patchelf bison flex texinfo gperf \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            pkgconf
+        shell: bash
 
-          sudo apt-get install -y \
-            bash \
-            coreutils \
-            git \
-            curl \
-            pkg-config \
-            meson \
-            ninja-build \
-            autoconf \
-            automake \
-            libtool \
-            xsltproc \
-            python3 \
-            python3-pip \
-            libxml2-utils \
-            perl \
-            make \
-            gcc \
-            g++
-
-      # ─────────────────────────────────────────────
-      # 3. ANDROID NDK
-      # ─────────────────────────────────────────────
-      - name: Setup Android SDK + NDK
+      - name: Setup Android SDK & NDK
         uses: android-actions/setup-android@v3
+        with:
+          api-level: ${{ env.ANDROID_COMPILE_SDK }}
+          ndk: ${{ env.ANDROID_NDK_VERSION }}
 
-      - name: Install NDK
+      - name: Export env
         run: |
-          set -euxo pipefail
+          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=\( {ANDROID_SDK_ROOT}/ndk/ \){ANDROID_NDK_VERSION}" >> $GITHUB_ENV
+          echo "PATH=\( {HOME}/.local/bin: \){PATH}" >> $GITHUB_PATH
 
-          yes | sdkmanager --licenses
-
-          sdkmanager \
-            "platform-tools" \
-            "platforms;android-35" \
-            "build-tools;35.0.0" \
-            "ndk;29.0.14206865"
-
-          NDK_PATH=$(find "$ANDROID_SDK_ROOT/ndk" -mindepth 1 -maxdepth 1 | sort -V | tail -1)
-
-          echo "ANDROID_NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
-
-      # ─────────────────────────────────────────────
-      # 4. VERIFY ENV
-      # ─────────────────────────────────────────────
-      - name: Debug environment
+      - name: Ensure deps
         run: |
-          set -euxo pipefail
+          ./scripts/ensure-deps.sh --verify-all || true
+          ./scripts/ensure-deps.sh xwayland-src libhybris || true
 
-          echo "NDK:"
-          ls -la "$ANDROID_NDK_HOME"
-
-          echo "TOOLS:"
-          which meson
-          which ninja
-          which autoreconf
-          which pkg-config
-          which python3
-
-          meson --version
-          ninja --version
-
-      # ─────────────────────────────────────────────
-      # 5. RUN BUILD WITH FULL TRACE
-      # ─────────────────────────────────────────────
-      - name: Run Xwayland build (TRACE MODE)
-        continue-on-error: true
+      - name: Build Xwayland Arm64 (с максимальным выводом)
         run: |
-          set -Eeuxo pipefail
+          set -x
+          echo "=== Starting Xwayland build ==="
+          bash -x scripts/build-xwayland.sh --abi=aarch64 --clean 2>&1 | tee xwayland-build.log
+          echo "=== Build finished. Exit code: $? ==="
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+        shell: bash
 
-          mkdir -p logs
-
-          export PS4='+ ${BASH_SOURCE}:${LINENO}: '
-
-          bash -x scripts/build-xwayland.sh \
-            2>&1 | tee logs/build.log
-
-      # ─────────────────────────────────────────────
-      # 6. TREE DUMP
-      # ─────────────────────────────────────────────
-      - name: Dump build tree
-        if: always()
-        run: |
-          set +e
-
-          echo "===== BUILD DIR ====="
-          find build -maxdepth 4 -type d 2>/dev/null || true
-
-          echo "===== XWAYLAND SRC ====="
-          find deps/xwayland-src -maxdepth 3 2>/dev/null || true
-
-      # ─────────────────────────────────────────────
-      # 7. MESON LOGS
-      # ─────────────────────────────────────────────
-      - name: Collect meson logs
-        if: always()
-        run: |
-          set +e
-
-          find . -name meson-log.txt -exec sh -c '
-            echo "========== {} =========="
-            cat {}
-          ' \;
-
-      # ─────────────────────────────────────────────
-      # 8. CONFIG LOGS (AUTOTOOLS)
-      # ─────────────────────────────────────────────
-      - name: Collect config logs
-        if: always()
-        run: |
-          set +e
-
-          find . -name config.log -exec sh -c '
-            echo "========== {} =========="
-            tail -200 {}
-          ' \;
-
-      # ─────────────────────────────────────────────
-      # 9. UPLOAD ARTIFACTS
-      # ─────────────────────────────────────────────
-      - name: Upload logs
+      - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: xwayland-debug-logs
-          path: |
-            logs/
-            build/
-            deps/xwayland-src/**/meson-log.txt
-            deps/xwayland-src/**/config.log
+          name: xwayland-build-log
+          path: xwayland-build.log
