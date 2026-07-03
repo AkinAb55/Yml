@@ -1,49 +1,63 @@
-name: buildXwaylandArm64-v8a
+name: xwayland-debug-build
 
 on:
   workflow_dispatch:
 
 jobs:
-  buildXwaylandArm64-v8a:
+  build:
     runs-on: ubuntu-24.04
 
     env:
       DEBIAN_FRONTEND: noninteractive
+      ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
     steps:
-      - uses: actions/checkout@v4
+      # ─────────────────────────────────────────────
+      # 1. CHECKOUT (CRITICAL)
+      # ─────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Install packages
+      # ─────────────────────────────────────────────
+      # 2. SYSTEM TOOLS
+      # ─────────────────────────────────────────────
+      - name: Install build dependencies
         run: |
+          set -euxo pipefail
+
           sudo apt-get update
 
           sudo apt-get install -y \
+            bash \
+            coreutils \
+            git \
+            curl \
+            pkg-config \
             meson \
             ninja-build \
-            pkg-config \
             autoconf \
             automake \
             libtool \
             xsltproc \
-            libxml2-utils \
             python3 \
             python3-pip \
-            git \
-            curl \
+            libxml2-utils \
             perl \
-            bison \
-            flex \
-            gettext \
-            texinfo \
-            gperf
+            make \
+            gcc \
+            g++
 
-      - name: Install Android SDK + NDK
+      # ─────────────────────────────────────────────
+      # 3. ANDROID NDK
+      # ─────────────────────────────────────────────
+      - name: Setup Android SDK + NDK
         uses: android-actions/setup-android@v3
 
       - name: Install NDK
-        shell: bash
         run: |
-          set -eux
+          set -euxo pipefail
 
           yes | sdkmanager --licenses
 
@@ -51,108 +65,97 @@ jobs:
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0" \
-            "ndk;29.0.13846066"
+            "ndk;29.0.14206865"
 
-          NDK=$(find "$ANDROID_SDK_ROOT/ndk" -mindepth 1 -maxdepth 1 | sort -V | tail -1)
+          NDK_PATH=$(find "$ANDROID_SDK_ROOT/ndk" -mindepth 1 -maxdepth 1 | sort -V | tail -1)
 
-          echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
 
-      - name: Environment
-        shell: bash
+      # ─────────────────────────────────────────────
+      # 4. VERIFY ENV
+      # ─────────────────────────────────────────────
+      - name: Debug environment
         run: |
-          set -x
+          set -euxo pipefail
 
-          env | sort
+          echo "NDK:"
+          ls -la "$ANDROID_NDK_HOME"
 
-          echo
-          echo "===== NDK ====="
+          echo "TOOLS:"
+          which meson
+          which ninja
+          which autoreconf
+          which pkg-config
+          which python3
 
-          ls -R "$ANDROID_NDK_HOME"
+          meson --version
+          ninja --version
 
-          echo
-          echo "===== compiler ====="
-
-          find "$ANDROID_NDK_HOME/toolchains" -name '*clang' | head -50
-
-      - name: Build
-        shell: bash
+      # ─────────────────────────────────────────────
+      # 5. RUN BUILD WITH FULL TRACE
+      # ─────────────────────────────────────────────
+      - name: Run Xwayland build (TRACE MODE)
         continue-on-error: true
         run: |
-          set -xe
+          set -Eeuxo pipefail
 
-          chmod +x scripts/*.sh || true
+          mkdir -p logs
 
-          bash scripts/build-xwayland.sh --abi=arm64-v8a
+          export PS4='+ ${BASH_SOURCE}:${LINENO}: '
 
+          bash -x scripts/build-xwayland.sh \
+            2>&1 | tee logs/build.log
+
+      # ─────────────────────────────────────────────
+      # 6. TREE DUMP
+      # ─────────────────────────────────────────────
       - name: Dump build tree
         if: always()
-        shell: bash
         run: |
           set +e
 
-          echo
-          echo "===== BUILD TREE ====="
+          echo "===== BUILD DIR ====="
+          find build -maxdepth 4 -type d 2>/dev/null || true
 
-          find build | sort
+          echo "===== XWAYLAND SRC ====="
+          find deps/xwayland-src -maxdepth 3 2>/dev/null || true
 
-          echo
-          echo "===== DEPS ====="
-
-          find deps | head -1000
-
-      - name: config.log
+      # ─────────────────────────────────────────────
+      # 7. MESON LOGS
+      # ─────────────────────────────────────────────
+      - name: Collect meson logs
         if: always()
-        shell: bash
         run: |
           set +e
 
-          echo
-          echo "===== CONFIG.LOG ====="
+          find . -name meson-log.txt -exec sh -c '
+            echo "========== {} =========="
+            cat {}
+          ' \;
 
-          find . -name config.log | while read f
-          do
-              echo
-              echo "############################################"
-              echo "$f"
-              echo "############################################"
-              cat "$f"
-          done
-
-      - name: meson logs
+      # ─────────────────────────────────────────────
+      # 8. CONFIG LOGS (AUTOTOOLS)
+      # ─────────────────────────────────────────────
+      - name: Collect config logs
         if: always()
-        shell: bash
         run: |
           set +e
 
-          find . -name meson-log.txt | while read f
-          do
-              echo
-              echo "############################################"
-              echo "$f"
-              echo "############################################"
-              cat "$f"
-          done
+          find . -name config.log -exec sh -c '
+            echo "========== {} =========="
+            tail -200 {}
+          ' \;
 
-      - name: build.ninja
-        if: always()
-        shell: bash
-        run: |
-          set +e
-
-          find . -name build.ninja | while read f
-          do
-              echo
-              echo "############################################"
-              echo "$f"
-              echo "############################################"
-              head -300 "$f"
-          done
-
+      # ─────────────────────────────────────────────
+      # 9. UPLOAD ARTIFACTS
+      # ─────────────────────────────────────────────
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: xwayland-debug
+          name: xwayland-debug-logs
           path: |
-            build/**
-            deps/**
+            logs/
+            build/
+            deps/xwayland-src/**/meson-log.txt
+            deps/xwayland-src/**/config.log
