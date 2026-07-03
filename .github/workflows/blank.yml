@@ -36,7 +36,20 @@ jobs:
           echo "ACLOCAL_PATH=/usr/share/aclocal" >> $GITHUB_ENV
           echo "VERBOSE=1" >> $GITHUB_ENV
 
-      - name: Run Xwayland Build (Trace Mode)
+          - name: Run Xwayland Build (Trace Mode)
         run: |
-          chmod +x scripts/*.sh
+          # Посмотрим, что вообще лежит в корне репозитория
+          echo "=== Текущая директория ==="
+          pwd
+          ls -la
+          
+          echo "=== Проверяем наличие папки scripts ==="
+          if [ -d "scripts" ]; then ls -la scripts; fi
+
+          # Делаем скрипты исполняемыми без падения, если маска пуста
+          find scripts/ -name "*.sh" -exec chmod +x {} + 2>/dev/null || true
+          
+          # Запуск сборки
           bash -x scripts/build-xwayland.sh --abi=aarch64
+
+    
