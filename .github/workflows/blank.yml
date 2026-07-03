@@ -39,13 +39,32 @@ jobs:
           if [ ! -d "$REAL_NDK_PATH" ]; then REAL_NDK_PATH="$ANDROID_HOME/ndk-bundle"; fi
           echo "ANDROID_NDK_HOME=$REAL_NDK_PATH" >> $GITHUB_ENV
 
+      - name: Compile Native wayland-scanner v1.25.0 for Host
+        run: |
+          # Клонируем ту же версию Wayland, что используется в проекте
+          git clone --branch 1.25.0 https://gitlab.freedesktop.org/wayland/wayland.git /tmp/wayland-host
+          
+          # Собираем только scanner и библиотеки для хоста (Ubuntu)
+          meson setup /tmp/wayland-host/build /tmp/wayland-host -Ddocumentation=false -Dtests=false
+          ninja -C /tmp/wayland-host/build install-wayland-scanner
+          
+          # Создаем локальную директорию бинарников и делаем ссылку на свежий сканер
+          mkdir -p /home/runner/bin
+          ln -sf /usr/local/bin/wayland-scanner /home/runner/bin/wayland-scanner
+          
+          # Принудительно заменяем старый .pc файл, чтобы pkg-config отдавал версию 1.25.0
+          sudo cp /tmp/wayland-host/build/src/wayland-scanner.pc /usr/share/pkgconfig/wayland-scanner.pc || \
+          sudo cp /tmp/wayland-host/build/src/wayland-scanner.pc /usr/lib/x86_64-linux-gnu/pkgconfig/wayland-scanner.pc
+
+          # Добавляем наш бинарник в начало PATH раннера
+          echo "/home/runner/bin" >> $GITHUB_PATH
+
       - name: Upgrade libffi and Hotfix build script
         run: |
           # 1. Переключаем манифест TAWC на сборку libffi v3.6.0
           sed -i 's|e2eda0cf72a0598b44278cc91860ea402273fa29\tv3.5.2|f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf\tv3.6.0|g' deps/deps.list
 
-          # 2. Безопасная модификация configure.ac:
-          # Заменяем макрос LT_SYS_SYMBOL_USCORE на принудительную инициализацию переменной в "no"
+          # 2. Безопасная модификация configure.ac для libffi (исправление прошлой ошибки)
           sed -i '/build_autotools libffi/i \  sed -i "s|LT_SYS_SYMBOL_USCORE|sys_symbol_underscore=no|g" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh
 
           echo "=== Проверка инъекции патча в скрипт сборки ==="
