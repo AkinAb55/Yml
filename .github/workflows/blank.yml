@@ -47,9 +47,9 @@ jobs:
           ./scripts/ensure-deps.sh wayland libffi xwayland pixman libdrm xkeyboard-config
 
       # ─────────────────────────────────────────────────────────────
-      # 1. СБОРКА ИЗОЛИРОВАННОГО WAYLAND С ТАРГЕТОМ И БИБЛИОТЕКАМИ 1.25
+      # 1. СБОРКА И ИНТЕГРАЦИЯ WAYLAND 1.25 В СИСТЕМНЫЙ PKG-CONFIG
       # ─────────────────────────────────────────────────────────────
-      - name: Build Isolated Wayland 1.25 Host Stack
+      - name: Build and System-Register Wayland 1.25 Host Stack
         run: |
           set -e
           mkdir -p /tmp/wayland-src
@@ -65,8 +65,19 @@ jobs:
           ninja -C /tmp/wayland-src/build
           ninja -C /tmp/wayland-src/build install
 
+          # Копируем .pc файлы и бинарники в системные директории хоста,
+          # чтобы native-поиск Meson гарантированно находил версию 1.25.0
+          sudo cp ${{ env.WAYLAND_PREFIX }}//lib/pkgconfig/wayland-scanner.pc /usr/share/pkgconfig/
+          sudo rm -f /usr/bin/wayland-scanner
+          sudo cp ${{ env.WAYLAND_PREFIX }}/bin/wayland-scanner /usr/bin/wayland-scanner
+          sudo chmod +x /usr/bin/wayland-scanner
+
+          echo "=== Проверка системной регистрации ==="
+          pkg-config --modversion wayland-scanner
+          wayland-scanner --version
+
       # ─────────────────────────────────────────────────────────────
-      # 2. ПОДГОТОВКА СТРУКТУРЫ И ХАКИ ДЛЯ СКРИПТА СБОРКИ
+      # 2. ОДИН ЧИСТЫЙ ХАК ДЛЯ СЦЕПЛЕНИЯ LIBFFI
       # ─────────────────────────────────────────────────────────────
       - name: Upgrade libffi and Hotfix build script
         run: |
@@ -78,23 +89,6 @@ jobs:
           
           # Устраняем ошибку LT_SYS_SYMBOL_USCORE в libffi
           sed -i '/build_autotools libffi/i \  sed -i "s|LT_SYS_SYMBOL_USCORE|sys_symbol_underscore=no|g" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh
-          
-          # 🔥 Генерируем расширенный native-file для Meson.
-          # Секция [properties] заставит нативный pkg-config искать зависимости в нашей изолированной папке 1.25.0
-          cat > /tmp/meson-native.ini <<EOF
-          [binaries]
-          wayland-scanner = '${{ env.WAYLAND_PREFIX }}/bin/wayland-scanner'
-          pkg-config = 'pkg-config'
-
-          [properties]
-          pkg-config_libdir = '${{ env.WAYLAND_PREFIX }}/lib/pkgconfig:${{ env.WAYLAND_PREFIX }}/share/pkgconfig'
-          EOF
-
-          # Внедряем аргумент --native-file прямо в команду "meson setup" внутри функции build_meson()
-          sed -i 's|meson setup "|meson setup --native-file /tmp/meson-native.ini "|g' scripts/build-xwayland.sh
-
-          echo "=== Проверка изменения вызова meson setup ==="
-          grep "meson setup" scripts/build-xwayland.sh
 
       # ─────────────────────────────────────────────────────────────
       # 3. ЗАПУСК КРОСС-СБОРКИ
@@ -105,9 +99,6 @@ jobs:
           
           export ANDROID_NDK_HOME="${{ env.ANDROID_NDK_HOME }}"
           export PATH="${{ env.WAYLAND_PREFIX }}/bin:$PATH"
-          
-          # Прокидываем пути в глобальное окружение текущей сессии bash
-          export PKG_CONFIG_PATH="${{ env.WAYLAND_PREFIX }}/lib/pkgconfig:${{ env.WAYLAND_PREFIX }}/share/pkgconfig"
           export ACLOCAL_PATH="${{ env.WAYLAND_PREFIX }}/share/aclocal:/usr/share/aclocal"
           export VERBOSE=1
           
