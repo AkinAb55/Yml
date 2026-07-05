@@ -72,12 +72,13 @@ jobs:
           # 2. Применяем хак против ошибки LT_SYS_SYMBOL_USCORE для libffi
           sed -i '/build_autotools libffi/i \  sed -i "s|LT_SYS_SYMBOL_USCORE|sys_symbol_underscore=no|g" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh
           
-          # 3. Безопасный инжект: вместо модификации шаблона, мы добавляем команду "sed" для точечного 
-          # исправления уже созданного android-cross.ini прямо в начало функции build_meson()
-          sed -i '/build_meson() {/a \    sed -i "s|^pkg-config = .*|pkg-config = \x27pkg-config\x27\\nwayland-scanner = \x27/home/runner/.local/bin/wayland-scanner\x27|g" "$CROSS_FILE"' scripts/build-xwayland.sh
+          # 3. Внедряем путь к wayland-scanner ОДИН РАЗ сразу после завершения генерации кросс-файла.
+          # Ищем закрывающий маркер шаблона EOF внутри gen_meson_cross() и с помощью sed вставляем после него
+          # команду точечной замены в файле $CROSS_FILE.
+          sed -i '/cat >"\$CROSS_FILE" <<EOF/,/^EOF$/!b;/^EOF$/a \    sed -i "s|pkg-config = .pkg-config.|pkg-config = \x27pkg-config\x27\\nwayland-scanner = \x27/home/runner/.local/bin/wayland-scanner\x27|g" "\$CROSS_FILE"' scripts/build-xwayland.sh
 
-          echo "=== Проверка корректности инъекции в build_meson ==="
-          grep -A 4 "build_meson()" scripts/build-xwayland.sh
+          echo "=== Проверка инъекции в блок генерации кросс-файла ==="
+          grep -A 5 -B 15 "CROSS_FILE" scripts/build-xwayland.sh | grep -A 3 -B 3 "EOF"
 
       - name: Fix Autotools Environment Globally
         run: |
