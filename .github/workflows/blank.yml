@@ -42,50 +42,79 @@ jobs:
         run: |
           set -ex
           chmod +x scripts/ensure-deps.sh
-          # Принудительно скачиваем необходимые исходники в deps/ до начала сборки и модификаций
           ./scripts/ensure-deps.sh wayland libffi xwayland pixman libdrm xkeyboard-config
-
-      - name: Upgrade libffi and Hotfix build script
-        run: |
-          set -ex
-          # 1. Переключаем манифест TAWC на сборку libffi v3.6.0
-          sed -i 's|e2eda0cf72a0598b44278cc91860ea402273fa29\tv3.5.2|f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf\tv3.6.0|g' deps/deps.list
-          
-          # 2. Обновляем сам локальный git-репозиторий libffi до v3.6.0, чтобы пройти внутреннюю проверку коммитов
-          git -C deps/xwayland-src/libffi fetch origin f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf
-          git -C deps/xwayland-src/libffi checkout f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf
-          
-          # 3. Безопасная модификация configure.ac для libffi (устранение ошибки LT_SYS_SYMBOL_USCORE)
-          sed -i '/build_autotools libffi/i \  sed -i "s|LT_SYS_SYMBOL_USCORE|sys_symbol_underscore=no|g" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh
-          
-          # 4. Внедряем путь к нашему wayland-scanner ОДИН РАЗ прямо в шаблон генерации кросс-файла gen_meson_cross
-          sed -i "s|pkg-config = 'pkg-config'|pkg-config = 'pkg-config'\nwayland-scanner = '/home/runner/.local/bin/wayland-scanner'|g" scripts/build-xwayland.sh
-          
-          echo "=== Проверка шаблона генерации android-cross.ini ==="
-          grep -C 5 "wayland-scanner" scripts/build-xwayland.sh
 
       - name: Build Host Wayland Scanner (v1.25.0)
         run: |
           set -ex
           mkdir -p build-host-wayland
-          
-          # Конфигурируем Wayland для хоста. Оставляем генерацию целей, но отключаем тесты и доки
           meson setup build-host-wayland deps/xwayland-src/wayland \
             -Dscanner=true \
             -Dtests=false \
             -Ddocumentation=false \
             -Ddtd_validation=false
           
-          # Собираем конкретный таргет сканнера (находится внутри подпапки src)
           ninja -C build-host-wayland src/wayland-scanner
           
-          # Переносим готовый бинарник в изолированную структуру bin
           mkdir -p $HOME/.local/bin
           cp build-host-wayland/src/wayland-scanner $HOME/.local/bin/
           chmod +x $HOME/.local/bin/wayland-scanner
-          
-          # Проверяем успешность сборки и версию утилиты
           $HOME/.local/bin/wayland-scanner --version
+
+      - name: Upgrade libffi and Hotfix build script
+        run: |
+          set -ex
+          # 1. Синхронизируем манифест и git-версию libffi до v3.6.0
+          sed -i 's|e2eda0cf72a0598b44278cc91860ea402273fa29\tv3.5.2|f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf\tv3.6.0|g' deps/deps.list
+          git -C deps/xwayland-src/libffi fetch origin f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf
+          git -C deps/xwayland-src/libffi checkout f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf
+          
+          # 2. Применяем хак против ошибки LT_SYS_SYMBOL_USCORE
+          sed -i '/build_autotools libffi/i \  sed -i "s|LT_SYS_SYMBOL_USCORE|sys_symbol_underscore=no|g" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh
+          
+          # 3. Полностью отключаем внутреннюю автоматическую генерацию кросс-файла в скрипте,
+          # заменяя вызов gen_meson_cross на обычный echo. Мы создадим этот файл сами на следующем шаге.
+          sed -i 's|^gen_meson_cross|echo "Using external cross-file"|g' scripts/build-xwayland.sh
+
+      - name: Pre-generate Perfect Meson Cross-File
+        run: |
+          set -ex
+          # Создаем структуру директорий заранее, чтобы положить туда файл конфигурации
+          OUT_DIR="${{ github.workspace }}/build/xwayland-aarch64"
+          PREFIX="$OUT_DIR/install"
+          mkdir -p "$OUT_DIR"
+          
+          NDK_BIN="${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          
+          # Генерируем идеальный android-cross.ini с жестко вшитым путем к нашему собранному сканнеру
+          cat > "$OUT_DIR/android-cross.ini" <<EOF
+          [binaries]
+          c       = '$NDK_BIN/aarch64-linux-android29-clang'
+          cpp     = '$NDK_BIN/aarch64-linux-android29-clang++'
+          ar      = '$NDK_BIN/llvm-ar'
+          strip   = '$NDK_BIN/llvm-strip'
+          ld      = '$NDK_BIN/ld.lld'
+          pkg-config = 'pkg-config'
+          wayland-scanner = '/home/runner/.local/bin/wayland-scanner'
+
+          [built-in options]
+          c_args = ['-fPIC', '-O2', '-DANDROID', '-D_GNU_SOURCE', '-I$PREFIX/include']
+          cpp_args = ['-fPIC', '-O2', '-DANDROID', '-D_GNU_SOURCE', '-I$PREFIX/include']
+          c_link_args = ['-L$PREFIX/lib', '-Wl,-rpath-link,$PREFIX/lib']
+          cpp_link_args = ['-L$PREFIX/lib', '-Wl,-rpath-link,$PREFIX/lib']
+
+          [host_machine]
+          system = 'android'
+          cpu_family = 'aarch64'
+          cpu = 'aarch64'
+          endian = 'little'
+
+          [properties]
+          pkg-config_libdir = '$PREFIX/lib/pkgconfig:$PREFIX/share/pkgconfig'
+          EOF
+          
+          echo "=== Сгенерированный кросс-файл ==="
+          cat "$OUT_DIR/android-cross.ini"
 
       - name: Fix Autotools Environment Globally
         run: |
