@@ -42,7 +42,7 @@ jobs:
         run: |
           set -ex
           chmod +x scripts/ensure-deps.sh
-          # Принудительно выкачиваем зависимости для xwayland, чтобы они появились в deps/
+          # Принудительно скачиваем необходимые исходники в deps/ до начала сборки и модификаций
           ./scripts/ensure-deps.sh wayland libffi xwayland pixman libdrm xkeyboard-config
 
       - name: Upgrade libffi and Hotfix build script
@@ -51,7 +51,7 @@ jobs:
           # 1. Переключаем манифест TAWC на сборку libffi v3.6.0
           sed -i 's|e2eda0cf72a0598b44278cc91860ea402273fa29\tv3.5.2|f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf\tv3.6.0|g' deps/deps.list
           
-          # 2. Безопасная модификация configure.ac для libffi (твой рабочий хак)
+          # 2. Безопасная модификация configure.ac для libffi (устранение ошибки LT_SYS_SYMBOL_USCORE)
           sed -i '/build_autotools libffi/i \  sed -i "s|LT_SYS_SYMBOL_USCORE|sys_symbol_underscore=no|g" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh
           
           # 3. Инъекция пути к хостовому wayland-scanner в генерируемый кросс-файл Meson
@@ -65,23 +65,24 @@ jobs:
       - name: Build Host Wayland Scanner (v1.25.0)
         run: |
           set -ex
-          # Собираем нативный инструмент под x86_64 из исходников проекта
           mkdir -p build-host-wayland
+          
+          # Конфигурируем Wayland для хоста. Оставляем генерацию целей, но отключаем тесты и доки
           meson setup build-host-wayland deps/xwayland-src/wayland \
             -Dscanner=true \
-            -Dlibraries=false \
             -Dtests=false \
             -Ddocumentation=false \
             -Ddtd_validation=false
           
-          ninja -C build-host-wayland wayland-scanner
+          # Собираем конкретный таргет сканнера (находится внутри подпапки src)
+          ninja -C build-host-wayland src/wayland-scanner
           
-          # Переносим в изолированную директорию
+          # Переносим готовый бинарник в изолированную структуру bin
           mkdir -p $HOME/.local/bin
-          cp build-host-wayland/wayland-scanner $HOME/.local/bin/
+          cp build-host-wayland/src/wayland-scanner $HOME/.local/bin/
           chmod +x $HOME/.local/bin/wayland-scanner
           
-          # Проверяем версию
+          # Проверяем успешность сборки и версию утилиты
           $HOME/.local/bin/wayland-scanner --version
 
       - name: Fix Autotools Environment Globally
