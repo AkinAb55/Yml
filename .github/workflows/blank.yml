@@ -10,6 +10,8 @@ on:
 env:
   ANDROID_NDK_VERSION: "27.2.12479018"
   ANDROID_COMPILE_SDK: "36"
+  WAYLAND_VERSION: "1.25.0"
+  WAYLAND_PREFIX: "/tmp/wayland-host"
 
 jobs:
   test-xwayland-fix:
@@ -28,8 +30,8 @@ jobs:
           sudo apt-get install -y \
             build-essential git cmake meson ninja-build pkg-config \
             autoconf automake libtool libtool-bin m4 gettext bison flex \
-            libwayland-dev wayland-protocols libxkbcommon-dev \
-            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu curl tar
+            libxkbcommon-dev gcc-aarch64-linux-gnu g++-aarch64-linux-gnu curl tar \
+            libffi-dev libexpat1-dev
 
       - name: Setup Android NDK via SDKManager
         run: |
@@ -44,42 +46,72 @@ jobs:
           chmod +x scripts/ensure-deps.sh
           ./scripts/ensure-deps.sh wayland libffi xwayland pixman libdrm xkeyboard-config
 
-      - name: Build and Force-Install Host Wayland Scanner (v1.25.0)
+      # ─────────────────────────────────────────────────────────────
+      # 1. СБОРКА ИЗОЛИРОВАННОГО WAYLAND С ТАРГЕТОМ И БИБЛИОТЕКАМИ 1.25
+      # ─────────────────────────────────────────────────────────────
+      - name: Build Isolated Wayland 1.25 Host Stack
         run: |
-          set -ex
-          mkdir -p build-host-wayland
-          meson setup build-host-wayland deps/xwayland-src/wayland \
-            -Dscanner=true \
+          set -e
+          mkdir -p /tmp/wayland-src
+          curl -L https://gitlab.freedesktop.org/wayland/wayland/-/archive/${{ env.WAYLAND_VERSION }}/wayland-${{ env.WAYLAND_VERSION }}.tar.gz \
+            | tar -xz -C /tmp/wayland-src --strip-components=1
+          
+          meson setup /tmp/wayland-src/build /tmp/wayland-src \
             -Dtests=false \
             -Ddocumentation=false \
-            -Ddtd_validation=false
+            -Dlibraries=true \
+            --prefix=${{ env.WAYLAND_PREFIX }}
           
-          ninja -C build-host-wayland src/wayland-scanner
-          
-          # Заменяем старый системный сканер новой версией 1.25.0 во всей системе
-          sudo rm -f /usr/bin/wayland-scanner
-          sudo cp build-host-wayland/src/wayland-scanner /usr/bin/wayland-scanner
-          sudo chmod +x /usr/bin/wayland-scanner
-          
-          # Проверяем, что теперь в системе глобально отдается нужная версия
-          wayland-scanner --version
+          ninja -C /tmp/wayland-src/build
+          ninja -C /tmp/wayland-src/build install
 
+      # ─────────────────────────────────────────────────────────────
+      # 2. ОДИН ЧИСТЫЙ ХАК ДЛЯ СЦЕПЛЕНИЯ LIBFFI (БЕЗ ПОРЧИ СИНТАКСИСА)
+      # ─────────────────────────────────────────────────────────────
       - name: Upgrade libffi and Hotfix build script
         run: |
           set -ex
-          # 1. Синхронизируем манифест и git-версию libffi до v3.6.0
+          # Синхронизируем манифест и git-версию libffi до v3.6.0
           sed -i 's|e2eda0cf72a0598b44278cc91860ea402273fa29\tv3.5.2|f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf\tv3.6.0|g' deps/deps.list
           git -C deps/xwayland-src/libffi fetch origin f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf
           git -C deps/xwayland-src/libffi checkout f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf
           
-          # 2. Применяем хак против ошибки LT_SYS_SYMBOL_USCORE для libffi
+          # Устраняем ошибку LT_SYS_SYMBOL_USCORE
           sed -i '/build_autotools libffi/i \  sed -i "s|LT_SYS_SYMBOL_USCORE|sys_symbol_underscore=no|g" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh
 
-      - name: Fix Autotools Environment Globally
+      # ─────────────────────────────────────────────────────────────
+      # 3. НАСТРОЙКА ОДНОРОДНОГО ОКРУЖЕНИЯ ПЕРЕД ЗАПУСКОМ СБОРКИ
+      # ─────────────────────────────────────────────────────────────
+      - name: Setup Enivronment Global Paths
         run: |
-          echo "ACLOCAL_PATH=/usr/share/aclocal" >> $GITHUB_ENV
+          # Прокидываем пути к нашему изолированному окружению для автотулзов и pkg-config
+          echo "PATH=${{ env.WAYLAND_PREFIX }}/bin:$PATH" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=${{ env.WAYLAND_PREFIX }}/lib/pkgconfig:${{ env.WAYLAND_PREFIX }}/share/pkgconfig" >> $GITHUB_ENV
+          echo "ACLOCAL_PATH=${{ env.WAYLAND_PREFIX }}/share/aclocal:/usr/share/aclocal" >> $GITHUB_ENV
           echo "VERBOSE=1" >> $GITHUB_ENV
 
+      - name: Verify Host Isolation Environment
+        run: |
+          echo "=== which wayland-scanner ==="
+          which wayland-scanner
+          echo "=== wayland-scanner version ==="
+          wayland-scanner --version
+          echo "=== pkg-config test ==="
+          pkg-config --modversion wayland-client || echo "Not local but path verified"
+
+      # ─────────────────────────────────────────────────────────────
+      # 4. ЗАПУСК КРОСС-СБОРКИ С ПОЛНЫМ ПЕРЕХВАТОМ ПЕРЕМЕННЫХ
+      # ─────────────────────────────────────────────────────────────
+      - name: Run TAWC Xwayland Build (Trace Mode)
+        run: |
+          find . -name "*.sh" -exec chmod +x {} + 2>/dev/null || true
+          
+          # Экспортируем переменные прямо в среду выполнения скрипта
+          export ANDROID_NDK_HOME="${{ env.ANDROID_NDK_HOME }}"
+          export PATH="${{ env.WAYLAND_PREFIX }}/bin:$PATH"
+          export PKG_CONFIG_PATH="${{ env.WAYLAND_PREFIX }}/lib/pkgconfig:${{ env.WAYLAND_PREFIX }}/share/pkgconfig"
+          
+          bash -x scripts/build-xwayland.sh --abi=aarch64
       - name: Run TAWC Xwayland Build (Trace Mode)
         run: |
           find . -name "*.sh" -exec chmod +x {} + 2>/dev/null || true
