@@ -80,7 +80,7 @@ jobs:
           sed -i '/build_autotools libffi/i \  sed -i "s|LT_SYS_SYMBOL_USCORE|sys_symbol_underscore=no|g" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh
 
       # ─────────────────────────────────────────────────────────────
-      # 3. ЗАПУСК КРОСС-СБОРКИ С УКАЗАНИЕМ ПЕРЕМЕННЫХ НАПРЯМУЮ ДЛЯ MESON
+      # 3. ЗАПУСК КРОСС-СБОРКИ С ОБЯЗАТЕЛЬНЫМ УКАЗАНИЕМ NATIVE ПУТЕЙ
       # ─────────────────────────────────────────────────────────────
       - name: Run TAWC Xwayland Build (Trace Mode)
         run: |
@@ -88,9 +88,15 @@ jobs:
           
           # Переменные для работы скриптов и компилятора NDK
           export ANDROID_NDK_HOME="${{ env.ANDROID_NDK_HOME }}"
+          
+          # Переопределяем PATH, чтобы наш бинарник шел первым в системе
           export PATH="${{ env.WAYLAND_PREFIX }}/bin:$PATH"
           
-          # 🔥 Специфичные переменные Meson для поиска зависимостей хоста во время кросс-компиляции
+          # Конфигурация pkg-config для нативной (build) машины внутри Meson
+          export PKG_CONFIG_PATH="${{ env.WAYLAND_PREFIX }}/lib/pkgconfig:${{ env.WAYLAND_PREFIX }}/share/pkgconfig"
+          export PKG_CONFIG_NATIVE_PATH="${{ env.WAYLAND_PREFIX }}/lib/pkgconfig:${{ env.WAYLAND_PREFIX }}/share/pkgconfig"
+          
+          # Дублируем для кросс-вызовов Meson
           export WAYLAND_SCANNER="${{ env.WAYLAND_PREFIX }}/bin/wayland-scanner"
           export PKG_CONFIG_FOR_BUILD="pkg-config"
           export PKG_CONFIG_PATH_FOR_BUILD="${{ env.WAYLAND_PREFIX }}/lib/pkgconfig:${{ env.WAYLAND_PREFIX }}/share/pkgconfig"
