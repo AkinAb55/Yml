@@ -66,7 +66,7 @@ jobs:
           ninja -C /tmp/wayland-src/build install
 
       # ─────────────────────────────────────────────────────────────
-      # 2. ОДИН ЧИСТЫЙ ХАК ДЛЯ СЦЕПЛЕНИЯ LIBFFI
+      # 2. ПОДГОТОВКА СТРУКТУРЫ И ХАКИ ДЛЯ СКРИПТА СБОРКИ
       # ─────────────────────────────────────────────────────────────
       - name: Upgrade libffi and Hotfix build script
         run: |
@@ -76,32 +76,34 @@ jobs:
           git -C deps/xwayland-src/libffi fetch origin f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf
           git -C deps/xwayland-src/libffi checkout f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf
           
-          # Устраняем ошибку LT_SYS_SYMBOL_USCORE
+          # Устраняем ошибку LT_SYS_SYMBOL_USCORE в libffi
           sed -i '/build_autotools libffi/i \  sed -i "s|LT_SYS_SYMBOL_USCORE|sys_symbol_underscore=no|g" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh
+          
+          # Генерируем глобальный native-file для Meson
+          cat > /tmp/meson-native.ini <<EOF
+          [binaries]
+          wayland-scanner = '${{ env.WAYLAND_PREFIX }}/bin/wayland-scanner'
+          pkg-config = 'pkg-config'
+          EOF
+
+          # Внедряем аргумент --native-file прямо в команду "meson setup" внутри функции build_meson()
+          sed -i 's|meson setup "|meson setup --native-file /tmp/meson-native.ini "|g' scripts/build-xwayland.sh
+
+          echo "=== Проверка изменения вызова meson setup ==="
+          grep "meson setup" scripts/build-xwayland.sh
 
       # ─────────────────────────────────────────────────────────────
-      # 3. ЗАПУСК КРОСС-СБОРКИ С ОБЯЗАТЕЛЬНЫМ УКАЗАНИЕМ NATIVE ПУТЕЙ
+      # 3. ЗАПУСК КРОСС-СБОРКИ
       # ─────────────────────────────────────────────────────────────
       - name: Run TAWC Xwayland Build (Trace Mode)
         run: |
           find . -name "*.sh" -exec chmod +x {} + 2>/dev/null || true
           
-          # Переменные для работы скриптов и компилятора NDK
           export ANDROID_NDK_HOME="${{ env.ANDROID_NDK_HOME }}"
-          
-          # Переопределяем PATH, чтобы наш бинарник шел первым в системе
           export PATH="${{ env.WAYLAND_PREFIX }}/bin:$PATH"
           
-          # Конфигурация pkg-config для нативной (build) машины внутри Meson
+          # На всякий случай дублируем пути в pkg-config среды
           export PKG_CONFIG_PATH="${{ env.WAYLAND_PREFIX }}/lib/pkgconfig:${{ env.WAYLAND_PREFIX }}/share/pkgconfig"
-          export PKG_CONFIG_NATIVE_PATH="${{ env.WAYLAND_PREFIX }}/lib/pkgconfig:${{ env.WAYLAND_PREFIX }}/share/pkgconfig"
-          
-          # Дублируем для кросс-вызовов Meson
-          export WAYLAND_SCANNER="${{ env.WAYLAND_PREFIX }}/bin/wayland-scanner"
-          export PKG_CONFIG_FOR_BUILD="pkg-config"
-          export PKG_CONFIG_PATH_FOR_BUILD="${{ env.WAYLAND_PREFIX }}/lib/pkgconfig:${{ env.WAYLAND_PREFIX }}/share/pkgconfig"
-          
-          # Дополнительно помогаем autotools
           export ACLOCAL_PATH="${{ env.WAYLAND_PREFIX }}/share/aclocal:/usr/share/aclocal"
           export VERBOSE=1
           
