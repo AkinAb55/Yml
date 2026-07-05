@@ -44,7 +44,7 @@ jobs:
           chmod +x scripts/ensure-deps.sh
           ./scripts/ensure-deps.sh wayland libffi xwayland pixman libdrm xkeyboard-config
 
-      - name: Build Host Wayland Scanner (v1.25.0)
+      - name: Build and Force-Install Host Wayland Scanner (v1.25.0)
         run: |
           set -ex
           mkdir -p build-host-wayland
@@ -56,10 +56,13 @@ jobs:
           
           ninja -C build-host-wayland src/wayland-scanner
           
-          mkdir -p $HOME/.local/bin
-          cp build-host-wayland/src/wayland-scanner $HOME/.local/bin/
-          chmod +x $HOME/.local/bin/wayland-scanner
-          $HOME/.local/bin/wayland-scanner --version
+          # Заменяем старый системный сканер новой версией 1.25.0 во всей системе
+          sudo rm -f /usr/bin/wayland-scanner
+          sudo cp build-host-wayland/src/wayland-scanner /usr/bin/wayland-scanner
+          sudo chmod +x /usr/bin/wayland-scanner
+          
+          # Проверяем, что теперь в системе глобально отдается нужная версия
+          wayland-scanner --version
 
       - name: Upgrade libffi and Hotfix build script
         run: |
@@ -71,14 +74,6 @@ jobs:
           
           # 2. Применяем хак против ошибки LT_SYS_SYMBOL_USCORE для libffi
           sed -i '/build_autotools libffi/i \  sed -i "s|LT_SYS_SYMBOL_USCORE|sys_symbol_underscore=no|g" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh
-          
-          # 3. Внедряем путь к wayland-scanner ОДИН РАЗ сразу после завершения генерации кросс-файла.
-          # Ищем закрывающий маркер шаблона EOF внутри gen_meson_cross() и с помощью sed вставляем после него
-          # команду точечной замены в файле $CROSS_FILE.
-          sed -i '/cat >"\$CROSS_FILE" <<EOF/,/^EOF$/!b;/^EOF$/a \    sed -i "s|pkg-config = .pkg-config.|pkg-config = \x27pkg-config\x27\\nwayland-scanner = \x27/home/runner/.local/bin/wayland-scanner\x27|g" "\$CROSS_FILE"' scripts/build-xwayland.sh
-
-          echo "=== Проверка инъекции в блок генерации кросс-файла ==="
-          grep -A 5 -B 15 "CROSS_FILE" scripts/build-xwayland.sh | grep -A 3 -B 3 "EOF"
 
       - name: Fix Autotools Environment Globally
         run: |
