@@ -58,13 +58,12 @@ jobs:
           # 3. Безопасная модификация configure.ac для libffi (устранение ошибки LT_SYS_SYMBOL_USCORE)
           sed -i '/build_autotools libffi/i \  sed -i "s|LT_SYS_SYMBOL_USCORE|sys_symbol_underscore=no|g" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh
           
-          # 4. Инъекция пути к хостовому wayland-scanner в генерируемый кросс-файл Meson
-          sed -i "s|pkg-config = 'pkg-config'|pkg-config = 'pkg-config'\nwayland-scanner = '/home/runner/.local/bin/wayland-scanner'|g" scripts/build-xwayland.sh
+          # 4. Жалеем sed и инжектируем принудительное добавление пути wayland-scanner в конец секции [binaries] 
+          # прямо внутрь функции build_meson() перед вызовом "meson setup"
+          sed -i '/echo "==> meson setup \$name"/i \    sed -i "s|pkg-config = .pkg-config.|pkg-config = \x27pkg-config\x27\\nwayland-scanner = \x27/home/runner/.local/bin/wayland-scanner\x27|g" "$CROSS_FILE"' scripts/build-xwayland.sh
           
-          echo "=== Проверка инъекции патча libffi ==="
-          grep -C 3 "build_autotools libffi" scripts/build-xwayland.sh
-          echo "=== Проверка инъекции пути wayland-scanner ==="
-          grep -C 5 "pkg-config = 'pkg-config'" scripts/build-xwayland.sh
+          echo "=== Проверка инъекции функции сборки ==="
+          grep -A 2 -B 5 "meson setup" scripts/build-xwayland.sh
 
       - name: Build Host Wayland Scanner (v1.25.0)
         run: |
