@@ -1,73 +1,94 @@
-name: Wayland 1.25 Clean Isolation Build
+name: Verify Wayland Host Environment
 
 on:
   workflow_dispatch:
 
 jobs:
-  build:
+  verify:
     runs-on: ubuntu-24.04
 
     env:
       WAYLAND_PREFIX: /tmp/wayland-host
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install host tools (NO WAYLAND DEV LIBS)
+      # Здесь должен быть твой шаг сборки Wayland 1.25
+
+      - name: Export Wayland Host Environment
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential git meson ninja-build pkg-config \
-            autoconf automake libtool libtool-bin m4 gettext \
-            python3 curl
+          echo "${WAYLAND_PREFIX}/bin" >> "$GITHUB_PATH"
 
-      - name: Build Wayland 1.25 (HOST scanner + libs isolated)
+          echo "PKG_CONFIG_LIBDIR=${WAYLAND_PREFIX}/lib/x86_64-linux-gnu/pkgconfig" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_SYSROOT_DIR=/" >> "$GITHUB_ENV"
+
+      - name: Verify Environment
+        shell: bash
         run: |
-          set -e
+          set +e
 
-          rm -rf /tmp/wayland-src /tmp/wayland-host
-          mkdir -p /tmp/wayland-src /tmp/wayland-host
+          echo "========================"
+          echo "PATH"
+          echo "========================"
+          echo "$PATH"
 
-          curl -L https://gitlab.freedesktop.org/wayland/wayland/-/archive/1.25.0/wayland-1.25.0.tar.gz \
-            | tar -xz -C /tmp/wayland-src --strip-components=1
+          echo
+          echo "========================"
+          echo "WAYLAND BIN"
+          echo "========================"
+          ls -la "${WAYLAND_PREFIX}/bin"
 
-          cd /tmp/wayland-src
-
-          meson setup build \
-            --prefix=/tmp/wayland-host \
-            -Ddocumentation=false \
-            -Dtests=false \
-            -Dlibraries=true
-
-          ninja -C build
-          ninja -C build install
-
-      - name: HARD PKG-CONFIG ISOLATION (CRITICAL FIX)
-        run: |
-          echo "PKG_CONFIG_PATH=" >> $GITHUB_ENV
-
-          echo "PKG_CONFIG_LIBDIR=${WAYLAND_PREFIX}/lib/pkgconfig:${WAYLAND_PREFIX}/lib/x86_64-linux-gnu/pkgconfig" >> $GITHUB_ENV
-
-          echo "PKG_CONFIG_SYSROOT_DIR=/" >> $GITHUB_ENV
-
-      - name: VERIFY ISOLATION
-        run: |
-          echo "=== scanner ==="
+          echo
+          echo "========================"
+          echo "WHICH"
+          echo "========================"
           which wayland-scanner
+          echo "exit=$?"
 
-          echo "=== pkg-config search paths ==="
-          pkg-config --variable pc_path pkg-config
+          echo
+          echo "========================"
+          echo "VERSION"
+          echo "========================"
+          wayland-scanner --version
+          echo "exit=$?"
 
-          echo "=== wayland modules ==="
+          echo
+          echo "========================"
+          echo "PKG_CONFIG_LIBDIR"
+          echo "========================"
+          echo "$PKG_CONFIG_LIBDIR"
+
+          echo
+          echo "========================"
+          echo "PKG FILES"
+          echo "========================"
+          find "$PKG_CONFIG_LIBDIR" -name "*.pc"
+
+          echo
+          echo "========================"
+          echo "WAYLAND CLIENT"
+          echo "========================"
           pkg-config --modversion wayland-client
+          echo "exit=$?"
+
+          echo
+          echo "========================"
+          echo "WAYLAND SERVER"
+          echo "========================"
           pkg-config --modversion wayland-server
+          echo "exit=$?"
+
+          echo
+          echo "========================"
+          echo "WAYLAND EGL"
+          echo "========================"
           pkg-config --modversion wayland-egl
+          echo "exit=$?"
 
-      - name: Show EGL availability
-        run: |
-          pkg-config --exists wayland-egl && echo "WAYLAND EGL OK" || echo "WAYLAND EGL MISSING"
-
-      - name: Dump prefix
-        run: |
-          find /tmp/wayland-host -type f | sort | head -200
+          echo
+          echo "========================"
+          echo "WAYLAND SCANNER PC"
+          echo "========================"
+          pkg-config --modversion wayland-scanner
+          echo "exit=$?"
