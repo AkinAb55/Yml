@@ -65,9 +65,10 @@ jobs:
           ninja -C /tmp/wayland-src/build
           ninja -C /tmp/wayland-src/build install
 
-          # Копируем .pc файлы и бинарники в системные директории хоста,
-          # чтобы native-поиск Meson гарантированно находил версию 1.25.0
-          sudo cp ${{ env.WAYLAND_PREFIX }}//lib/pkgconfig/wayland-scanner.pc /usr/share/pkgconfig/
+          # Исправленный путь: копируем .pc файлы из x86_64-linux-gnu директории
+          sudo cp ${{ env.WAYLAND_PREFIX }}/lib/x86_64-linux-gnu/pkgconfig/*.pc /usr/share/pkgconfig/
+          
+          # Обновляем бинарник сканера
           sudo rm -f /usr/bin/wayland-scanner
           sudo cp ${{ env.WAYLAND_PREFIX }}/bin/wayland-scanner /usr/bin/wayland-scanner
           sudo chmod +x /usr/bin/wayland-scanner
