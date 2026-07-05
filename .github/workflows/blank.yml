@@ -1,94 +1,64 @@
-name: Verify Wayland Host Environment
-
+name: Debug TAWC Xwayland Only
 on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  schedule:
+    - cron: '0 2 * * *'
   workflow_dispatch:
 
+env:
+  ANDROID_NDK_VERSION: "27.2.12479018"
+  ANDROID_COMPILE_SDK: "36"
+
 jobs:
-  verify:
+  test-xwayland-fix:
     runs-on: ubuntu-24.04
-
-    env:
-      WAYLAND_PREFIX: /tmp/wayland-host
-
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout TAWC Repository
+        uses: actions/checkout@v4
+        with:
+          repository: 'wmww/tawc'
+          ref: 'main'
+          submodules: recursive
 
-      # Здесь должен быть твой шаг сборки Wayland 1.25
-
-      - name: Export Wayland Host Environment
+      - name: Install Host Build Tools & Autotools
         run: |
-          echo "${WAYLAND_PREFIX}/bin" >> "$GITHUB_PATH"
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential git cmake meson ninja-build pkg-config \
+            autoconf automake libtool libtool-bin m4 gettext bison flex \
+            libwayland-dev wayland-protocols libxkbcommon-dev \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu curl tar
 
-          echo "PKG_CONFIG_LIBDIR=${WAYLAND_PREFIX}/lib/x86_64-linux-gnu/pkgconfig" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_PATH=" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_SYSROOT_DIR=/" >> "$GITHUB_ENV"
-
-      - name: Verify Environment
-        shell: bash
+      - name: Setup Android NDK via SDKManager
         run: |
-          set +e
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;${{ env.ANDROID_NDK_VERSION }}"
+          REAL_NDK_PATH="$ANDROID_HOME/ndk/${{ env.ANDROID_NDK_VERSION }}"
+          if [ ! -d "$REAL_NDK_PATH" ]; then REAL_NDK_PATH="$ANDROID_HOME/ndk-bundle"; fi
+          echo "ANDROID_NDK_HOME=$REAL_NDK_PATH" >> $GITHUB_ENV
 
-          echo "========================"
-          echo "PATH"
-          echo "========================"
-          echo "$PATH"
+      - name: Upgrade libffi and Hotfix build script
+        run: |
+          # 1. Переключаем манифест TAWC на сборку libffi v3.6.0
+          sed -i 's|e2eda0cf72a0598b44278cc91860ea402273fa29\tv3.5.2|f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf\tv3.6.0|g' deps/deps.list
 
-          echo
-          echo "========================"
-          echo "WAYLAND BIN"
-          echo "========================"
-          ls -la "${WAYLAND_PREFIX}/bin"
+          # 2. Безопасная модификация configure.ac:
+          # Заменяем макрос LT_SYS_SYMBOL_USCORE на принудительную инициализацию переменной в "no"
+          sed -i '/build_autotools libffi/i \  sed -i "s|LT_SYS_SYMBOL_USCORE|sys_symbol_underscore=no|g" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh
 
-          echo
-          echo "========================"
-          echo "WHICH"
-          echo "========================"
-          which wayland-scanner
-          echo "exit=$?"
+          echo "=== Проверка инъекции патча в скрипт сборки ==="
+          grep -C 3 "build_autotools libffi" scripts/build-xwayland.sh
 
-          echo
-          echo "========================"
-          echo "VERSION"
-          echo "========================"
-          wayland-scanner --version
-          echo "exit=$?"
+      - name: Fix Autotools Environment Globally
+        run: |
+          echo "ACLOCAL_PATH=/usr/share/aclocal" >> $GITHUB_ENV
+          echo "VERBOSE=1" >> $GITHUB_ENV
 
-          echo
-          echo "========================"
-          echo "PKG_CONFIG_LIBDIR"
-          echo "========================"
-          echo "$PKG_CONFIG_LIBDIR"
-
-          echo
-          echo "========================"
-          echo "PKG FILES"
-          echo "========================"
-          find "$PKG_CONFIG_LIBDIR" -name "*.pc"
-
-          echo
-          echo "========================"
-          echo "WAYLAND CLIENT"
-          echo "========================"
-          pkg-config --modversion wayland-client
-          echo "exit=$?"
-
-          echo
-          echo "========================"
-          echo "WAYLAND SERVER"
-          echo "========================"
-          pkg-config --modversion wayland-server
-          echo "exit=$?"
-
-          echo
-          echo "========================"
-          echo "WAYLAND EGL"
-          echo "========================"
-          pkg-config --modversion wayland-egl
-          echo "exit=$?"
-
-          echo
-          echo "========================"
-          echo "WAYLAND SCANNER PC"
-          echo "========================"
-          pkg-config --modversion wayland-scanner
-          echo "exit=$?"
+      - name: Run TAWC Xwayland Build (Trace Mode)
+        run: |
+          find . -name "*.sh" -exec chmod +x {} + 2>/dev/null || true
+          
+          export ANDROID_NDK_HOME="${{ env.ANDROID_NDK_HOME }}"
+          bash -x scripts/build-xwayland.sh --abi=aarch64
