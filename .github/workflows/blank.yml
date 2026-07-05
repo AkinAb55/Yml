@@ -51,19 +51,18 @@ jobs:
           # 1. Переключаем манифест TAWC на сборку libffi v3.6.0
           sed -i 's|e2eda0cf72a0598b44278cc91860ea402273fa29\tv3.5.2|f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf\tv3.6.0|g' deps/deps.list
           
-          # 2. Обновляем сам локальный git-репозиторий libffi до v3.6.0, чтобы пройти проверку коммитов
+          # 2. Обновляем сам локальный git-репозиторий libffi до v3.6.0, чтобы пройти внутреннюю проверку коммитов
           git -C deps/xwayland-src/libffi fetch origin f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf
           git -C deps/xwayland-src/libffi checkout f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf
           
           # 3. Безопасная модификация configure.ac для libffi (устранение ошибки LT_SYS_SYMBOL_USCORE)
           sed -i '/build_autotools libffi/i \  sed -i "s|LT_SYS_SYMBOL_USCORE|sys_symbol_underscore=no|g" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh
           
-          # 4. Жалеем sed и инжектируем принудительное добавление пути wayland-scanner в конец секции [binaries] 
-          # прямо внутрь функции build_meson() перед вызовом "meson setup"
-          sed -i '/echo "==> meson setup \$name"/i \    sed -i "s|pkg-config = .pkg-config.|pkg-config = \x27pkg-config\x27\\nwayland-scanner = \x27/home/runner/.local/bin/wayland-scanner\x27|g" "$CROSS_FILE"' scripts/build-xwayland.sh
+          # 4. Внедряем путь к нашему wayland-scanner ОДИН РАЗ прямо в шаблон генерации кросс-файла gen_meson_cross
+          sed -i "s|pkg-config = 'pkg-config'|pkg-config = 'pkg-config'\nwayland-scanner = '/home/runner/.local/bin/wayland-scanner'|g" scripts/build-xwayland.sh
           
-          echo "=== Проверка инъекции функции сборки ==="
-          grep -A 2 -B 5 "meson setup" scripts/build-xwayland.sh
+          echo "=== Проверка шаблона генерации android-cross.ini ==="
+          grep -C 5 "wayland-scanner" scripts/build-xwayland.sh
 
       - name: Build Host Wayland Scanner (v1.25.0)
         run: |
