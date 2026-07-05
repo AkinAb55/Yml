@@ -79,11 +79,15 @@ jobs:
           # Устраняем ошибку LT_SYS_SYMBOL_USCORE в libffi
           sed -i '/build_autotools libffi/i \  sed -i "s|LT_SYS_SYMBOL_USCORE|sys_symbol_underscore=no|g" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh
           
-          # Генерируем глобальный native-file для Meson
+          # 🔥 Генерируем расширенный native-file для Meson.
+          # Секция [properties] заставит нативный pkg-config искать зависимости в нашей изолированной папке 1.25.0
           cat > /tmp/meson-native.ini <<EOF
           [binaries]
           wayland-scanner = '${{ env.WAYLAND_PREFIX }}/bin/wayland-scanner'
           pkg-config = 'pkg-config'
+
+          [properties]
+          pkg-config_libdir = '${{ env.WAYLAND_PREFIX }}/lib/pkgconfig:${{ env.WAYLAND_PREFIX }}/share/pkgconfig'
           EOF
 
           # Внедряем аргумент --native-file прямо в команду "meson setup" внутри функции build_meson()
@@ -102,7 +106,7 @@ jobs:
           export ANDROID_NDK_HOME="${{ env.ANDROID_NDK_HOME }}"
           export PATH="${{ env.WAYLAND_PREFIX }}/bin:$PATH"
           
-          # На всякий случай дублируем пути в pkg-config среды
+          # Прокидываем пути в глобальное окружение текущей сессии bash
           export PKG_CONFIG_PATH="${{ env.WAYLAND_PREFIX }}/lib/pkgconfig:${{ env.WAYLAND_PREFIX }}/share/pkgconfig"
           export ACLOCAL_PATH="${{ env.WAYLAND_PREFIX }}/share/aclocal:/usr/share/aclocal"
           export VERBOSE=1
