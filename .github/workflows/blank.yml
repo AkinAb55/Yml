@@ -1,73 +1,96 @@
-name: Wayland 1.25 Clean Isolation Build
+name: Debug TAWC Xwayland Only
 
 on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
   workflow_dispatch:
 
+env:
+  ANDROID_NDK_VERSION: "27.2.12479018"
+  ANDROID_COMPILE_SDK: "36"
+
 jobs:
-  build:
+  test-xwayland-fix:
     runs-on: ubuntu-24.04
-
-    env:
-      WAYLAND_PREFIX: /tmp/wayland-host
-
     steps:
-      - name: Checkout
+      - name: Checkout TAWC Repository
         uses: actions/checkout@v4
+        with:
+          repository: 'wmww/tawc'
+          ref: 'main'
+          submodules: recursive
 
-      - name: Install host tools (NO WAYLAND DEV LIBS)
+      - name: Install Host Build Tools & Autotools
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential git meson ninja-build pkg-config \
-            autoconf automake libtool libtool-bin m4 gettext \
-            python3 curl
+            build-essential git cmake meson ninja-build pkg-config \
+            autoconf automake libtool libtool-bin m4 gettext bison flex \
+            libwayland-dev wayland-protocols libxkbcommon-dev \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu curl tar
 
-      - name: Build Wayland 1.25 (HOST scanner + libs isolated)
+      - name: Setup Android NDK via SDKManager
         run: |
-          set -e
+          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;${{ env.ANDROID_NDK_VERSION }}"
+          REAL_NDK_PATH="$ANDROID_HOME/ndk/${{ env.ANDROID_NDK_VERSION }}"
+          if [ ! -d "$REAL_NDK_PATH" ]; then REAL_NDK_PATH="$ANDROID_HOME/ndk-bundle"; fi
+          echo "ANDROID_NDK_HOME=$REAL_NDK_PATH" >> $GITHUB_ENV
 
-          rm -rf /tmp/wayland-src /tmp/wayland-host
-          mkdir -p /tmp/wayland-src /tmp/wayland-host
+      - name: Pre-download Vendored Dependencies
+        run: |
+          set -ex
+          chmod +x scripts/ensure-deps.sh
+          # Принудительно выкачиваем зависимости для xwayland, чтобы они появились в deps/
+          ./scripts/ensure-deps.sh wayland libffi xwayland pixman libdrm xkeyboard-config
 
-          curl -L https://gitlab.freedesktop.org/wayland/wayland/-/archive/1.25.0/wayland-1.25.0.tar.gz \
-            | tar -xz -C /tmp/wayland-src --strip-components=1
+      - name: Upgrade libffi and Hotfix build script
+        run: |
+          set -ex
+          # 1. Переключаем манифест TAWC на сборку libffi v3.6.0
+          sed -i 's|e2eda0cf72a0598b44278cc91860ea402273fa29\tv3.5.2|f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf\tv3.6.0|g' deps/deps.list
+          
+          # 2. Безопасная модификация configure.ac для libffi (твой рабочий хак)
+          sed -i '/build_autotools libffi/i \  sed -i "s|LT_SYS_SYMBOL_USCORE|sys_symbol_underscore=no|g" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh
+          
+          # 3. Инъекция пути к хостовому wayland-scanner в генерируемый кросс-файл Meson
+          sed -i "s|pkg-config = 'pkg-config'|pkg-config = 'pkg-config'\nwayland-scanner = '/home/runner/.local/bin/wayland-scanner'|g" scripts/build-xwayland.sh
+          
+          echo "=== Проверка инъекции патча libffi ==="
+          grep -C 3 "build_autotools libffi" scripts/build-xwayland.sh
+          echo "=== Проверка инъекции пути wayland-scanner ==="
+          grep -C 5 "pkg-config = 'pkg-config'" scripts/build-xwayland.sh
 
-          cd /tmp/wayland-src
-
-          meson setup build \
-            --prefix=/tmp/wayland-host \
-            -Ddocumentation=false \
+      - name: Build Host Wayland Scanner (v1.25.0)
+        run: |
+          set -ex
+          # Собираем нативный инструмент под x86_64 из исходников проекта
+          mkdir -p build-host-wayland
+          meson setup build-host-wayland deps/xwayland-src/wayland \
+            -Dscanner=true \
+            -Dlibraries=false \
             -Dtests=false \
-            -Dlibraries=true
+            -Ddocumentation=false \
+            -Ddtd_validation=false
+          
+          ninja -C build-host-wayland wayland-scanner
+          
+          # Переносим в изолированную директорию
+          mkdir -p $HOME/.local/bin
+          cp build-host-wayland/wayland-scanner $HOME/.local/bin/
+          chmod +x $HOME/.local/bin/wayland-scanner
+          
+          # Проверяем версию
+          $HOME/.local/bin/wayland-scanner --version
 
-          ninja -C build
-          ninja -C build install
-
-      - name: HARD PKG-CONFIG ISOLATION (CRITICAL FIX)
+      - name: Fix Autotools Environment Globally
         run: |
-          echo "PKG_CONFIG_PATH=" >> $GITHUB_ENV
+          echo "ACLOCAL_PATH=/usr/share/aclocal" >> $GITHUB_ENV
+          echo "VERBOSE=1" >> $GITHUB_ENV
 
-          echo "PKG_CONFIG_LIBDIR=${WAYLAND_PREFIX}/lib/pkgconfig:${WAYLAND_PREFIX}/lib/x86_64-linux-gnu/pkgconfig" >> $GITHUB_ENV
-
-          echo "PKG_CONFIG_SYSROOT_DIR=/" >> $GITHUB_ENV
-
-      - name: VERIFY ISOLATION
+      - name: Run TAWC Xwayland Build (Trace Mode)
         run: |
-          echo "=== scanner ==="
-          which wayland-scanner
-
-          echo "=== pkg-config search paths ==="
-          pkg-config --variable pc_path pkg-config
-
-          echo "=== wayland modules ==="
-          pkg-config --modversion wayland-client
-          pkg-config --modversion wayland-server
-          pkg-config --modversion wayland-egl
-
-      - name: Show EGL availability
-        run: |
-          pkg-config --exists wayland-egl && echo "WAYLAND EGL OK" || echo "WAYLAND EGL MISSING"
-
-      - name: Dump prefix
-        run: |
-          find /tmp/wayland-host -type f | sort | head -200
+          find . -name "*.sh" -exec chmod +x {} + 2>/dev/null || true
+          export ANDROID_NDK_HOME="${{ env.ANDROID_NDK_HOME }}"
+          bash -x scripts/build-xwayland.sh --abi=aarch64
