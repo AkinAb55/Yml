@@ -61,7 +61,7 @@ jobs:
     name: Native cross-builds — libhybris, Mesa, Xwayland, proot, tawcroot
     runs-on: ubuntu-24.04
     needs: prepare-deps
-    timeout-minutes: 360 # Заменено на статическое значение, так как env здесь недоступен
+    timeout-minutes: 360
     steps:
       - name: Checkout repo (shallow from workflow workspace)
         uses: actions/checkout@v4
