@@ -66,7 +66,7 @@ jobs:
           ninja -C /tmp/wayland-src/build install
 
       # ─────────────────────────────────────────────────────────────
-      # 2. ОДИН ЧИСТЫЙ ХАК ДЛЯ СЦЕПЛЕНИЯ LIBFFI (БЕЗ ПОРЧИ СИНТАКСИСА)
+      # 2. ОДИН ЧИСТЫЙ ХАК ДЛЯ СЦЕПЛЕНИЯ LIBFFI
       # ─────────────────────────────────────────────────────────────
       - name: Upgrade libffi and Hotfix build script
         run: |
@@ -80,40 +80,23 @@ jobs:
           sed -i '/build_autotools libffi/i \  sed -i "s|LT_SYS_SYMBOL_USCORE|sys_symbol_underscore=no|g" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh
 
       # ─────────────────────────────────────────────────────────────
-      # 3. НАСТРОЙКА ОДНОРОДНОГО ОКРУЖЕНИЯ ПЕРЕД ЗАПУСКОМ СБОРКИ
-      # ─────────────────────────────────────────────────────────────
-      - name: Setup Enivronment Global Paths
-        run: |
-          # Прокидываем пути к нашему изолированному окружению для автотулзов и pkg-config
-          echo "PATH=${{ env.WAYLAND_PREFIX }}/bin:$PATH" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=${{ env.WAYLAND_PREFIX }}/lib/pkgconfig:${{ env.WAYLAND_PREFIX }}/share/pkgconfig" >> $GITHUB_ENV
-          echo "ACLOCAL_PATH=${{ env.WAYLAND_PREFIX }}/share/aclocal:/usr/share/aclocal" >> $GITHUB_ENV
-          echo "VERBOSE=1" >> $GITHUB_ENV
-
-      - name: Verify Host Isolation Environment
-        run: |
-          echo "=== which wayland-scanner ==="
-          which wayland-scanner
-          echo "=== wayland-scanner version ==="
-          wayland-scanner --version
-          echo "=== pkg-config test ==="
-          pkg-config --modversion wayland-client || echo "Not local but path verified"
-
-      # ─────────────────────────────────────────────────────────────
-      # 4. ЗАПУСК КРОСС-СБОРКИ С ПОЛНЫМ ПЕРЕХВАТОМ ПЕРЕМЕННЫХ
+      # 3. ЗАПУСК КРОСС-СБОРКИ С УКАЗАНИЕМ ПЕРЕМЕННЫХ НАПРЯМУЮ ДЛЯ MESON
       # ─────────────────────────────────────────────────────────────
       - name: Run TAWC Xwayland Build (Trace Mode)
         run: |
           find . -name "*.sh" -exec chmod +x {} + 2>/dev/null || true
           
-          # Экспортируем переменные прямо в среду выполнения скрипта
+          # Переменные для работы скриптов и компилятора NDK
           export ANDROID_NDK_HOME="${{ env.ANDROID_NDK_HOME }}"
           export PATH="${{ env.WAYLAND_PREFIX }}/bin:$PATH"
-          export PKG_CONFIG_PATH="${{ env.WAYLAND_PREFIX }}/lib/pkgconfig:${{ env.WAYLAND_PREFIX }}/share/pkgconfig"
           
-          bash -x scripts/build-xwayland.sh --abi=aarch64
-      - name: Run TAWC Xwayland Build (Trace Mode)
-        run: |
-          find . -name "*.sh" -exec chmod +x {} + 2>/dev/null || true
-          export ANDROID_NDK_HOME="${{ env.ANDROID_NDK_HOME }}"
+          # 🔥 Специфичные переменные Meson для поиска зависимостей хоста во время кросс-компиляции
+          export WAYLAND_SCANNER="${{ env.WAYLAND_PREFIX }}/bin/wayland-scanner"
+          export PKG_CONFIG_FOR_BUILD="pkg-config"
+          export PKG_CONFIG_PATH_FOR_BUILD="${{ env.WAYLAND_PREFIX }}/lib/pkgconfig:${{ env.WAYLAND_PREFIX }}/share/pkgconfig"
+          
+          # Дополнительно помогаем autotools
+          export ACLOCAL_PATH="${{ env.WAYLAND_PREFIX }}/share/aclocal:/usr/share/aclocal"
+          export VERBOSE=1
+          
           bash -x scripts/build-xwayland.sh --abi=aarch64
