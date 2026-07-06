@@ -256,8 +256,15 @@ jobs:
       - name: Build compositor
         run: |
           export ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${{ env.ANDROID_NDK_VERSION }}
-          cargo ndk --target aarch64-linux-android --platform 29 --release build --manifest-path=compositor/Cargo.toml
-          cargo ndk --target x86_64-linux-android --platform 29 --release build --manifest-path=compositor/Cargo.toml
+          
+          # Переходим в директорию с Cargo.toml проекта Rust
+          cd compositor
+          
+          cargo ndk --target aarch64-linux-android --platform 29 --release build
+          cargo ndk --target x86_64-linux-android --platform 29 --release build
+          
+          # Возвращаемся в корень репозитория для корректной работы путей копирования
+          cd ..
           
           mkdir -p app/src/main/jniLibs/arm64-v8a app/src/main/jniLibs/x86_64
           cp -a compositor/target/aarch64-linux-android/release/libcompositor.so app/src/main/jniLibs/arm64-v8a/ || true
