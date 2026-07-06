@@ -11,7 +11,6 @@ env:
   ANDROID_NDK_VERSION: "27.2.12479018"
   ANDROID_COMPILE_SDK: "36"
   TAWC_ABIS: "arm64-v8a,x86_64"
-  TIMEOUT_MINUTES_HEAVY: 360
   WAYLAND_VERSION: "1.25.0"
   WAYLAND_PREFIX: "/tmp/wayland-host"
 
@@ -30,13 +29,11 @@ jobs:
           ref: 'main'
           fetch-depth: 0
           submodules: recursive
-
       - name: Install small tooling for ensure-deps
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends git curl
         shell: bash
-
       - name: Ensure vendored deps (clone + verify)
         run: |
           set -ex
@@ -46,7 +43,6 @@ jobs:
           # Ensure major deps used later
           ./scripts/ensure-deps.sh wayland libffi xwayland pixman libdrm xkeyboard-config smithay libhybris mesa rutabaga_gfx gfxstream || true
         shell: bash
-
       - name: Cache deps directory (quick restore between runs)
         uses: actions/cache@v4
         id: cache-deps
@@ -54,7 +50,6 @@ jobs:
           path: deps
           key: deps-list-${{ hashFiles('deps/deps.list') }}-v1
           restore-keys: deps-list-
-
       - name: Upload deps checkout as artifact (for subsequent jobs)
         uses: actions/upload-artifact@v4
         with:
@@ -75,13 +70,11 @@ jobs:
           ref: 'main'
           fetch-depth: 0
           submodules: recursive
-
       - name: Download vendored deps artifact
         uses: actions/download-artifact@v4
         with:
           name: tawc-deps
           path: deps
-
       - name: Install host packages (heavy native build prerequisites)
         run: |
           set -ex
@@ -97,7 +90,6 @@ jobs:
             gcc-x86-64-linux-gnu g++-x86-64-linux-gnu pkgconf libexpat1-dev
           sudo pip3 install --upgrade meson ninja --break-system-packages || true
         shell: bash
-
       - name: Setup Android SDK & NDK
         uses: android-actions/setup-android@v3
         with:
@@ -108,18 +100,17 @@ jobs:
             "platforms;android-${{ env.ANDROID_COMPILE_SDK }}"
             "build-tools;36.0.0"
             "ndk;${{ env.ANDROID_NDK_VERSION }}"
-
       - name: Export NDK env
         run: |
           echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}" >> $GITHUB_ENV
-          echo "ANDROID_NDK_HOME=\( {ANDROID_SDK_ROOT}/ndk/ \){ANDROID_NDK_VERSION}" >> $GITHUB_ENV
-          echo "PATH=\( {HOME}/.cargo/bin: \){PATH}" >> $GITHUB_PATH
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}" >> $GITHUB_ENV
+          echo "PATH=${HOME}/.cargo/bin:${PATH}" >> $GITHUB_PATH
 
       - name: Build, Force-Install and System-Register Wayland 1.25.0 Host Stack
         run: |
           set -ex
           mkdir -p /tmp/wayland-src
-          curl -L https://gitlab.freedesktop.org/wayland/wayland/-/archive/\( {{ env.WAYLAND_VERSION }}/wayland- \){{ env.WAYLAND_VERSION }}.tar.gz \
+          curl -L https://gitlab.freedesktop.org/wayland/wayland/-/archive/${{ env.WAYLAND_VERSION }}/wayland-${{ env.WAYLAND_VERSION }}.tar.gz \
             | tar -xz -C /tmp/wayland-src --strip-components=1
           
           meson setup /tmp/wayland-src/build /tmp/wayland-src \
@@ -168,7 +159,6 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
         shell: bash
-
       - name: Build libxkbcommon for ABIs
         run: |
           set -ex
@@ -177,7 +167,6 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
         shell: bash
-
       - name: Build proot & tawcroot native libraries
         run: |
           set -ex
@@ -188,7 +177,6 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
         shell: bash
-
       - name: Build gfxstream backend (if present)
         run: |
           set -ex
@@ -201,7 +189,6 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
         shell: bash
-
       - name: Build Mesa gfxstream / Mesa-Zink (long)
         run: |
           set -ex
@@ -214,7 +201,6 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
         shell: bash
-
       - name: Build Xwayland (bionic) and stage
         run: |
           set -ex
@@ -223,7 +209,6 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
         shell: bash
-
       - name: Package native assets (jniLibs + assets)
         run: |
           set -ex
@@ -239,7 +224,6 @@ jobs:
             cp -a build/xwayland-x86_64/install native-assets/xwayland-x86_64-install || true
           fi
         shell: bash
-
       - name: Upload native-assets artifact
         uses: actions/upload-artifact@v4
         with:
@@ -260,19 +244,16 @@ jobs:
           ref: 'main'
           fetch-depth: 0
           submodules: recursive
-
       - name: Download deps artifact (for smithay, rutabaga patches)
         uses: actions/download-artifact@v4
         with:
           name: tawc-deps
           path: deps
-
       - name: Download native-assets (so we can stage libs later)
         uses: actions/download-artifact@v4
         with:
           name: tawc-native-assets
           path: native-assets
-
       - name: Setup Rust + cargo-ndk
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
@@ -282,18 +263,15 @@ jobs:
           cargo install --locked cargo-ndk || true
           echo "${HOME}/.cargo/bin" >> $GITHUB_PATH
         shell: bash
-
       - name: Ensure Android NDK env
         uses: android-actions/setup-android@v3
         with:
           ndk: ${{ env.ANDROID_NDK_VERSION }}
-        shell: bash
-
       - name: Build compositor for ABIs
         run: |
           set -ex
           source $HOME/.cargo/env || true
-          export ANDROID_NDK_HOME=\( {ANDROID_SDK_ROOT}/ndk/ \){ANDROID_NDK_VERSION}
+          export ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}
           # build for arm64
           cargo ndk --target aarch64-linux-android --platform 29 --release build --manifest-path=compositor/Cargo.toml || true
           # build for x86_64
@@ -305,7 +283,6 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
         shell: bash
-
       - name: Upload compositor libs (staged jniLibs)
         uses: actions/upload-artifact@v4
         with:
@@ -326,19 +303,16 @@ jobs:
           ref: 'main'
           fetch-depth: 0
           submodules: recursive
-
       - name: Download native-assets
         uses: actions/download-artifact@v4
         with:
           name: tawc-native-assets
           path: native-assets
-
       - name: Download compositor libs (jniLibs)
         uses: actions/download-artifact@v4
         with:
           name: tawc-compositor-libs
           path: app/src/main/jniLibs
-
       - name: Copy native assets into app tree
         run: |
           set -ex
@@ -346,7 +320,7 @@ jobs:
           if [ -d native-assets/jniLibs ]; then
             rsync -a native-assets/jniLibs/ app/src/main/jniLibs/ || true
           fi
-          # copy packed assets (libhybris tar, mesa, xwayland/share)
+          # copy packed assets (libhybris tar, mesa, xwayland/share.tar)
           if [ -d native-assets/assets ]; then
             rsync -a native-assets/assets/ app/src/main/assets/ || true
           fi
@@ -356,14 +330,12 @@ jobs:
             cp native-assets/xwayland-aarch64-install/share.tar app/src/main/assets/xwayland/share.tar
           fi
         shell: bash
-
       - name: Install JDK and Android SDK
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
           cache: gradle
-
       - name: Setup Android SDK & NDK (for Gradle)
         uses: android-actions/setup-android@v3
         with:
@@ -374,7 +346,6 @@ jobs:
             "platforms;android-${{ env.ANDROID_COMPILE_SDK }}"
             "build-tools;36.0.0"
             "ndk;${{ env.ANDROID_NDK_VERSION }}"
-
       - name: Gradle assembleDebug (full monolithic)
         run: |
           set -ex
@@ -391,14 +362,12 @@ jobs:
           RUSTFLAGS: "-A warnings"
           PKG_CONFIG_ALLOW_CROSS: "1"
         shell: bash
-
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: tawc-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-
       - name: Upload full artifacts (jniLibs / assets) for debugging
         uses: actions/upload-artifact@v4
         with:
