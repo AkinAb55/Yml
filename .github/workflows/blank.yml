@@ -1,10 +1,10 @@
-name: Build TAWC — Full Monolithic Build with Xwayland Patches
+name: Build TAWC — Full Monolithic + Xwayland Fixes
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main ]
   pull_request:
-    branches: [ main, master ]
+    branches: [ main ]
   workflow_dispatch:
 
 env:
@@ -17,7 +17,7 @@ env:
 
 jobs:
   prepare-deps:
-    name: Prepare, patch & verify vendored deps
+    name: Prepare & verify vendored deps
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     outputs:
@@ -31,41 +31,26 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Install small tooling for ensure-deps
+      - name: Install small tooling
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends git curl tar
+          sudo apt-get install -y --no-install-recommends git curl
         shell: bash
 
       - name: Ensure vendored deps (clone + verify)
         run: |
           set -ex
-          chmod +x scripts/ensure-deps.sh
-          # Скачиваем базовые зависимости, включая требуемые для фикса Xwayland
-          ./scripts/ensure-deps.sh termux-app wayland libffi xwayland pixman libdrm xkeyboard-config
-          ./scripts/ensure-deps.sh libhybris smithay mesa rutabaga_gfx gfxstream || true
           ./scripts/ensure-deps.sh --verify-all || true
+          ./scripts/ensure-deps.sh termux-app
+          ./scripts/ensure-deps.sh libhybris smithay xwayland mesa rutabaga_gfx gfxstream || true
         shell: bash
 
-      # ─── ИНТЕГРАЦИЯ ХОТФИКСА LIBFFI ИЗ ВТОРОГО СКРИПТА ───
-      - name: Upgrade libffi and Hotfix build script
-        run: |
-          set -ex
-          # Синхронизируем манифест и git-версию libffi до v3.6.0
-          sed -i 's|e2eda0cf72a0598b44278cc91860ea402273fa29\tv3.5.2|f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf\tv3.6.0|g' deps/deps.list
-          git -C deps/xwayland-src/libffi fetch origin f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf
-          git -C deps/xwayland-src/libffi checkout f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf
-          
-          # Устраняем ошибку LT_SYS_SYMBOL_USCORE в libffi перед вызовом build_autotools
-          sed -i '/build_autotools libffi/i \  sed -i "s|LT_SYS_SYMBOL_USCORE|sys_symbol_underscore=no|g" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh
-        shell: bash
-
-      - name: Cache deps directory (quick restore between runs)
+      - name: Cache deps directory
         uses: actions/cache@v4
         id: cache-deps
         with:
           path: deps
-          key: deps-list-${{ hashFiles('deps/deps.list') }}-v2
+          key: deps-list-${{ hashFiles('deps/deps.list') }}-v1
           restore-keys: deps-list-
 
       - name: Upload deps checkout as artifact
@@ -76,12 +61,12 @@ jobs:
           if-no-files-found: error
 
   native-build:
-    name: Native cross-builds — libhybris, Mesa, Xwayland, proot, tawcroot
+    name: Native cross-builds — libhybris, Mesa, Xwayland, proot, tawcroot (with Xwayland fixes)
     runs-on: ubuntu-24.04
     needs: prepare-deps
     timeout-minutes: ${{ env.TIMEOUT_MINUTES_HEAVY }}
     steps:
-      - name: Checkout repo (shallow from workflow workspace)
+      - name: Checkout repo
         uses: actions/checkout@v4
         with:
           repository: 'wmww/tawc'
@@ -89,43 +74,52 @@ jobs:
           fetch-depth: 0
           submodules: recursive
 
-      - name: Download vendored deps artifact
+      - name: Download vendored deps
         uses: actions/download-artifact@v4
         with:
           name: tawc-deps
           path: deps
 
-      - name: Install host packages (heavy native build prerequisites)
+      - name: Install host packages
         run: |
           set -ex
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential git cmake meson ninja-build pkg-config \
             python3 python3-pip python3-setuptools python3-distutils \
-            autoconf automake libtool libtool-bin libxml2-utils xsltproc m4 \
+            autoconf automake libtool libtool-bin libxml2-utils xsltproc \
             libwayland-dev wayland-protocols libxkbcommon-dev \
             libx11-dev libxcb1-dev libxcb-xkb-dev libx11-xcb-dev \
             libffi-dev libegl1-mesa-dev libgles-dev libdrm-dev libepoxy-dev \
-            curl unzip bc patchelf gettext bison flex texinfo gperf tar libexpat1-dev \
+            curl unzip bc patchelf gettext bison flex texinfo gperf \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu \
             gcc-x86-64-linux-gnu g++-x86-64-linux-gnu pkgconf
           sudo pip3 install --upgrade meson ninja --break-system-packages || true
         shell: bash
 
-      - name: Setup Android NDK via SDKManager
-        run: |
-          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;${{ env.ANDROID_NDK_VERSION }}"
-          REAL_NDK_PATH="$ANDROID_HOME/ndk/${{ env.ANDROID_NDK_VERSION }}"
-          if [ ! -d "$REAL_NDK_PATH" ]; then REAL_NDK_PATH="$ANDROID_HOME/ndk-bundle"; fi
-          echo "ANDROID_NDK_HOME=$REAL_NDK_PATH" >> $GITHUB_ENV
-          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
+      - name: Setup Android SDK & NDK
+        uses: android-actions/setup-android@v3
+        with:
+          api-level: ${{ env.ANDROID_COMPILE_SDK }}
+          ndk: ${{ env.ANDROID_NDK_VERSION }}
+          components: |
+            platform-tools
+            "platforms;android-${{ env.ANDROID_COMPILE_SDK }}"
+            "build-tools;36.0.0"
+            "ndk;${{ env.ANDROID_NDK_VERSION }}"
 
-      # ─── ИНТЕГРАЦИЯ СБОРКИ WAYLAND 1.25 ДЛЯ СИСТЕМНОГО PKG-CONFIG ───
+      - name: Export NDK env
+        run: |
+          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=\( {ANDROID_SDK_ROOT}/ndk/ \){ANDROID_NDK_VERSION}" >> $GITHUB_ENV
+          echo "PATH=\( {HOME}/.cargo/bin: \){PATH}" >> $GITHUB_PATH
+
+      # === Xwayland Debug Fixes Integration (from your second workflow) ===
       - name: Build and System-Register Wayland 1.25 Host Stack
         run: |
           set -e
           mkdir -p /tmp/wayland-src
-          curl -L https://gitlab.freedesktop.org/wayland/wayland/-/archive/${{ env.WAYLAND_VERSION }}/wayland-${{ env.WAYLAND_VERSION }}.tar.gz \
+          curl -L https://gitlab.freedesktop.org/wayland/wayland/-/archive/\( {{ env.WAYLAND_VERSION }}/wayland- \){{ env.WAYLAND_VERSION }}.tar.gz \
             | tar -xz -C /tmp/wayland-src --strip-components=1
           
           meson setup /tmp/wayland-src/build /tmp/wayland-src \
@@ -137,45 +131,64 @@ jobs:
           ninja -C /tmp/wayland-src/build
           ninja -C /tmp/wayland-src/build install
           
-          # Экспорт .pc файлов в общую систему для pkg-config
-          sudo cp ${{ env.WAYLAND_PREFIX }}/lib/x86_64-linux-gnu/pkgconfig/*.pc /usr/share/pkgconfig/
+          sudo cp ${{ env.WAYLAND_PREFIX }}/lib/x86_64-linux-gnu/pkgconfig/*.pc /usr/share/pkgconfig/ || true
           
-          # Замена системного сканера на собранный Wayland-scanner 1.25
           sudo rm -f /usr/bin/wayland-scanner
           sudo cp ${{ env.WAYLAND_PREFIX }}/bin/wayland-scanner /usr/bin/wayland-scanner
           sudo chmod +x /usr/bin/wayland-scanner
           
-          echo "=== Проверка системной регистрации ==="
-          pkg-config --modversion wayland-scanner
-          wayland-scanner --version
-          
-          # Экспорт путей в окружение шагов
-          echo "PATH=${{ env.WAYLAND_PREFIX }}/bin:${PATH}" >> $GITHUB_PATH
-          echo "ACLOCAL_PATH=${{ env.WAYLAND_PREFIX }}/share/aclocal:/usr/share/aclocal" >> $GITHUB_ENV
-          echo "WAYLAND_SCANNER=/usr/bin/wayland-scanner" >> $GITHUB_ENV
+          echo "=== Wayland check ==="
+          pkg-config --modversion wayland-scanner || true
+          wayland-scanner --version || true
         shell: bash
 
-      - name: Build libhybris (glibc aarch64 cross) and pack asset
+      - name: Upgrade libffi and Hotfix build script
         run: |
           set -ex
-          find . -name "*.sh" -exec chmod +x {} + 2>/dev/null || true
-          ./scripts/build-libhybris.sh --clean
+          # Sync to v3.6.0 (your fix)
+          sed -i 's|e2eda0cf72a0598b44278cc91860ea402273fa29\tv3.5.2|f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf\tv3.6.0|g' deps/deps.list
+          git -C deps/xwayland-src/libffi fetch origin f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf || true
+          git -C deps/xwayland-src/libffi checkout f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf || true
+          
+          # Hotfix LT_SYS_SYMBOL_USCORE
+          sed -i '/build_autotools libffi/i \  sed -i "s|LT_SYS_SYMBOL_USCORE|sys_symbol_underscore=no|g" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh || true
+        shell: bash
+
+      - name: Ensure wayland-scanner fallback (if needed)
+        run: |
+          set -ex
+          if ! command -v wayland-scanner >/dev/null 2>&1; then
+            echo "Building host wayland-scanner from deps"
+            SRC=deps/xwayland-src/wayland
+            if [ ! -d "$SRC" ]; then ./scripts/ensure-deps.sh wayland; fi
+            mkdir -p build-host-wayland
+            meson setup build-host-wayland "$SRC" || meson setup --wipe build-host-wayland "$SRC"
+            ninja -C build-host-wayland wayland-scanner
+            mkdir -p $HOME/.local/bin
+            cp build-host-wayland/wayland-scanner $HOME/.local/bin/
+            chmod +x $HOME/.local/bin/wayland-scanner
+            echo "$HOME/.local/bin" >> $GITHUB_PATH
+            echo "WAYLAND_SCANNER=$HOME/.local/bin/wayland-scanner" >> $GITHUB_ENV
+          fi
+        shell: bash
+
+      # === Standard native builds (now benefiting from fixes) ===
+      - name: Build libhybris (glibc aarch64 cross)
+        run: ./scripts/build-libhybris.sh --clean
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
         shell: bash
 
       - name: Build libxkbcommon for ABIs
         run: |
-          set -ex
           ./scripts/build-libxkbcommon.sh --abi=aarch64 || true
           ./scripts/build-libxkbcommon.sh --abi=x86_64 || true
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
         shell: bash
 
-      - name: Build proot & tawcroot native libraries
+      - name: Build proot & tawcroot
         run: |
-          set -ex
           ./scripts/build-proot.sh --abi=aarch64 || true
           ./scripts/build-proot.sh --abi=x86_64 || true
           tawcroot/build.sh --abi=aarch64 || true
@@ -186,43 +199,38 @@ jobs:
 
       - name: Build gfxstream backend (if present)
         run: |
-          set -ex
           if [ -f scripts/build-gfxstream-backend.sh ]; then
             ./scripts/build-gfxstream-backend.sh --abi=aarch64 || true
             ./scripts/build-gfxstream-backend.sh --abi=x86_64 || true
-          else
-            echo "skip: no gfxstream backend build script"
           fi
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
         shell: bash
 
-      - name: Build Mesa gfxstream / Mesa-Zink (long)
+      - name: Build Mesa gfxstream / Zink
         run: |
-          set -ex
           if [ -f scripts/build-mesa-gfxstream.sh ]; then
             bash -x scripts/build-mesa-gfxstream.sh --abi=aarch64 || true
             bash -x scripts/build-mesa-gfxstream.sh --abi=x86_64 || true
-          else
-            echo "skip: no scripts/build-mesa-gfxstream.sh"
           fi
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
         shell: bash
 
-      - name: Build Xwayland (bionic) and stage
+      - name: Build Xwayland (bionic) with fixes
         run: |
-          set -ex
+          find . -name "*.sh" -exec chmod +x {} + 2>/dev/null || true
+          export ANDROID_NDK_HOME="${{ env.ANDROID_NDK_HOME }}"
+          export PATH="${{ env.WAYLAND_PREFIX }}/bin:$PATH"
+          export ACLOCAL_PATH="${{ env.WAYLAND_PREFIX }}/share/aclocal:/usr/share/aclocal"
           export VERBOSE=1
+          
           bash -x scripts/build-xwayland.sh --abi=aarch64 || true
           bash -x scripts/build-xwayland.sh --abi=x86_64 || true
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
         shell: bash
 
-      - name: Package native assets (jniLibs + assets)
+      - name: Package native assets
         run: |
-          set -ex
           mkdir -p native-assets
           cp -a app/src/main/jniLibs native-assets/ || true
           cp -a app/src/main/assets native-assets/ || true
@@ -234,35 +242,32 @@ jobs:
           fi
         shell: bash
 
-      - name: Upload native-assets artifact
-        uses: actions/artifact@v4
+      - name: Upload native-assets
+        uses: actions/upload-artifact@v4
         with:
           name: tawc-native-assets
           path: native-assets
           if-no-files-found: warn
 
   compositor-build:
-    name: Build Rust compositor (libcompositor.so per ABI)
+    name: Build Rust compositor
     runs-on: ubuntu-24.04
     needs: native-build
     timeout-minutes: 120
     steps:
-      - name: Checkout repo
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           repository: 'wmww/tawc'
           ref: 'main'
-          fetch-depth: 0
           submodules: recursive
 
-      - name: Download deps artifact (for smithay, rutabaga patches)
+      - name: Download deps & native-assets
         uses: actions/download-artifact@v4
         with:
           name: tawc-deps
           path: deps
-
-      - name: Download native-assets (so we can stage libs later)
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: tawc-native-assets
           path: native-assets
@@ -275,33 +280,25 @@ jobs:
           rustup target add aarch64-linux-android x86_64-linux-android
           cargo install --locked cargo-ndk || true
           echo "${HOME}/.cargo/bin" >> $GITHUB_PATH
-        shell: bash
 
-      - name: Ensure Android NDK env
-        run: |
-          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;${{ env.ANDROID_NDK_VERSION }}"
-          REAL_NDK_PATH="$ANDROID_HOME/ndk/${{ env.ANDROID_NDK_VERSION }}"
-          if [ ! -d "$REAL_NDK_PATH" ]; then REAL_NDK_PATH="$ANDROID_HOME/ndk-bundle"; fi
-          echo "ANDROID_NDK_HOME=$REAL_NDK_PATH" >> $GITHUB_ENV
-        shell: bash
+      - name: Setup Android NDK
+        uses: android-actions/setup-android@v3
+        with:
+          ndk: ${{ env.ANDROID_NDK_VERSION }}
 
-      - name: Build compositor for ABIs
+      - name: Build compositor
         run: |
-          set -ex
           source $HOME/.cargo/env || true
-          # build for arm64
+          export ANDROID_NDK_HOME=\( {ANDROID_SDK_ROOT}/ndk/ \){ANDROID_NDK_VERSION}
           cargo ndk --target aarch64-linux-android --platform 29 --release build --manifest-path=compositor/Cargo.toml || true
-          # build for x86_64
           cargo ndk --target x86_64-linux-android --platform 29 --release build --manifest-path=compositor/Cargo.toml || true
           
           mkdir -p app/src/main/jniLibs/arm64-v8a app/src/main/jniLibs/x86_64
           cp -a compositor/target/aarch64-linux-android/release/libcompositor.so app/src/main/jniLibs/arm64-v8a/ || true
           cp -a compositor/target/x86_64-linux-android/release/libcompositor.so app/src/main/jniLibs/x86_64/ || true
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
         shell: bash
 
-      - name: Upload compositor libs (staged jniLibs)
+      - name: Upload compositor libs
         uses: actions/upload-artifact@v4
         with:
           name: tawc-compositor-libs
@@ -309,32 +306,29 @@ jobs:
           if-no-files-found: warn
 
   assemble-apk:
-    name: Assemble APK (Gradle) — consumes native assets + compositor libs
+    name: Assemble APK (Full Monolithic)
     runs-on: ubuntu-24.04
     needs: [native-build, compositor-build]
     timeout-minutes: 120
     steps:
-      - name: Checkout repo
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           repository: 'wmww/tawc'
           ref: 'main'
-          fetch-depth: 0
           submodules: recursive
 
-      - name: Download native-assets
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           name: tawc-native-assets
           path: native-assets
-
-      - name: Download compositor libs (jniLibs)
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: tawc-compositor-libs
           path: app/src/main/jniLibs
 
-      - name: Copy native assets into app tree
+      - name: Copy native assets
         run: |
           set -ex
           if [ -d native-assets/jniLibs ]; then
@@ -349,24 +343,24 @@ jobs:
           fi
         shell: bash
 
-      - name: Install JDK and Android SDK
+      - name: Setup Java + Android SDK
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
           cache: gradle
+      - uses: android-actions/setup-android@v3
+        with:
+          api-level: ${{ env.ANDROID_COMPILE_SDK }}
+          ndk: ${{ env.ANDROID_NDK_VERSION }}
+          components: |
+            platform-tools
+            "platforms;android-${{ env.ANDROID_COMPILE_SDK }}"
+            "build-tools;36.0.0"
+            "ndk;${{ env.ANDROID_NDK_VERSION }}"
 
-      - name: Setup Android SDK & NDK (for Gradle)
+      - name: Gradle assembleDebug
         run: |
-          echo "y" | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "ndk;${{ env.ANDROID_NDK_VERSION }}"
-          REAL_NDK_PATH="$ANDROID_HOME/ndk/${{ env.ANDROID_NDK_VERSION }}"
-          if [ ! -d "$REAL_NDK_PATH" ]; then REAL_NDK_PATH="$ANDROID_HOME/ndk-bundle"; fi
-          echo "ANDROID_NDK_HOME=$REAL_NDK_PATH" >> $GITHUB_ENV
-          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
-
-      - name: Gradle assembleDebug (full monolithic)
-        run: |
-          set -ex
           ./gradlew assembleDebug \
             -PtawcAbis=${{ env.TAWC_ABIS }} \
             -PtawcMethods=tawcroot,proot,chroot \
@@ -381,14 +375,14 @@ jobs:
           PKG_CONFIG_ALLOW_CROSS: "1"
         shell: bash
 
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: tawc-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
-      - name: Upload full artifacts (jniLibs / assets) for debugging
+      - name: Upload final assets (debug)
         uses: actions/upload-artifact@v4
         with:
           name: tawc-final-assets
