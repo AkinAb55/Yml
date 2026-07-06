@@ -90,7 +90,8 @@ jobs:
             libffi-dev libegl1-mesa-dev libgles-dev libdrm-dev libepoxy-dev \
             curl unzip bc patchelf gettext bison flex texinfo gperf \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            gcc-x86-64-linux-gnu g++-x86-64-linux-gnu pkgconf rsync
+            gcc-x86-64-linux-gnu g++-x86-64-linux-gnu pkgconf rsync \
+            libvulkan-dev
           sudo pip3 install --upgrade meson ninja --break-system-packages || true
         shell: bash
 
@@ -109,7 +110,6 @@ jobs:
         run: |
           set -e
           mkdir -p /tmp/wayland-src
-          # Исправленный чистый URL без лишних скобок
           curl -L "https://gitlab.freedesktop.org/wayland/wayland/-/archive/${{ env.WAYLAND_VERSION }}/wayland-${{ env.WAYLAND_VERSION }}.tar.gz" \
             | tar -xz -C /tmp/wayland-src --strip-components=1
           
@@ -131,6 +131,8 @@ jobs:
       - name: Upgrade libffi and Hotfix build script
         run: |
           set -ex
+          # Фикс падения, если репозиторий не содержит конкретный хэш.
+          # Скрипт build-xwayland.sh сам подтянет нужную версию, если git checkout упадет.
           sed -i 's|e2eda0cf72a0598b44278cc91860ea402273fa29\tv3.5.2|f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf\tv3.6.0|g' deps/deps.list
           git -C deps/xwayland-src/libffi fetch origin f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf || true
           git -C deps/xwayland-src/libffi checkout f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf || true
