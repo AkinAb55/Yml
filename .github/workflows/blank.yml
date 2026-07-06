@@ -258,9 +258,9 @@ jobs:
           # Переходим в директорию с Cargo.toml проекта Rust
           cd compositor
           
-          # Явно передаем путь к NDK через --ndk-path, игнорируя конфликты переменных окружения
-          cargo ndk --ndk-path "$ANDROID_NDK_HOME" --target aarch64-linux-android --platform 29 --release build
-          cargo ndk --ndk-path "$ANDROID_NDK_HOME" --target x86_64-linux-android --platform 29 --release build
+          # Аргумент --ndk-path перенесен в начало вызова утилиты
+          cargo ndk --ndk-path "$ANDROID_NDK_HOME" --target aarch64-linux-android --platform 29 release build
+          cargo ndk --ndk-path "$ANDROID_NDK_HOME" --target x86_64-linux-android --platform 29 release build
           
           # Возвращаемся в корень репозитория
           cd ..
