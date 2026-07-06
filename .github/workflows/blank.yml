@@ -131,8 +131,6 @@ jobs:
       - name: Upgrade libffi and Hotfix build script
         run: |
           set -ex
-          # Фикс падения, если репозиторий не содержит конкретный хэш.
-          # Скрипт build-xwayland.sh сам подтянет нужную версию, если git checkout упадет.
           sed -i 's|e2eda0cf72a0598b44278cc91860ea402273fa29\tv3.5.2|f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf\tv3.6.0|g' deps/deps.list
           git -C deps/xwayland-src/libffi fetch origin f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf || true
           git -C deps/xwayland-src/libffi checkout f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf || true
@@ -140,7 +138,13 @@ jobs:
         shell: bash
 
       - name: Build libhybris
-        run: ./scripts/build-libhybris.sh --clean
+        run: |
+          export PKG_CONFIG_PATH="${{ env.WAYLAND_PREFIX }}/lib/x86_64-linux-gnu/pkgconfig:${{ env.WAYLAND_PREFIX }}/share/pkgconfig:$PKG_CONFIG_PATH"
+          export CFLAGS="-I${{ env.WAYLAND_PREFIX }}/include $CFLAGS"
+          export CPPFLAGS="-I${{ env.WAYLAND_PREFIX }}/include $CPPFLAGS"
+          export CXXFLAGS="-I${{ env.WAYLAND_PREFIX }}/include $CXXFLAGS"
+          
+          ./scripts/build-libhybris.sh --clean
         shell: bash
 
       - name: Build libxkbcommon for ABIs
@@ -182,6 +186,10 @@ jobs:
         run: |
           find . -name "*.sh" -exec chmod +x {} + 2>/dev/null || true
           export PATH="${{ env.WAYLAND_PREFIX }}/bin:$PATH"
+          export PKG_CONFIG_PATH="${{ env.WAYLAND_PREFIX }}/lib/x86_64-linux-gnu/pkgconfig:${{ env.WAYLAND_PREFIX }}/share/pkgconfig:$PKG_CONFIG_PATH"
+          export CFLAGS="-I${{ env.WAYLAND_PREFIX }}/include $CFLAGS"
+          export CPPFLAGS="-I${{ env.WAYLAND_PREFIX }}/include $CPPFLAGS"
+          export CXXFLAGS="-I${{ env.WAYLAND_PREFIX }}/include $CXXFLAGS"
           export ACLOCAL_PATH="${{ env.WAYLAND_PREFIX }}/share/aclocal:/usr/share/aclocal"
           export VERBOSE=1
           bash -x scripts/build-xwayland.sh --abi=aarch64 || true
