@@ -64,7 +64,7 @@ jobs:
     name: Native cross-builds — libhybris, Mesa, Xwayland, proot, tawcroot (with Xwayland fixes)
     runs-on: ubuntu-24.04
     needs: prepare-deps
-    timeout-minutes: ${{ env.TIMEOUT_MINUTES_HEAVY }}
+    timeout-minutes: 360
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -114,7 +114,7 @@ jobs:
           echo "ANDROID_NDK_HOME=\( {ANDROID_SDK_ROOT}/ndk/ \){ANDROID_NDK_VERSION}" >> $GITHUB_ENV
           echo "PATH=\( {HOME}/.cargo/bin: \){PATH}" >> $GITHUB_PATH
 
-      # === Xwayland Debug Fixes Integration (from your second workflow) ===
+      # Xwayland Debug Fixes
       - name: Build and System-Register Wayland 1.25 Host Stack
         run: |
           set -e
@@ -145,16 +145,14 @@ jobs:
       - name: Upgrade libffi and Hotfix build script
         run: |
           set -ex
-          # Sync to v3.6.0 (your fix)
           sed -i 's|e2eda0cf72a0598b44278cc91860ea402273fa29\tv3.5.2|f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf\tv3.6.0|g' deps/deps.list
           git -C deps/xwayland-src/libffi fetch origin f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf || true
           git -C deps/xwayland-src/libffi checkout f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf || true
           
-          # Hotfix LT_SYS_SYMBOL_USCORE
           sed -i '/build_autotools libffi/i \  sed -i "s|LT_SYS_SYMBOL_USCORE|sys_symbol_underscore=no|g" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh || true
         shell: bash
 
-      - name: Ensure wayland-scanner fallback (if needed)
+      - name: Ensure wayland-scanner fallback
         run: |
           set -ex
           if ! command -v wayland-scanner >/dev/null 2>&1; then
@@ -172,8 +170,8 @@ jobs:
           fi
         shell: bash
 
-      # === Standard native builds (now benefiting from fixes) ===
-      - name: Build libhybris (glibc aarch64 cross)
+      # Основные сборки
+      - name: Build libhybris
         run: ./scripts/build-libhybris.sh --clean
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
@@ -382,7 +380,7 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
-      - name: Upload final assets (debug)
+      - name: Upload final assets
         uses: actions/upload-artifact@v4
         with:
           name: tawc-final-assets
