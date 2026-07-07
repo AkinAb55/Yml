@@ -353,6 +353,11 @@ jobs:
 
       - name: Gradle assembleDebug
         run: |
+          # Доустанавливаем meson и ninja для внутренних скриптов Gradle (напр. gfxstream)
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends meson ninja-build pkg-config
+          
+          # Выставляем ту же версию NDK для Gradle, убирая конфликты окружения
           export ANDROID_NDK_HOME="/usr/local/lib/android/sdk/ndk/27.3.13750724"
           unset ANDROID_NDK_ROOT
           
