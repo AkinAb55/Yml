@@ -18,7 +18,7 @@ jobs:
   build-tawc-monolith:
     name: Build TAWC Monolithic APK
     runs-on: ubuntu-24.04
-    timeout-minutes: 360 # Проект тяжелый, собирается долго
+    timeout-minutes: 360
 
     steps:
       - name: Checkout Repository
@@ -59,14 +59,19 @@ jobs:
           api-level: ${{ env.ANDROID_COMPILE_SDK }}
           ndk: ${{ env.ANDROID_NDK_VERSION }}
 
-      - name: Setup Rust & cargo-ndk (Crucial for Gradle Rust Tasks)
+      - name: Setup Rust & cargo-ndk (with GNU targets for Mesa)
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           source $HOME/.cargo/env
           rustup default stable
+          
+          # Android таргеты для основного приложения и композитора
           rustup target add aarch64-linux-android x86_64-linux-android
+          
+          # Linux GNU таргеты, критически важные для сборщика Mesa Gfxstream
+          rustup target add aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu
+          
           cargo install --locked cargo-ndk
-          # Экспортируем путь к cargo в GITHUB_PATH текущего Job
           echo "${HOME}/.cargo/bin" >> $GITHUB_PATH
         shell: bash
 
@@ -79,7 +84,7 @@ jobs:
           ./scripts/ensure-deps.sh libhybris smithay xwayland mesa rutabaga_gfx gfxstream || true
         shell: bash
 
-      - name: Build & Install Wayland Host Stack (For Xwayland build)
+      - name: Build & Install Wayland Host Stack
         run: |
           set -e
           mkdir -p /tmp/wayland-src
@@ -107,10 +112,9 @@ jobs:
           export CXXFLAGS="-I${{ env.WAYLAND_PREFIX }}/include $CXXFLAGS"
           export ACLOCAL_PATH="${{ env.WAYLAND_PREFIX }}/share/aclocal:/usr/share/aclocal"
           
-          # Фикс libffi, который вы использовали
+          # Патч версии libffi
           sed -i 's|e2eda0cf72a0598b44278cc91860ea402273fa29\tv3.5.2|f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf\tv3.6.0|g' deps/deps.list
           
-          # Сборка нативного окружения
           ./scripts/build-libhybris.sh --clean || true
           ./scripts/build-proot.sh --abi=aarch64 || true
           ./scripts/build-proot.sh --abi=x86_64 || true
@@ -121,7 +125,6 @@ jobs:
       - name: Package Xwayland Shares into Assets
         run: |
           set -ex
-          # Упаковываем разделяемые файлы Xwayland, чтобы Gradle забрал их в APK
           if [ -d build/xwayland-aarch64/install ]; then
             mkdir -p app/src/main/assets/xwayland
             tar -cf app/src/main/assets/xwayland/share.tar -C build/xwayland-aarch64/install . || true
@@ -131,12 +134,9 @@ jobs:
       - name: Run Final Gradle Monolithic Build
         run: |
           set -ex
-          # Указываем точный путь к NDK для Gradle-скриптов
           export ANDROID_NDK_HOME="/usr/local/lib/android/sdk/ndk/${{ env.ANDROID_NDK_VERSION }}"
           unset ANDROID_NDK_ROOT
           
-          # Запуск сборки со всеми компонентами. Gradle сам соберет Smithay, 
-          # Rutabaga, Композитор и свяжет их через Rust-компилятор.
           ./gradlew assembleDebug \
             -PtawcAbis=${{ env.TAWC_ABIS }} \
             -PtawcMethods=tawcroot,proot,chroot \
