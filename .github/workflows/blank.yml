@@ -102,17 +102,14 @@ jobs:
 
           ninja -C /tmp/wayland-src/build install
           
-          # Копируем .pc файлы хоста для pkg-config
-          sudo cp ${{ env.WAYLAND_PREFIX }}/lib/x86_64-linux-gnu/pkgconfig/*.pc /usr/share/pkgconfig/ || true
-          
           # Подменяем системный сканер протоколов на целевой 1.25.0
           sudo rm -f /usr/bin/wayland-scanner
           sudo cp ${{ env.WAYLAND_PREFIX }}/bin/wayland-scanner /usr/bin/wayland-scanner
           sudo chmod +x /usr/bin/wayland-scanner
           
+          # Оставляем утилиту в PATH хоста
           export PATH="${{ env.WAYLAND_PREFIX }}/bin:$PATH"
-          export ACLOCAL_PATH="${{ env.WAYLAND_PREFIX }}/share/aclocal:/usr/share/aclocal"
-          echo "WAYLAND_SCANNER=${{ env.WAYLAND_PREFIX }}/bin/wayland-scanner" >> $GITHUB_ENV
+          echo "WAYLAND_SCANNER=/usr/bin/wayland-scanner" >> $GITHUB_ENV
         shell: bash
 
       # ─────────────────────────────────────────────────────────────
@@ -136,27 +133,22 @@ jobs:
       - name: Run Final Gradle Monolithic Build
         run: |
           set -ex
-          # Абсолютная синхронизация путей к NDK (удаляет конфликты версий между Rust/C)
+          # Синхронизация переменных путей NDK
           export ANDROID_NDK_HOME="${{ env.ANDROID_HOME }}/ndk/${{ env.ANDROID_NDK_VERSION }}"
           export ANDROID_NDK_ROOT="${{ env.ANDROID_NDK_HOME }}"
           export ANDROID_SDK_ROOT="${{ env.ANDROID_HOME }}"
           
-          # Очищаем LDFLAGS на уровне хоста, чтобы не сломать сборщик GNU-хоста в libhybris
+          # Полностью очищаем переменные путей компиляции хоста, 
+          # чтобы не подмешать x86_64 либы из /tmp/wayland-host в кросс-компиляцию ARM64.
           unset LDFLAGS
+          unset PKG_CONFIG_PATH
+          unset C_INCLUDE_PATH
+          unset CPLUS_INCLUDE_PATH
           
-          # Таргетированно передаем флаги линкера для кросс-компиляции Meson внутри Gradle через их стандартные переменные
-          export ENVS_FOR_MESON="aarch64-linux-android-ldflags=-landroid\ -llog\ -lm\ -lc"
-          
-          # Пробрасываем пути к нашему кастомному префиксу Wayland 1.25
+          # Даем доступ Gradle к бинарнику wayland-scanner на хосте
           export PATH="${{ env.WAYLAND_PREFIX }}/bin:$PATH"
-          export PKG_CONFIG_PATH="${{ env.WAYLAND_PREFIX }}/lib/x86_64-linux-gnu/pkgconfig:${{ env.WAYLAND_PREFIX }}/share/pkgconfig:$PKG_CONFIG_PATH"
-          export ACLOCAL_PATH="${{ env.WAYLAND_PREFIX }}/share/aclocal:/usr/share/aclocal"
           
-          # Передаем заголовочные файлы (.h) Wayland во внутренние вызовы автотулзов
-          export C_INCLUDE_PATH="${{ env.WAYLAND_PREFIX }}/include:$C_INCLUDE_PATH"
-          export CPLUS_INCLUDE_PATH="${{ env.WAYLAND_PREFIX }}/include:$CPLUS_INCLUDE_PATH"
-          
-          # Оставляем информативный режим отладки ninja
+          # Включаем подробный режим отладки ninja
           export NINJA_ARGS="-v"
           export VERBOSE=1
           
