@@ -42,7 +42,7 @@ jobs:
             curl unzip bc patchelf gettext bison flex texinfo gperf \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu \
             gcc-x86-64-linux-gnu g++-x86-64-linux-gnu pkgconf rsync \
-            libvulkan-dev
+            libvulkan-dev libarchive-tools # <-- Добавлен libarchive-tools ради bsdtar
           sudo pip3 install --upgrade meson ninja --break-system-packages || true
         shell: bash
 
