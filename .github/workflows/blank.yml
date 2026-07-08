@@ -1,10 +1,10 @@
-name: Build TAWC — Full Monolithic + Xwayland Fixes
+name: Build TAWC — Full Monolithic Production Build
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, master ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, master ]
   workflow_dispatch:
 
 env:
@@ -15,8 +15,8 @@ env:
   WAYLAND_PREFIX: "/tmp/wayland-host"
 
 jobs:
-  build-tawc-monolith:
-    name: Build TAWC Monolithic APK
+  build-monolithic-apk:
+    name: Build TAWC Full Monolithic APK
     runs-on: ubuntu-24.04
     timeout-minutes: 360
 
@@ -34,16 +34,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential git cmake meson ninja-build pkg-config \
-            python3 python3-pip python3-setuptools python3-venv \
-            autoconf automake libtool libtool-bin libxml2-utils xsltproc \
+            python3 python3-pip python3-setuptools python3-venv python3-mako \
+            autoconf automake libtool libtool-bin m4 gettext bison flex texinfo gperf \
             libwayland-dev wayland-protocols libxkbcommon-dev \
             libx11-dev libxcb1-dev libxcb-xkb-dev libx11-xcb-dev \
-            libffi-dev libegl1-mesa-dev libgles-dev libdrm-dev libepoxy-dev \
-            curl unzip bc patchelf gettext bison flex texinfo gperf \
+            libffi-dev libegl1-mesa-dev libgles-dev libdrm-dev libepoxy-dev libexpat1-dev \
+            curl unzip bc patchelf rsync libvulkan-dev libarchive-tools \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            gcc-x86-64-linux-gnu g++-x86-64-linux-gnu pkgconf rsync \
-            libvulkan-dev libarchive-tools # <-- Добавлен libarchive-tools ради bsdtar
-          sudo pip3 install --upgrade meson ninja --break-system-packages || true
+            gcc-x86-64-linux-gnu g++-x86-64-linux-gnu pkgconf
         shell: bash
 
       - name: Setup Java (for Gradle)
@@ -58,84 +56,86 @@ jobs:
         with:
           api-level: ${{ env.ANDROID_COMPILE_SDK }}
           ndk: ${{ env.ANDROID_NDK_VERSION }}
+          components: |
+            platform-tools
+            "platforms;android-${{ env.ANDROID_COMPILE_SDK }}"
+            "build-tools;36.0.0"
+            "ndk;${{ env.ANDROID_NDK_VERSION }}"
 
       - name: Setup Rust & cargo-ndk (with GNU targets for Mesa)
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           source $HOME/.cargo/env
           rustup default stable
-          
-          # Android таргеты для основного приложения и композитора
           rustup target add aarch64-linux-android x86_64-linux-android
-          
-          # Linux GNU таргеты, критически важные для сборщика Mesa Gfxstream
           rustup target add aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu
-          
           cargo install --locked cargo-ndk
           echo "${HOME}/.cargo/bin" >> $GITHUB_PATH
         shell: bash
 
-      - name: Ensure Vendored Dependencies
+      - name: Pre-download Vendored Dependencies
         run: |
           set -ex
           chmod +x scripts/*.sh
-          ./scripts/ensure-deps.sh --verify-all || true
+          ./scripts/ensure-deps.sh --verify-all
           ./scripts/ensure-deps.sh termux-app
-          ./scripts/ensure-deps.sh libhybris smithay xwayland mesa rutabaga_gfx gfxstream || true
+          ./scripts/ensure-deps.sh wayland libffi xwayland pixman libdrm xkeyboard-config libhybris smithay mesa rutabaga_gfx gfxstream
         shell: bash
 
-      - name: Build & Install Wayland Host Stack
+      # ─────────────────────────────────────────────────────────────
+      # СБОРКА И СИСТЕМНАЯ РЕГИСТРАЦИЯ WAYLAND HOST STACK
+      # ─────────────────────────────────────────────────────────────
+      - name: Build and System-Register Wayland 1.25 Host Stack
         run: |
           set -e
           mkdir -p /tmp/wayland-src
           curl -L "https://gitlab.freedesktop.org/wayland/wayland/-/archive/${{ env.WAYLAND_VERSION }}/wayland-${{ env.WAYLAND_VERSION }}.tar.gz" \
             | tar -xz -C /tmp/wayland-src --strip-components=1
-          
+
           meson setup /tmp/wayland-src/build /tmp/wayland-src \
             -Dtests=false -Ddocumentation=false -Dlibraries=true \
             --prefix=${{ env.WAYLAND_PREFIX }}
-          
+
           ninja -C /tmp/wayland-src/build install
+          
+          # Копируем .pc файлы хоста для pkg-config
           sudo cp ${{ env.WAYLAND_PREFIX }}/lib/x86_64-linux-gnu/pkgconfig/*.pc /usr/share/pkgconfig/ || true
+          
+          # Подменяем системный сканер протоколов на целевой 1.25.0
           sudo rm -f /usr/bin/wayland-scanner
           sudo cp ${{ env.WAYLAND_PREFIX }}/bin/wayland-scanner /usr/bin/wayland-scanner
           sudo chmod +x /usr/bin/wayland-scanner
-        shell: bash
-
-      - name: Pre-build Native Assets (libhybris, proot, xwayland)
-        run: |
-          set -ex
+          
           export PATH="${{ env.WAYLAND_PREFIX }}/bin:$PATH"
-          export PKG_CONFIG_PATH="${{ env.WAYLAND_PREFIX }}/lib/x86_64-linux-gnu/pkgconfig:${{ env.WAYLAND_PREFIX }}/share/pkgconfig:$PKG_CONFIG_PATH"
-          export CFLAGS="-I${{ env.WAYLAND_PREFIX }}/include $CFLAGS"
-          export CPPFLAGS="-I${{ env.WAYLAND_PREFIX }}/include $CPPFLAGS"
-          export CXXFLAGS="-I${{ env.WAYLAND_PREFIX }}/include $CXXFLAGS"
           export ACLOCAL_PATH="${{ env.WAYLAND_PREFIX }}/share/aclocal:/usr/share/aclocal"
-          
-          # Патч версии libffi
-          sed -i 's|e2eda0cf72a0598b44278cc91860ea402273fa29\tv3.5.2|f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf\tv3.6.0|g' deps/deps.list
-          
-          ./scripts/build-libhybris.sh --clean || true
-          ./scripts/build-proot.sh --abi=aarch64 || true
-          ./scripts/build-proot.sh --abi=x86_64 || true
-          ./scripts/build-xwayland.sh --abi=aarch64 || true
-          ./scripts/build-xwayland.sh --abi=x86_64 || true
+          echo "WAYLAND_SCANNER=${{ env.WAYLAND_PREFIX }}/bin/wayland-scanner" >> $GITHUB_ENV
         shell: bash
 
-      - name: Package Xwayland Shares into Assets
+      # ─────────────────────────────────────────────────────────────
+      # ПРИМЕНЕНИЕ ХОТФИКСОВ ДЛЯ СБОРКИ XWAYLAND (libffi fix)
+      # ─────────────────────────────────────────────────────────────
+      - name: Upgrade libffi and Hotfix build script
         run: |
           set -ex
-          if [ -d build/xwayland-aarch64/install ]; then
-            mkdir -p app/src/main/assets/xwayland
-            tar -cf app/src/main/assets/xwayland/share.tar -C build/xwayland-aarch64/install . || true
-          fi
+          # Переключаем libffi на стабильную версию v3.6.0 внутри дерева
+          sed -i 's|e2eda0cf72a0598b44278cc91860ea402273fa29\tv3.5.2|f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf\tv3.6.0|g' deps/deps.list
+          git -C deps/xwayland-src/libffi fetch origin f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf || true
+          git -C deps/xwayland-src/libffi checkout f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf || true
+          
+          # Хак против ошибки неопределенного макроса LT_SYS_SYMBOL_USCORE
+          sed -i '/build_autotools libffi/i \  sed -i "s|LT_SYS_SYMBOL_USCORE|sys_symbol_underscore=no|g" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh
         shell: bash
 
+      # ─────────────────────────────────────────────────────────────
+      # ФИНАЛЬНАЯ МОНОЛИТНАЯ СБОРКА ЧЕРЕЗ GRADLE
+      # ─────────────────────────────────────────────────────────────
       - name: Run Final Gradle Monolithic Build
         run: |
           set -ex
-          export ANDROID_NDK_HOME="/usr/local/lib/android/sdk/ndk/${{ env.ANDROID_NDK_VERSION }}"
-          unset ANDROID_NDK_ROOT
+          export ANDROID_NDK_HOME="${{ env.ANDROID_HOME }}/ndk/${{ env.ANDROID_NDK_VERSION }}"
+          export ANDROID_SDK_ROOT="${{ env.ANDROID_HOME }}"
+          export PATH="${{ env.WAYLAND_PREFIX }}/bin:$PATH"
+          export ACLOCAL_PATH="${{ env.WAYLAND_PREFIX }}/share/aclocal:/usr/share/aclocal"
           
           ./gradlew assembleDebug \
             -PtawcAbis=${{ env.TAWC_ABIS }} \
@@ -149,9 +149,21 @@ jobs:
           PKG_CONFIG_ALLOW_CROSS: "1"
         shell: bash
 
+      # ─────────────────────────────────────────────────────────────
+      # ВЫГРУЗКА ГОТОВОГО APK И СБОРКА ОТЛАДОЧНЫХ АССЕТОВ
+      # ─────────────────────────────────────────────────────────────
       - name: Upload Complete TAWC APK
         uses: actions/upload-artifact@v4
         with:
-          name: tawc-full-debug-apk
+          name: tawc-full-monolithic-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      - name: Upload Generated Assets for Debugging
+        uses: actions/upload-artifact@v4
+        with:
+          name: tawc-built-native-libs
+          path: |
+            app/src/main/jniLibs
+            app/src/main/assets
+          if-no-files-found: warn
