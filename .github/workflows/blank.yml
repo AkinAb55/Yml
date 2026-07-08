@@ -107,8 +107,6 @@ jobs:
           sudo cp ${{ env.WAYLAND_PREFIX }}/bin/wayland-scanner /usr/bin/wayland-scanner
           sudo chmod +x /usr/bin/wayland-scanner
           
-          # Оставляем утилиту в PATH хоста
-          export PATH="${{ env.WAYLAND_PREFIX }}/bin:$PATH"
           echo "WAYLAND_SCANNER=/usr/bin/wayland-scanner" >> $GITHUB_ENV
         shell: bash
 
@@ -138,12 +136,18 @@ jobs:
           export ANDROID_NDK_ROOT="${{ env.ANDROID_NDK_HOME }}"
           export ANDROID_SDK_ROOT="${{ env.ANDROID_HOME }}"
           
-          # Полностью очищаем переменные путей компиляции хоста, 
-          # чтобы не подмешать x86_64 либы из /tmp/wayland-host в кросс-компиляцию ARM64.
+          # Очищаем глобальный линкер хоста
           unset LDFLAGS
           unset PKG_CONFIG_PATH
-          unset C_INCLUDE_PATH
-          unset CPLUS_INCLUDE_PATH
+          
+          # Передаем заголовки ТОЛЬКО через флаги препроцессора (C/C++ компиляторы найдут .h файлы,
+          # но линкер не потащит x86_64 либы в кросс-сборку)
+          export CFLAGS="-I${{ env.WAYLAND_PREFIX }}/include $CFLAGS"
+          export CXXFLAGS="-I${{ env.WAYLAND_PREFIX }}/include $CXXFLAGS"
+          export CPPFLAGS="-I${{ env.WAYLAND_PREFIX }}/include $CPPFLAGS"
+          
+          # Альтернативный путь поиска для pkg-config внутри скриптов
+          export PKG_CONFIG_PATH="${{ env.WAYLAND_PREFIX }}/lib/x86_64-linux-gnu/pkgconfig:${{ env.WAYLAND_PREFIX }}/share/pkgconfig"
           
           # Даем доступ Gradle к бинарнику wayland-scanner на хосте
           export PATH="${{ env.WAYLAND_PREFIX }}/bin:$PATH"
