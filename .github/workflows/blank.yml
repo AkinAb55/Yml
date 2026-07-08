@@ -132,10 +132,19 @@ jobs:
       - name: Run Final Gradle Monolithic Build
         run: |
           set -ex
+          # Жестко синхронизируем пути к NDK, убирая предупреждения несовместимости окружения Rust/C
           export ANDROID_NDK_HOME="${{ env.ANDROID_HOME }}/ndk/${{ env.ANDROID_NDK_VERSION }}"
+          export ANDROID_NDK_ROOT="${{ env.ANDROID_NDK_HOME }}"
           export ANDROID_SDK_ROOT="${{ env.ANDROID_HOME }}"
+          
+          # Пробрасываем пути к нашему кастомному префиксу Wayland 1.25
           export PATH="${{ env.WAYLAND_PREFIX }}/bin:$PATH"
+          export PKG_CONFIG_PATH="${{ env.WAYLAND_PREFIX }}/lib/x86_64-linux-gnu/pkgconfig:${{ env.WAYLAND_PREFIX }}/share/pkgconfig:$PKG_CONFIG_PATH"
           export ACLOCAL_PATH="${{ env.WAYLAND_PREFIX }}/share/aclocal:/usr/share/aclocal"
+          
+          # Передаем заголовочные файлы (.h) Wayland во внутренние вызовы автотулзов (решает проблему libhybris)
+          export C_INCLUDE_PATH="${{ env.WAYLAND_PREFIX }}/include:$C_INCLUDE_PATH"
+          export CPLUS_INCLUDE_PATH="${{ env.WAYLAND_PREFIX }}/include:$CPLUS_INCLUDE_PATH"
           
           ./gradlew assembleDebug \
             -PtawcAbis=${{ env.TAWC_ABIS }} \
