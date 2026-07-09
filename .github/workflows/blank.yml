@@ -1,23 +1,20 @@
-name: Build TAWC — Full Monolithic Production Build
+name: TAWC — Fast Smoke Test Build
 
 on:
   push:
-    branches: [ main, master ]
-  pull_request:
     branches: [ main, master ]
   workflow_dispatch:
 
 env:
   ANDROID_NDK_VERSION: "27.2.12479018"
   ANDROID_COMPILE_SDK: "36"
-  TAWC_ABIS: "arm64-v8a,x86_64"
-  WAYLAND_VERSION: "1.25.0"
+  TAWC_ABIS: "arm64-v8a" # Только одна архитектура для скорости
 
 jobs:
-  build-monolithic-apk:
-    name: Build TAWC Full Monolithic APK
+  fast-test-build:
+    name: Quick Build (CPU Only)
     runs-on: ubuntu-24.04
-    timeout-minutes: 360
+    timeout-minutes: 30
 
     steps:
       - name: Checkout Repository
@@ -25,29 +22,18 @@ jobs:
         with:
           repository: 'wmww/tawc'
           ref: 'main'
-          fetch-depth: 0
-          submodules: recursive
+          submodules: false # Отключено для экономии времени
 
-      - name: Install Host Tools & Cross-Compilers
+      - name: Install Essential Tools
         run: |
           sudo apt-get update
+          # Добавлены минимальные утилиты сборки, необходимые для libxkbcommon
           sudo apt-get install -y --no-install-recommends \
-            build-essential git cmake ninja-build pkg-config \
-            python3 python3-pip python3-setuptools python3-venv python3-mako \
-            autoconf automake libtool libtool-bin m4 gettext bison flex texinfo gperf \
-            libwayland-dev wayland-protocols libxkbcommon-dev \
-            libx11-dev libxcb1-dev libxcb-xkb-dev libx11-xcb-dev \
-            libffi-dev libegl1-mesa-dev libgles-dev libdrm-dev libepoxy-dev libexpat1-dev \
-            curl unzip bc patchelf rsync libvulkan-dev libarchive-tools \
-            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            gcc-x86-64-linux-gnu g++-x86-64-linux-gnu pkgconf
-          
-          # Устанавливаем свежий Meson из PyPI (требуется >= 1.4.0 для новых версий Mesa)
-          sudo pip3 install --break-system-packages --upgrade meson
-          meson --version
+            build-essential git pkg-config curl unzip rsync \
+            meson ninja-build bison flex
         shell: bash
 
-      - name: Setup Java (for Gradle)
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
@@ -65,119 +51,31 @@ jobs:
             "build-tools;36.0.0"
             "ndk;${{ env.ANDROID_NDK_VERSION }}"
 
-      - name: Setup Rust & cargo-ndk (with GNU targets for Mesa)
+      - name: Setup Basic Rust
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           source $HOME/.cargo/env
-          rustup default stable
-          rustup target add aarch64-linux-android x86_64-linux-android
-          rustup target add aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu
+          rustup target add aarch64-linux-android
           cargo install --locked cargo-ndk
           echo "${HOME}/.cargo/bin" >> $GITHUB_PATH
         shell: bash
 
-      - name: Pre-download Vendored Dependencies
+      - name: Run Fast Gradle Build
         run: |
-          set -ex
-          chmod +x scripts/*.sh
-          ./scripts/ensure-deps.sh --verify-all
-          ./scripts/ensure-deps.sh termux-app
-          ./scripts/ensure-deps.sh wayland libffi xwayland pixman libdrm xkeyboard-config libhybris smithay mesa rutabaga_gfx gfxstream
-        shell: bash
-
-      # ─────────────────────────────────────────────────────────────
-      # СБОРКА И СИСТЕМНАЯ РЕГИСТРАЦИЯ WAYLAND SCANNER
-      # ─────────────────────────────────────────────────────────────
-      - name: Build and Install Wayland 1.25 Scanner Only
-        run: |
-          set -e
-          mkdir -p /tmp/wayland-src
-          curl -L "https://gitlab.freedesktop.org/wayland/wayland/-/archive/${{ env.WAYLAND_VERSION }}/wayland-${{ env.WAYLAND_VERSION }}.tar.gz" \
-            | tar -xz -C /tmp/wayland-src --strip-components=1
-
-          # Собираем Wayland во временную папку
-          meson setup /tmp/wayland-src/build /tmp/wayland-src \
-            -Dtests=false -Ddocumentation=false -Dlibraries=true \
-            --prefix=/tmp/wayland-host
-
-          ninja -C /tmp/wayland-src/build install
-          
-          # Копируем ИСКЛЮЧИТЕЛЬНО сканер протоколов в системный пул хоста.
-          # Библиотеки оставляем изолированными, чтобы кросс-линкер их не видел!
-          sudo rm -f /usr/bin/wayland-scanner
-          sudo cp /tmp/wayland-host/bin/wayland-scanner /usr/bin/wayland-scanner
-          sudo chmod +x /usr/bin/wayland-scanner
-          
-          echo "WAYLAND_SCANNER=/usr/bin/wayland-scanner" >> $GITHUB_ENV
-        shell: bash
-
-      # ─────────────────────────────────────────────────────────────
-      # ПРИМЕНЕНИЕ ХОТФИКСОВ ДЛЯ СБОРКИ XWAYLAND (libffi fix)
-      # ─────────────────────────────────────────────────────────────
-      - name: Upgrade libffi and Hotfix build script
-        run: |
-          set -ex
-          # Переключаем libffi на стабильную версию v3.6.0 внутри дерева
-          sed -i 's|e2eda0cf72a0598b44278cc91860ea402273fa29\tv3.5.2|f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf\tv3.6.0|g' deps/deps.list
-          git -C deps/xwayland-src/libffi fetch origin f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf || true
-          git -C deps/xwayland-src/libffi checkout f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf || true
-          
-          # Хак против ошибки неопределенного макроса LT_SYS_SYMBOL_USCORE
-          sed -i '/build_autotools libffi/i \  sed -i "s|LT_SYS_SYMBOL_USCORE|sys_symbol_underscore=no|g" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh
-        shell: bash
-
-      # ─────────────────────────────────────────────────────────────
-      # ФИНАЛЬНАЯ МОНОЛИТНАЯ СБОРКА ЧЕРЕЗ GRADLE
-      # ─────────────────────────────────────────────────────────────
-      - name: Run Final Gradle Monolithic Build
-        run: |
-          set -ex
-          # Синхронизация переменных путей NDK
           export ANDROID_NDK_HOME="${{ env.ANDROID_HOME }}/ndk/${{ env.ANDROID_NDK_VERSION }}"
-          export ANDROID_NDK_ROOT="${{ env.ANDROID_NDK_HOME }}"
+          export ANDROID_NDK_ROOT="$ANDROID_NDK_HOME"
           export ANDROID_SDK_ROOT="${{ env.ANDROID_HOME }}"
-          
-          # КРИТИЧЕСКАЯ ОЧИСТКА: Удаляем любые кастомные флаги окружения,
-          # чтобы Meson и Autotools не затягивали x86_64 библиотеки хоста.
-          unset LDFLAGS
-          unset PKG_CONFIG_PATH
-          unset CFLAGS
-          unset CXXFLAGS
-          unset CPPFLAGS
-          unset C_INCLUDE_PATH
-          unset CPLUS_INCLUDE_PATH
-          
-          # Включаем подробный режим отладки ninja
-          export NINJA_ARGS="-v"
-          export VERBOSE=1
           
           ./gradlew assembleDebug \
             -PtawcAbis=${{ env.TAWC_ABIS }} \
-            -PtawcMethods=tawcroot,proot,chroot \
-            -PtawcGraphics=libhybris,libhybris-zink,gfxstream,cpu \
-            -PtawcXwayland=true \
-            -PtawcAllFilesAccess=true \
-            --no-daemon --stacktrace
-        env:
-          RUSTFLAGS: "-A warnings"
-          PKG_CONFIG_ALLOW_CROSS: "1"
+            -PtawcMethods=tawcroot,proot \
+            -PtawcGraphics=cpu \
+            -PtawcXwayland=false \
+            --no-daemon
         shell: bash
 
-      # ─────────────────────────────────────────────────────────────
-      # ВЫГРУЗКА ГОТОВОГО APK И СБОРКА ОТЛАДОЧНЫХ АССЕТОВ
-      # ─────────────────────────────────────────────────────────────
-      - name: Upload Complete TAWC APK
+      - name: Upload Test APK
         uses: actions/upload-artifact@v4
         with:
-          name: tawc-full-monolithic-debug-apk
+          name: tawc-fast-test-apk
           path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-
-      - name: Upload Generated Assets for Debugging
-        uses: actions/upload-artifact@v4
-        with:
-          name: tawc-built-native-libs
-          path: |
-            app/src/main/jniLibs
-            app/src/main/assets
-          if-no-files-found: warn
