@@ -1,4 +1,4 @@
-name: Build My Forked wlroots-android-bridge APK (Java 21 Approach)
+name: Build External wlroots-android-bridge APK (Java 21 Approach)
 
 on:
   push:
@@ -12,10 +12,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Forked Repository with Submodules
+    - name: Checkout External Repository with Submodules
       uses: actions/checkout@v4
       with:
-        # Автоматически качает репозиторий, в котором запущен этот Actions
+        # Указываем оригинальный репозиторий автора
+        repository: 'Xtr126/wlroots-android-bridge'
         submodules: 'recursive'
         fetch-depth: 0
 
@@ -23,7 +24,7 @@ jobs:
       uses: actions/setup-java@v4
       with:
         distribution: 'zulu'
-        java-version: '21' # Поднимаем глобальную Java до 21, чтобы удовлетворить таски компиляции
+        java-version: '21' # Родная Java 21 для этого проекта
 
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
@@ -35,17 +36,17 @@ jobs:
 
     - name: Discover Project Root & Configure NDK
       run: |
-        # Ищем, где на самом деле лежит settings.gradle или build.gradle
+        # Гарантированно находим корень чужого проекта
         PROJECT_ROOT=$(dirname $(find . -name "settings.gradle*" | head -n 1))
         echo "REAL_PROJECT_ROOT=$PROJECT_ROOT" >> $GITHUB_ENV
         echo "Проект обнаружен в: $PROJECT_ROOT"
         
-        # Прописываем local.properties строго туда, где лежит проект
+        # Прописываем local.properties в корень найденного проекта
         echo "ndk.dir=${ANDROID_SDK_ROOT}/ndk/28.0.13004108" > "$PROJECT_ROOT/local.properties"
         
-        # Если gradlew нет рядом с проектом, генерируем его принудительно средствами системного gradle
+        # Защита: если gradlew не создался, генерируем его системным gradle
         if [ ! -f "$PROJECT_ROOT/gradlew" ]; then
-          echo "gradlew не найден в подпапке, генерируем wrapper..."
+          echo "gradlew не найден, генерируем wrapper..."
           cd "$PROJECT_ROOT" && gradle wrapper
         fi
         
@@ -53,7 +54,7 @@ jobs:
 
     - name: Build Android APK via Gradle
       run: |
-        # Переходим в гарантированно найденный корень проекта и запускаем сборку
+        # Переходим в рабочую папку проекта и запускаем чистую сборку
         cd ${{ env.REAL_PROJECT_ROOT }}
         ./gradlew assembleDebug --stacktrace
 
