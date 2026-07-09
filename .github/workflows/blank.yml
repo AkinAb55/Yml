@@ -1,4 +1,4 @@
-name: Build External wlroots-android-bridge APK
+name: Build My Forked wlroots-android-bridge APK
 
 on:
   push:
@@ -12,10 +12,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout External Repository with Submodules
+    - name: Checkout My Forked Repository with Submodules
       uses: actions/checkout@v4
       with:
-        repository: 'Xtr126/wlroots-android-bridge'
+        # Теперь Actions автоматически скачает код ИМЕННО ВАШЕГО форка
         submodules: 'recursive' 
 
     - name: Set up JDK 17
@@ -33,22 +33,16 @@ jobs:
         echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/28.0.13004108" >> $GITHUB_ENV
         echo "ndk.dir=${ANDROID_SDK_ROOT}/ndk/28.0.13004108" > local.properties
 
-    - name: Create Gradle Init Script to Force JVM Target 17
+    - name: Patch JVM Target Compatibility in Build Files
       run: |
-        # Этот скрипт принудительно выравнивает версии Java для всех модулей на лету
-        cat << 'EOF' > init.gradle
-        allprojects {
-            tasks.withType(JavaCompile).configureEach {
-                sourceCompatibility = "17"
-                targetCompatibility = "17"
-            }
-            tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
-                compilerOptions {
-                    jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
-                }
-            }
-        }
-        EOF
+        echo "Патчим файлы build.gradle.kts, чтобы выровнять версии Java..."
+        
+        # Находим все файлы build.gradle.kts в проекте и заменяем JavaVersion.VERSION_21 на VERSION_17
+        find . -name "build.gradle.kts" -type f -exec sed -i 's/JavaVersion.VERSION_21/JavaVersion.VERSION_17/g' {} +
+        find . -name "build.gradle.kts" -type f -exec sed -i 's/compatibility = 21/compatibility = 17/g' {} +
+        
+        # На всякий случай проверяем и заменяем строковые упоминания jvmTarget = "21" на "17"
+        find . -name "build.gradle.kts" -type f -exec sed -i 's/jvmTarget = "21"/jvmTarget = "17"/g' {} +
 
     - name: Grant execute permission for gradlew
       run: |
@@ -61,8 +55,8 @@ jobs:
 
     - name: Build Android APK via Gradle
       run: |
-        # Подключаем созданный init-script, который исправит конфликт версий
-        ./gradlew assembleDebug --init-script init.gradle --stacktrace
+        # Запускаем чистую сборку без внешних init-скриптов
+        ./gradlew assembleDebug --stacktrace
 
     - name: Upload Compiled APK to Artifacts
       uses: actions/upload-artifact@v4
