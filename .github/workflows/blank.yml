@@ -22,7 +22,7 @@ jobs:
       uses: actions/setup-java@v4
       with:
         distribution: 'zulu'
-        java-version: '17' # Устанавливаем базовую Java 17 для раннера
+        java-version: '17'
 
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
@@ -32,6 +32,23 @@ jobs:
         sdkmanager --install "ndk;28.0.13004108"
         echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/28.0.13004108" >> $GITHUB_ENV
         echo "ndk.dir=${ANDROID_SDK_ROOT}/ndk/28.0.13004108" > local.properties
+
+    - name: Create Gradle Init Script to Force JVM Target 17
+      run: |
+        # Этот скрипт принудительно выравнивает версии Java для всех модулей на лету
+        cat << 'EOF' > init.gradle
+        allprojects {
+            tasks.withType(JavaCompile).configureEach {
+                sourceCompatibility = "17"
+                targetCompatibility = "17"
+            }
+            tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+                compilerOptions {
+                    jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+                }
+            }
+        }
+        EOF
 
     - name: Grant execute permission for gradlew
       run: |
@@ -44,12 +61,8 @@ jobs:
 
     - name: Build Android APK via Gradle
       run: |
-        # Запускаем сборку, принудительно выравнивая JVM Target до версии 17 для Java и Kotlin.
-        # Параметр compileReleaseJavaWithJavac.targetCompatibility=17 также страхует от конфликтов.
-        ./gradlew assembleDebug \
-          -Dorg.gradle.java.home=$JAVA_HOME \
-          -Pandroid.kotlinOptions.jvmTarget=17 \
-          --stacktrace
+        # Подключаем созданный init-script, который исправит конфликт версий
+        ./gradlew assembleDebug --init-script init.gradle --stacktrace
 
     - name: Upload Compiled APK to Artifacts
       uses: actions/upload-artifact@v4
