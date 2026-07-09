@@ -22,17 +22,14 @@ jobs:
       uses: actions/setup-java@v4
       with:
         distribution: 'zulu'
-        java-version: '17'
+        java-version: '17' # Устанавливаем базовую Java 17 для раннера
 
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
 
     - name: Install Android NDK (Exact version required by project)
       run: |
-        # Устанавливаем именно ту версию NDK, которую запросил Gradle: 28.0.13004108
         sdkmanager --install "ndk;28.0.13004108"
-        
-        # Обновляем пути к правильной папке NDK
         echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/28.0.13004108" >> $GITHUB_ENV
         echo "ndk.dir=${ANDROID_SDK_ROOT}/ndk/28.0.13004108" > local.properties
 
@@ -47,7 +44,12 @@ jobs:
 
     - name: Build Android APK via Gradle
       run: |
-        ./gradlew assembleDebug --stacktrace
+        # Запускаем сборку, принудительно выравнивая JVM Target до версии 17 для Java и Kotlin.
+        # Параметр compileReleaseJavaWithJavac.targetCompatibility=17 также страхует от конфликтов.
+        ./gradlew assembleDebug \
+          -Dorg.gradle.java.home=$JAVA_HOME \
+          -Pandroid.kotlinOptions.jvmTarget=17 \
+          --stacktrace
 
     - name: Upload Compiled APK to Artifacts
       uses: actions/upload-artifact@v4
