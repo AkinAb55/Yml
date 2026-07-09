@@ -1,4 +1,4 @@
-name: Build My Forked wlroots-android-bridge APK
+name: Build My Forked wlroots-android-bridge APK (Java 21 Approach)
 
 on:
   push:
@@ -12,17 +12,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout My Forked Repository with Submodules
+    - name: Checkout Forked Repository with Submodules
       uses: actions/checkout@v4
       with:
-        # Теперь Actions автоматически скачает код ИМЕННО ВАШЕГО форка
-        submodules: 'recursive' 
+        # Автоматически качает репозиторий, в котором запущен этот Actions
+        submodules: 'recursive'
+        fetch-depth: 0
 
-    - name: Set up JDK 17
+    - name: Set up JDK 21
       uses: actions/setup-java@v4
       with:
         distribution: 'zulu'
-        java-version: '17'
+        java-version: '21' # Поднимаем глобальную Java до 21, чтобы удовлетворить таски компиляции
 
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
@@ -31,36 +32,34 @@ jobs:
       run: |
         sdkmanager --install "ndk;28.0.13004108"
         echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/28.0.13004108" >> $GITHUB_ENV
-        echo "ndk.dir=${ANDROID_SDK_ROOT}/ndk/28.0.13004108" > local.properties
 
-    - name: Patch JVM Target Compatibility in Build Files
+    - name: Discover Project Root & Configure NDK
       run: |
-        echo "Патчим файлы build.gradle.kts, чтобы выровнять версии Java..."
+        # Ищем, где на самом деле лежит settings.gradle или build.gradle
+        PROJECT_ROOT=$(dirname $(find . -name "settings.gradle*" | head -n 1))
+        echo "REAL_PROJECT_ROOT=$PROJECT_ROOT" >> $GITHUB_ENV
+        echo "Проект обнаружен в: $PROJECT_ROOT"
         
-        # Находим все файлы build.gradle.kts в проекте и заменяем JavaVersion.VERSION_21 на VERSION_17
-        find . -name "build.gradle.kts" -type f -exec sed -i 's/JavaVersion.VERSION_21/JavaVersion.VERSION_17/g' {} +
-        find . -name "build.gradle.kts" -type f -exec sed -i 's/compatibility = 21/compatibility = 17/g' {} +
+        # Прописываем local.properties строго туда, где лежит проект
+        echo "ndk.dir=${ANDROID_SDK_ROOT}/ndk/28.0.13004108" > "$PROJECT_ROOT/local.properties"
         
-        # На всякий случай проверяем и заменяем строковые упоминания jvmTarget = "21" на "17"
-        find . -name "build.gradle.kts" -type f -exec sed -i 's/jvmTarget = "21"/jvmTarget = "17"/g' {} +
-
-    - name: Grant execute permission for gradlew
-      run: |
-        if [ -f "./gradlew" ]; then
-          chmod +x ./gradlew
-        else
-          echo "Критическая ошибка: gradlew не найден!"
-          exit 1
+        # Если gradlew нет рядом с проектом, генерируем его принудительно средствами системного gradle
+        if [ ! -f "$PROJECT_ROOT/gradlew" ]; then
+          echo "gradlew не найден в подпапке, генерируем wrapper..."
+          cd "$PROJECT_ROOT" && gradle wrapper
         fi
+        
+        chmod +x "$PROJECT_ROOT/gradlew"
 
     - name: Build Android APK via Gradle
       run: |
-        # Запускаем чистую сборку без внешних init-скриптов
+        # Переходим в гарантированно найденный корень проекта и запускаем сборку
+        cd ${{ env.REAL_PROJECT_ROOT }}
         ./gradlew assembleDebug --stacktrace
 
     - name: Upload Compiled APK to Artifacts
       uses: actions/upload-artifact@v4
       with:
         name: wlroots-android-bridge-apk
-        path: app/build/outputs/apk/debug/*.apk
+        path: "**/build/outputs/apk/debug/*.apk"
         retention-days: 7
