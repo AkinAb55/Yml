@@ -22,8 +22,8 @@ jobs:
         with:
           repository: 'wmww/tawc'
           ref: 'main'
-          fetch-depth: 1 # Скачиваем только последний коммит для экономии времени
-          submodules: recursive # Обязательно для Rust-зависимостей вроде kumquat_virtio
+          fetch-depth: 1
+          submodules: recursive
 
       - name: Install Essential Tools
         run: |
@@ -58,6 +58,15 @@ jobs:
           rustup target add aarch64-linux-android
           cargo install --locked cargo-ndk
           echo "${HOME}/.cargo/bin" >> $GITHUB_PATH
+        shell: bash
+
+      # Выкачиваем минимальные текстовые исходники зависимостей (включая файлы Cargo.toml)
+      - name: Pre-download Vendored Dependencies (Fast Mode)
+        run: |
+          set -ex
+          chmod +x scripts/*.sh
+          ./scripts/ensure-deps.sh --verify-all
+          ./scripts/ensure-deps.sh smithay rutabaga_gfx libxkbcommon
         shell: bash
 
       - name: Run Fast Gradle Build
