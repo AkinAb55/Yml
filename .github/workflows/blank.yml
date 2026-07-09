@@ -1,66 +1,60 @@
-name: Build External wlroots-android-bridge APK (Java 21 Approach)
+name: Build Wldroid Test App APK
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ main, master ]
   pull_request:
-    branches: [ "main", "master" ]
-  workflow_dispatch:
+    branches: [ main, master ]
+  workflow_dispatch: # Позволяет запускать сборку вручную кнопкой на GitHub
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout External Repository with Submodules
-      uses: actions/checkout@v4
-      with:
-        # Указываем оригинальный репозиторий автора
-        repository: 'Xtr126/wlroots-android-bridge'
-        submodules: 'recursive'
-        fetch-depth: 0
+      - name: Checkout Source Code with Submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive' # Критично! Скачивает все 17 субмодулей
+          fetch-depth: 0
 
-    - name: Set up JDK 21
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'zulu'
-        java-version: '21' # Родная Java 21 для этого проекта
+      - name: Set up Python (Required for Meson)
+        uses: actions/setup-python@v5
+        with:
+          python-python-version: '3.x'
 
-    - name: Setup Android SDK
-      uses: android-actions/setup-android@v3
+      - name: Install Native Build Tools (Meson & Ninja)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config
+          pip install meson
 
-    - name: Install Android NDK (Exact version required by project)
-      run: |
-        sdkmanager --install "ndk;28.0.13004108"
-        echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/28.0.13004108" >> $GITHUB_ENV
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+          cache: 'gradle'
 
-    - name: Discover Project Root & Configure NDK
-      run: |
-        # Гарантированно находим корень чужого проекта
-        PROJECT_ROOT=$(dirname $(find . -name "settings.gradle*" | head -n 1))
-        echo "REAL_PROJECT_ROOT=$PROJECT_ROOT" >> $GITHUB_ENV
-        echo "Проект обнаружен в: $PROJECT_ROOT"
-        
-        # Прописываем local.properties в корень найденного проекта
-        echo "ndk.dir=${ANDROID_SDK_ROOT}/ndk/28.0.13004108" > "$PROJECT_ROOT/local.properties"
-        
-        # Защита: если gradlew не создался, генерируем его системным gradle
-        if [ ! -f "$PROJECT_ROOT/gradlew" ]; then
-          echo "gradlew не найден, генерируем wrapper..."
-          cd "$PROJECT_ROOT" && gradle wrapper
-        fi
-        
-        chmod +x "$PROJECT_ROOT/gradlew"
+      - name: Setup Android NDK
+        uses: android-actions/setup-android@v3
+        with:
+          # Проект требует NDK r28 согласно спецификации AGENTS.md
+          ndk-version: '28.0.12433566' 
 
-    - name: Build Android APK via Gradle
-      run: |
-        # Переходим в рабочую папку проекта и запускаем чистую сборку
-        cd ${{ env.REAL_PROJECT_ROOT }}
-        ./gradlew assembleDebug --stacktrace
+      - name: Grant Execute Permission for Gradle
+        run: chmod +x gradlew
 
-    - name: Upload Compiled APK to Artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: wlroots-android-bridge-apk
-        path: "**/build/outputs/apk/debug/*.apk"
-        retention-days: 7
+      - name: Build Test App APK
+        run: ./gradlew :testapp:assembleDebug --stacktrace
+        env:
+          # Если сборка нативных компонентов будет падать, можно временно отключить 
+          # ненужные модули флагами, раскомментировав строку ниже:
+          # GRADLE_OPTS: "-PskipShims" 
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wldroid-testapp-debug
+          path: testapp/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
