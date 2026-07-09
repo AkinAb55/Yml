@@ -92,7 +92,7 @@ jobs:
           curl -L "https://gitlab.freedesktop.org/wayland/wayland/-/archive/${{ env.WAYLAND_VERSION }}/wayland-${{ env.WAYLAND_VERSION }}.tar.gz" \
             | tar -xz -C /tmp/wayland-src --strip-components=1
           
-          # Собираем Wayland во временную папку
+          # Собираем Wayland для хоста
           meson setup /tmp/wayland-src/build /tmp/wayland-src \
             -Dtests=false -Ddocumentation=false -Dlibraries=true \
             --prefix=/tmp/wayland-host
@@ -103,6 +103,12 @@ jobs:
           sudo cp /tmp/wayland-host/bin/wayland-scanner /usr/bin/wayland-scanner
           sudo chmod +x /usr/bin/wayland-scanner
           
+          # ПОДМЕНА ДЛЯ PKG-CONFIG ХОСТА: Чтобы Meson видел версию 1.25.0 для билд-машины
+          sudo mkdir -p /usr/local/share/pkgconfig
+          sudo cp /tmp/wayland-host/share/pkgconfig/wayland-scanner.pc /usr/local/share/pkgconfig/wayland-scanner.pc
+          # Корректируем путь к бинарнику внутри скопированного .pc файла
+          sudo sed -i 's|wayland_scanner=.*|wayland_scanner=/usr/bin/wayland-scanner|g' /usr/local/share/pkgconfig/wayland-scanner.pc
+          
           # 2. Переносим заголовочный файл в дерево проекта для libhybris / xwayland-src
           mkdir -p deps/xwayland-src/wayland/egl
           cp /tmp/wayland-src/egl/wayland-egl-backend.h deps/xwayland-src/wayland/egl/
@@ -110,6 +116,8 @@ jobs:
           # Передаем переменные в GITHUB_ENV для следующих шагов
           echo "WAYLAND_SCANNER=/usr/bin/wayland-scanner" >> $GITHUB_ENV
           echo "HOST_WAYLAND_INC=/tmp/wayland-host/include" >> $GITHUB_ENV
+          # Приоритет для pkgconfig локальных путей хоста перед системными /usr/lib
+          echo "PKG_CONFIG_PATH=/usr/local/share/pkgconfig" >> $GITHUB_ENV
         shell: bash
 
       # ПРИМЕНЕНИЕ ХОТФИКСОВ ДЛЯ СБОРКИ XWAYLAND (libffi fix)
@@ -134,13 +142,15 @@ jobs:
           export ANDROID_NDK_ROOT="${{ env.ANDROID_NDK_HOME }}"
           export ANDROID_SDK_ROOT="${{ env.ANDROID_HOME }}"
           
-          # Очищаем LDFLAGS, чтобы предотвратить линковку библиотек x86_64 хоста
+          # Очищаем LDFLAGS, чтобы предотвратить линковку библиотек x86_64 хоста к Android таргету
           unset LDFLAGS
-          unset PKG_CONFIG_PATH
           
           # Оставляем только пути к архитектурно-независимым заголовочным файлам (Headers)
           export C_INCLUDE_PATH="${{ env.HOST_WAYLAND_INC }}"
           export CPLUS_INCLUDE_PATH="${{ env.HOST_WAYLAND_INC }}"
+          
+          # Сохраняем PKG_CONFIG_PATH только для хост-зависимостей (Meson использует его для native/build задач)
+          export PKG_CONFIG_PATH="/usr/local/share/pkgconfig"
           
           # Включаем подробный режим отладки ninja
           export NINJA_ARGS="-v"
