@@ -22,12 +22,12 @@ jobs:
         with:
           repository: 'wmww/tawc'
           ref: 'main'
-          submodules: false # Отключено для экономии времени
+          fetch-depth: 1 # Скачиваем только последний коммит для экономии времени
+          submodules: recursive # Обязательно для Rust-зависимостей вроде kumquat_virtio
 
       - name: Install Essential Tools
         run: |
           sudo apt-get update
-          # Добавлены минимальные утилиты сборки, необходимые для libxkbcommon
           sudo apt-get install -y --no-install-recommends \
             build-essential git pkg-config curl unzip rsync \
             meson ninja-build bison flex
