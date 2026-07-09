@@ -1,21 +1,24 @@
-name: Build wlroots-android-bridge APK
+name: Build External wlroots-android-bridge APK
 
 on:
   push:
     branches: [ "main", "master" ]
   pull_request:
     branches: [ "main", "master" ]
-  workflow_dispatch: # Кнопка для ручного запуска в интерфейсе GitHub
+  workflow_dispatch: # Кнопка ручного запуска в интерфейсе Actions
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository with submodules
+    - name: Checkout External Repository with Submodules
       uses: actions/checkout@v4
       with:
-        submodules: 'recursive' # Подгружаем TermuxAm и tinywl модули
+        # КРИТИЧЕСКИ ВАЖНО: Указываем репозиторий автора, который хотим собрать
+        repository: 'Xtr126/wlroots-android-bridge'
+        # Скачиваем ветку по умолчанию (main/master) со всеми вложенными зависимостями
+        submodules: 'recursive' 
 
     - name: Set up JDK 17
       uses: actions/setup-java@v4
@@ -29,24 +32,23 @@ jobs:
     - name: Install Android NDK r28
       run: |
         sdkmanager --install "ndk;28.0.12433566"
-        # Указываем пути к NDK для CMake, который зашит в Gradle проекта
+        # Прописываем пути к NDK, чтобы CMake внутри чужого проекта знал, где компилятор
         echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/28.0.12433566" >> $GITHUB_ENV
         echo "ndk.dir=${ANDROID_SDK_ROOT}/ndk/28.0.12433566" > local.properties
 
     - name: Grant execute permission for gradlew
       run: |
-        # Проверяем наличие файла перед выдачей прав (защита от ошибок)
+        # Теперь, когда код скачан правильно, gradlew точно будет на месте
         if [ -f "./gradlew" ]; then
           chmod +x ./gradlew
         else
-          echo "Скрипт gradlew не найден в корне, генерируем заново..."
-          gradle wrapper
-          chmod +x ./gradlew
+          echo "Критическая ошибка: gradlew не найден даже после правильного checkout!"
+          exit 1
         fi
 
     - name: Build Android APK via Gradle
       run: |
-        # Запуск сборки отладочного APK. Gradle сам скомпилирует встроенный CMake-код.
+        # Запускаем сборку оригинального проекта
         ./gradlew assembleDebug --stacktrace
 
     - name: Upload Compiled APK to Artifacts
