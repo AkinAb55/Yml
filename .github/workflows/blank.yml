@@ -101,14 +101,15 @@ jobs:
                 $JavaContent = $JavaContent -replace $UnregPattern, $SafeUnregBlock
             }
 
-            # Пишем код логгера без опасных кавычек
+            # Код логгера
             $LoggerCode = "`n Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() { @Override public void uncaughtException(Thread t, Throwable e) { try { java.io.File logFile = new java.io.File(getExternalFilesDir(null), new String(new char[]{ 'w','a','y','l','a','n','d','i','e','_','c','r','a','s','h','.','t','x','t' })); java.io.PrintWriter pw = new java.io.PrintWriter(new java.io.FileOutputStream(logFile, true)); pw.println(new String(new char[]{ 'C','R','A','S','H' })); pw.println(android.os.Build.VERSION.SDK_INT); e.printStackTrace(pw); pw.flush(); pw.close(); } catch (Exception ex) {} System.exit(1); } }); try { java.io.File sysLog = new java.io.File(getExternalFilesDir(null), new String(new char[]{ 'w','a','y','l','a','n','d','i','e','_','s','y','s','_','e','r','r','.','t','x','t' })); System.setErr(new java.io.PrintStream(new java.io.FileOutputStream(sysLog, true))); } catch (Exception ex) {}`n"
-
-            # Вставляем код логгера сразу после super.onCreate
             $JavaContent = $JavaContent -replace 'super\.onCreate\(savedInstanceState\);', "super.onCreate(savedInstanceState);$LoggerCode"
             
+            # ФИКС: Вырезаем вызов несовместимого метода .setHidden()
+            $JavaContent = $JavaContent -replace '\.setHidden\([^)]+\)', ''
+
             Set-Content -Path $JavaPath -Value $JavaContent -Encoding UTF8
-            Write-Host "Логгер успешно интегрирован в исходный код!"
+            Write-Host "Логгер успешно интегрирован и код очищен от .setHidden()!"
         }
 
     # 5. Запускаем оригинальный PowerShell скрипт автора
