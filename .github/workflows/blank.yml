@@ -51,6 +51,19 @@ jobs:
           curl -sSL -o "${NDK_EGL_DIR}/egl.h" https://registry.khronos.org/EGL/api/EGL/egl.h
           curl -sSL -o "${NDK_EGL_DIR}/eglext.h" https://registry.khronos.org/EGL/api/EGL/eglext.h
 
+      - name: Patch wlroots Meson Check
+        run: |
+          # Переходим в подпроект wlroots и жестко прописываем версию EGL в скрипте сборки,
+          # чтобы обойти сломавшуюся проверку компилятора NDK.
+          MESON_FILE="compositor/native/subprojects/wlroots/render/meson.build"
+          if [ -f "$MESON_FILE" ]; then
+            echo "Patching wlroots meson.build to bypass EGL_EGLEXT_VERSION check..."
+            # Заменяем динамическое получение версии на фиксированное число
+            sed -i "s/cc.get_define('EGL_EGLEXT_VERSION',/ '20181204' #/g" "$MESON_FILE"
+          else
+            echo "Warning: wlroots meson.build not found at expected path!"
+          fi
+
       - name: Grant Execute Permission for Gradle
         run: chmod +x gradlew
 
