@@ -53,15 +53,20 @@ jobs:
 
       - name: Patch wlroots Meson Check
         run: |
-          # Переходим в подпроект wlroots и жестко прописываем версию EGL в скрипте сборки,
-          # чтобы обойти сломавшуюся проверку компилятора NDK.
           MESON_FILE="compositor/native/subprojects/wlroots/render/meson.build"
           if [ -f "$MESON_FILE" ]; then
-            echo "Patching wlroots meson.build to bypass EGL_EGLEXT_VERSION check..."
-            # Заменяем динамическое получение версии на фиксированное число
-            sed -i "s/cc.get_define('EGL_EGLEXT_VERSION',/ '20181204' #/g" "$MESON_FILE"
+            echo "Applying aggressive patch to wlroots meson.build..."
+            
+            # Находим строку, где упоминается EGL_EGLEXT_VERSION, 
+            # и принудительно вставляем переопределение переменной прямо под ней.
+            # Это сработает независимо от форматирования функции cc.get_define.
+            sed -i "/EGL_EGLEXT_VERSION/a \ \ egl_ext_version = '20181204'" "$MESON_FILE"
+            
+            echo "--- Modified lines in meson.build ---"
+            grep -n -C 3 "egl_ext_version" "$MESON_FILE" || true
           else
-            echo "Warning: wlroots meson.build not found at expected path!"
+            echo "Error: wlroots meson.build not found!"
+            exit 1
           fi
 
       - name: Grant Execute Permission for Gradle
