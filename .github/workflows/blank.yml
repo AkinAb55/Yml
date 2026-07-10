@@ -1,14 +1,12 @@
 name: Build Wldroid Test App APK
-
 on:
   push:
     branches: [ main, master ]
-  workflow_dispatch: 
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Original Wldroid Repository
         uses: actions/checkout@v4
@@ -26,21 +24,8 @@ jobs:
       - name: Install Native Build Tools (Meson & Ninja)
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build pkg-config
+          sudo apt-get install -y ninja-build pkg-configwayland-protocols
           pip install meson
-
-      - name: Install Graphics Dependencies (Fixes EGL headers too old)
-        run: |
-          sudo apt-get update
-          # Устанавливаем заголовочные файлы для Wayland, EGL, GLES и DRM
-          sudo apt-get install -y \
-            libwayland-dev \
-            libegl1-mesa-dev \
-            libgles2-mesa-dev \
-            libgbm-dev \
-            libdrm-dev \
-            libxkbcommon-dev \
-            wayland-protocols
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -55,6 +40,16 @@ jobs:
         run: |
           sdkmanager --install "ndk;28.0.12433566"
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/28.0.12433566" >> $GITHUB_ENV
+
+      - name: Fix Android NDK EGL Headers
+        run: |
+          # Путь к заголовочным файлам Khronos внутри установленного NDK
+          NDK_EGL_DIR="${ANDROID_SDK_ROOT}/ndk/28.0.12433566/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/EGL"
+          
+          # Скачиваем самые свежие заголовочные файлы напрямую от Khronos Group
+          echo "Updating EGL headers in NDK..."
+          curl -sSL -o "${NDK_EGL_DIR}/egl.h" https://registry.khronos.org/EGL/api/EGL/egl.h
+          curl -sSL -o "${NDK_EGL_DIR}/eglext.h" https://registry.khronos.org/EGL/api/EGL/eglext.h
 
       - name: Grant Execute Permission for Gradle
         run: chmod +x gradlew
