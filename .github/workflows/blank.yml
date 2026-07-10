@@ -30,8 +30,8 @@ jobs:
     - name: Setup Android SDK & NDK
       uses: android-actions/setup-android@v3
 
-    # 4. Адаптируем окружение SDK и комплексно лечим баги заголовка NDK r27
-    - name: Fix SDK Paths & Patch NDK Header Bug
+    # 4. Адаптируем окружение SDK, лечим заголовки и снижаем min-sdk до Android 12
+    - name: Fix SDK Paths, Patch Header & Downgrade to Android 12
       shell: pwsh
       run: |
         # 1. Исправляем пути SDK через Junction ссылки для версии 36.1.0
@@ -53,12 +53,11 @@ jobs:
             New-Item -ItemType Junction -Path $FakePlatformPath -Value $ActualPlatformDir.FullName
         }
 
-        # 2. КОМПЛЕКСНОЕ ЛЕЧЕНИЕ SURFACE_CONTROL.H
+        # 2. КОМПЛЕКСНОЕ ЛЕЧЕНИЕ SURFACE_CONTROL.H (баги Google)
         $TargetHeader = Get-ChildItem -Path "$env:ANDROID_HOME\ndk" -Recurse -Filter "surface_control.h" | Select-Object -First 1
         
         if ($TargetHeader) {
             Write-Host "Найдено оригинальный заголовочный файл NDK по пути: $($TargetHeader.FullName)"
-            
             $Content = Get-Content $TargetHeader.FullName -Raw
             
             # Исправляем ВСЕ ошибочные C++ ссылки (const ARect& ...) на Си-указатели (const ARect* ...)
@@ -67,21 +66,29 @@ jobs:
             $Content = $Content -replace 'const ARect&\s+source', 'const ARect* source'
             $Content = $Content -replace 'const ARect&\s+destination', 'const ARect* destination'
             
-            # Добавляем старый макрос/typedef для OnBufferRelease, если его вырезали в r27
+            # Добавляем старый макрос/typedef для OnBufferRelease
             if ($Content -notmatch 'ASurfaceTransaction_OnBufferRelease') {
                 Write-Host "Добавляем обратную совместимость для ASurfaceTransaction_OnBufferRelease..."
-                
-                # Записываем сигнатуру в одну строку с переводами строк `n, чтобы не ломать YAML
                 $InjectTypedef = "`n// Хак для совместимости со старым кодом автора`ntypedef void (*ASurfaceTransaction_OnBufferRelease)(void* context, int fence);`n"
-                
-                # Вставляем костыль в самое начало файла после директивы #ifndef
                 $Content = $Content -replace '(#ifndef ANDROID_SURFACE_CONTROL_H)', "`$1`r`n$InjectTypedef"
             }
-
             Set-Content -Path $TargetHeader.FullName -Value $Content -Encoding UTF8
-            Write-Host "Файл surface_control.h успешно модифицирован и вылечен!"
-        } else {
-            Write-Error "Не удалось найти файл surface_control.h для модификации!"
+        }
+
+        # 3. СНИЖАЕМ МИНИМАЛЬНУЮ ВЕРСИЮ ANDROID ДО 12 (API 31)
+        $AuthScriptPath = "android-app\tools\build-apk.ps1"
+        if (Test-Path $AuthScriptPath) {
+            Write-Host "Патчим скрипт автора для поддержки Android 12 (API 31)..."
+            $ScriptContent = Get-Content $AuthScriptPath -Raw
+            
+            # Меняем аргументы запуска AAPT2 (--min-sdk-version 33 на 31)
+            $ScriptContent = $ScriptContent -replace '--min-sdk-version 33', '--min-sdk-version 31'
+            
+            # Меняем аргументы запуска D8 (--min-api 33 на 31)
+            $ScriptContent = $ScriptContent -replace '--min-api 33', '--min-api 31'
+            
+            Set-Content -Path $AuthScriptPath -Value $ScriptContent -Encoding UTF8
+            Write-Host "Скрипт автора успешно адаптирован под Android 12!"
         }
 
     # 5. Запускаем оригинальный PowerShell скрипт автора
