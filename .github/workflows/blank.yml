@@ -4,82 +4,67 @@ on:
   workflow_dispatch:
     inputs:
       branch:
-        description: 'Ветка для сборки (branch или tag)'
+        description: 'Ветка или тег для сборки'
         required: true
         default: 'main'
-      build_type:
-        description: 'Тип сборки (Release / Debug)'
-        required: true
-        default: 'Release'
 
 jobs:
-  build:
+  build-assets:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. Клонируем целевой репозиторий AstroCODEsky напрямую, без форка
+    # 1. Клонируем репозиторий AstroCODEsky напрямую
     - name: Checkout Target Repository
       uses: actions/checkout@v4
       with:
         repository: 'AstroCODEsky/WayLandIE'
         ref: ${{ github.event.inputs.branch }}
-        submodules: 'recursive' # На случай, если внутри есть submodules (например, wayland-protocols)
+        submodules: 'recursive'
 
-    # 2. Настраиваем Android NDK (необходимо для компиляции под Android / bionic / Termux архитектуру)
-    - name: Setup Android NDK
+    # 2. Настраиваем Java (необходима для работы Gradle и сборки Android-приложений)
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        cache: 'gradle'
+
+    # 3. Настраиваем Android SDK и NDK (так как проект использует SurfaceControl и Vulkan)
+    - name: Setup Android SDK & NDK
       uses: android-actions/setup-android@v3
       with:
-        ndk-version: '25.2.9519653' # Стабильная версия NDK, часто используемая в Termux-компиляциях
+        ndk-version: '25.2.9519653' # Стандартная стабильная версия NDK
 
-    # 3. Устанавливаем необходимые зависимости сборки (Wayland-scanner, Meson, Ninja, CMake)
-    - name: Install Build Dependencies
+    # 4. Собираем Android APK через Gradle (эквивалент build-apk.ps1 для Linux)
+    - name: Build Android App (APK)
       run: |
-        sudo apt-get update
-        sudo apt-get install -y cmake ninja-build meson wayland-protocols libwayland-dev pkg-config
+        cd android-app
+        # Делаем градл-скрипт исполняемым в Linux-окружении
+        chmod +x gradlew
+        # Запускаем сборку релизного APK
+        ./gradlew assembleRelease --no-daemon
 
-    # 4. Внутренняя логика сборки (адаптируйте шаги под архитектуру проекта)
-    # Проект может использовать как классический CMake, так и скрипты для сборки APK/бинарников.
-    - name: Compile WayLandIE
+    # 5. Собираем все артефакты в единую структуру для отправки на телефон
+    - name: Prepare Release Bundle
       run: |
-        # Проверяем структуру проекта и выбираем стратегию сборки
-        if [ -f "CMakeLists.txt" ]; then
-          echo "Обнаружен CMakeLists.txt. Запуск CMake сборки для Android (arm64-v8a)..."
-          mkdir build && cd build
-          cmake -G Ninja \
-            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake \
-            -DANDROID_ABI=arm64-v8a \
-            -DANDROID_PLATFORM=android-24 \
-            -DCMAKE_BUILD_TYPE=${{ github.event.inputs.build_type }} ..
-          ninja
-        elif [ -f "build.sh" ]; then
-          echo "Обнаружен кастомный скрипт сборки build.sh. Запуск..."
-          chmod +x build.sh
-          ./build.sh
-        elif [ -f "gradlew" ]; then
-          echo "Обнаружен Android проект (Gradle). Сборка APK..."
-          chmod +x gradlew
-          ./gradlew assembleRelease
-        else
-          echo "Специфичный файл сборки не найден. Пробуем стандартный ndk-build или Meson..."
-          # Если проект использует meson (стандарт для Wayland)
-          if [ -f "meson.build" ]; then
-            meson setup build --cross-file=cross-android.txt # Если присутствует кросс-файл
-            ninja -C build
-          fi
-        fi
+        mkdir -p ./release-dist/android-app
+        mkdir -p ./release-dist/linux-runtime
+        mkdir -p ./release-dist/scripts
+        
+        # Копируем собранный APK (ищем его в стандартных путях сборки Gradle)
+        find android-app/ -name "*.apk" -exec cp {} ./release-dist/android-app/ \;
+        
+        # Копируем рантайм и скрипты (они понадобятся на стороне телефона/Termux)
+        cp -r linux-runtime/* ./release-dist/linux-runtime/
+        cp -r scripts/* ./release-dist/scripts/
+        cp README.md ./release-dist/ || true
+        
+        echo "=== Содержимое готового релиза ==="
+        ls -R ./release-dist/
 
-    # 5. Поиск и сбор собранных артефактов (бинарники, библиотеки .so или .apk)
-    - name: Prepare Artifacts
-      run: |
-        mkdir ./output
-        # Ищем любые скомпилированные бинарники, .apk файлы или разделяемые библиотеки .so
-        find . -type f \( -name "*.apk" -o -name "waylandie" -o -name "*.so" \) ! -path "*/.git/*" ! -path "./output/*" -exec cp {} ./output/ \;
-        echo "Сборка завершена. Найденные файлы:"
-        ls -la ./output/
-
-    # 6. Загрузка готовых файлов в интерфейс GitHub Actions
-    - name: Upload Artifacts
+    # 6. Загружаем готовый архив в артефакты GitHub Actions
+    - name: Upload Complete WayLandIE Bundle
       uses: actions/upload-artifact@v4
       with:
-        name: WayLandIE-${{ github.event.inputs.build_type }}-arm64
-        path: ./output/
+        name: WayLandIE-Full-Bundle
+        path: ./release-dist/
