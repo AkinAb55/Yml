@@ -26,11 +26,11 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    # 3. Настраиваем Android SDK и NDK (автоматически ставит актуальную версию)
+    # 3. Настраиваем Android SDK и NDK (автоматически ставит актуальную версию r27)
     - name: Setup Android SDK & NDK
       uses: android-actions/setup-android@v3
 
-    # 4. Адаптируем окружение SDK и лечим баг заголовка NDK r27
+    # 4. Адаптируем окружение SDK и исправляем точечный баг в заголовке NDK r27
     - name: Fix SDK Paths & Patch NDK Header Bug
       shell: pwsh
       run: |
@@ -53,23 +53,25 @@ jobs:
             New-Item -ItemType Junction -Path $FakePlatformPath -Value $ActualPlatformDir.FullName
         }
 
-        # 2. ЛЕЧИМ БАГ СИ-СИНТАКСИСА В NDK
-        # Находим проблемный заголовок во всем дереве NDK
+        # 2. ТОЧЕЧНО ИСПРАВЛЯЕМ ОПЕЧАТКУ GOOGLE В NDK r27
+        # Находим родной заголовок во всем дереве NDK
         $TargetHeader = Get-ChildItem -Path "$env:ANDROID_HOME\ndk" -Recurse -Filter "surface_control.h" | Select-Object -First 1
         
         if ($TargetHeader) {
-            Write-Host "Найдено заголовочный файл NDK по пути: $($TargetHeader.FullName)"
+            Write-Host "Найдено оригинальный заголовочный файл NDK по пути: $($TargetHeader.FullName)"
             
-            # Скачиваем чистый, рабочий заголовок без C++ ссылок (&) напрямую из официального репозитория Android AOSP
-            $CleanHeaderUrl = "https://android.googlesource.com/platform/frameworks/native/+/refs/heads/main/include/android/surface_control.h?format=TEXT"
+            # Читаем содержимое родного файла
+            $Content = Get-Content $TargetHeader.FullName -Raw
             
-            Write-Host "Заменяем проблемный файл на чистую Си-версию..."
-            $Base64Content = Invoke-RestMethod -Uri $CleanHeaderUrl
-            $CleanContent = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($Base64Content))
-            
-            # Перезаписываем заголовок в NDK
-            Set-Content -Path $TargetHeader.FullName -Value $CleanContent -Encoding UTF8
-            Write-Host "Файл surface_control.h успешно вылечен!"
+            # Меняем ошибочную C++ ссылку 'const ARect& crop' на стандартный Си-указатель 'const ARect* crop'
+            if ($Content -match 'const ARect& crop') {
+                Write-Host "Обнаружен баг Google. Заменяем 'const ARect& crop' на 'const ARect* crop'..."
+                $Content = $Content -replace 'const ARect& crop', 'const ARect* crop'
+                Set-Content -Path $TargetHeader.FullName -Value $Content -Encoding UTF8
+                Write-Host "Файл surface_control.h успешно исправлен!"
+            } else {
+                Write-Host "Баг в файле не обнаружен или уже исправлен."
+            }
         } else {
             Write-Error "Не удалось найти файл surface_control.h для модификации!"
         }
