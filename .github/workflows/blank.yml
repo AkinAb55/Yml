@@ -26,42 +26,53 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    # 3. Настраиваем Android SDK и фиксируем рабочую версию NDK (r26b)
+    # 3. Настраиваем Android SDK и устанавливаем стабильный NDK r26
     - name: Setup Android SDK & NDK
       uses: android-actions/setup-android@v3
       with:
-        ndk-version: '26.1.10909125' # Фиксируем стабильную r26, где нет бага r27
+        ndk-version: '26.1.10909125'
 
-    # 4. Адаптируем окружение SDK (симлинки для build-tools)
-    - name: Fix Android SDK Paths
+    # 4. Адаптируем окружение и патчим скрипт автора для принудительного использования r26
+    - name: Fix SDK Paths & Force NDK Version
       shell: pwsh
       run: |
+        # 1. Исправляем пути SDK через Junction ссылки
         $ActualBuildToolsDir = Get-ChildItem -Path "$env:ANDROID_HOME\build-tools" -Directory |
                                 Sort-Object Name -Descending |
                                 Select-Object -First 1
-                
         $ActualPlatformDir = Get-ChildItem -Path "$env:ANDROID_HOME\platforms" -Directory |
                               Sort-Object Name -Descending |
                               Select-Object -First 1
-
         $FakeBuildToolsPath = Join-Path "$env:ANDROID_HOME\build-tools" "36.1.0"
         if (-not (Test-Path $FakeBuildToolsPath)) {
             New-Item -ItemType Junction -Path $FakeBuildToolsPath -Value $ActualBuildToolsDir.FullName
         }
-
         $FakePlatformPath = Join-Path "$env:ANDROID_HOME\platforms" "android-36"
         if (-not (Test-Path $FakePlatformPath)) {
             New-Item -ItemType Junction -Path $FakePlatformPath -Value $ActualPlatformDir.FullName
         }
 
-    # 5. Запускаем оригинальный PowerShell скрипт автора (теперь с чистым C-компилятором)
+        # 2. ПАТЧИМ BUILD-APK.PS1 НА ХОДУ
+        # Мы заменяем логику автовыбора NDK, жестко указав путь к нашей установленной версии r26
+        $ScriptPath = "android-app\tools\build-apk.ps1"
+        $TargetNdkPath = Join-Path $env:ANDROID_HOME "ndk\26.1.10909125"
+        
+        Write-Host "Патчим $ScriptPath для принудительного использования NDK: $TargetNdkPath"
+        
+        $ScriptContent = Get-Content $ScriptPath -Raw
+        # Внедряем жесткую установку $NdkRoot в самое начало логики после параметров
+        $InjectCode = "`$NdkRoot = '$TargetNdkPath'"
+        $ScriptContent = $ScriptContent -replace '(\$RequiredNdkClangRelativePath = .*)', "`$1`r`n$InjectCode"
+        
+        Set-Content -Path $ScriptPath -Value $ScriptContent -Encoding UTF8
+
+    # 5. Запускаем оригинальный PowerShell скрипт автора (теперь он послушно возьмет r26)
     - name: Build APK via Author's PowerShell Script
       shell: pwsh
       run: |
         cd android-app
         .\tools\build-apk.ps1 `
           -RequireNative `
-          -NdkRoot "$env:ANDROID_NDK_ROOT" `
           -SdkRoot "$env:ANDROID_HOME"
 
     # 6. Собираем финальный бандл
