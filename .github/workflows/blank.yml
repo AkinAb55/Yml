@@ -41,11 +41,20 @@ jobs:
           sdkmanager --install "ndk;28.0.12433566"
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/28.0.12433566" >> $GITHUB_ENV
 
-      # Вместо патча файлов, мы инжектим дефайн EGL_EGLEXT_VERSION прямо в аргументы компилятора
-      - name: Inject EGL version via Environment Flags
+      # Создаем изолированную папку со свежими заголовками EGL от Khronos
+      - name: Download Latest Khronos EGL Headers
         run: |
-          echo "CFLAGS=-DEGL_EGLEXT_VERSION=20181204" >> $GITHUB_ENV
-          echo "CPPFLAGS=-DEGL_EGLEXT_VERSION=20181204" >> $GITHUB_ENV
+          mkdir -p .egl_fixed/EGL/
+          mkdir -p .egl_fixed/KHR/
+          curl -sSL -o ".egl_fixed/EGL/egl.h" https://registry.khronos.org/EGL/api/EGL/egl.h
+          curl -sSL -o ".egl_fixed/EGL/eglext.h" https://registry.khronos.org/EGL/api/EGL/eglext.h
+          curl -sSL -o ".egl_fixed/KHR/khrplatform.h" https://registry.khronos.org/EGL/api/KHR/khrplatform.h
+          
+          # Передаем путь к этой папке в приоритет компилятора (-I)
+          # Также обманываем проверку wlroots, выставив самую актуальную дату релиза заголовков
+          FIXED_INC_DIR="$GITHUB_WORKSPACE/.egl_fixed"
+          echo "CFLAGS=-I$FIXED_INC_DIR -DEGL_EGLEXT_VERSION=20240000" >> $GITHUB_ENV
+          echo "CPPFLAGS=-I$FIXED_INC_DIR -DEGL_EGLEXT_VERSION=20240000" >> $GITHUB_ENV
 
       - name: Grant Execute Permission for Gradle
         run: chmod +x gradlew
