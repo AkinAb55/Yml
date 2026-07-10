@@ -41,33 +41,11 @@ jobs:
           sdkmanager --install "ndk;28.0.12433566"
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/28.0.12433566" >> $GITHUB_ENV
 
-      - name: Fix Android NDK EGL Headers
+      # Вместо патча файлов, мы инжектим дефайн EGL_EGLEXT_VERSION прямо в аргументы компилятора
+      - name: Inject EGL version via Environment Flags
         run: |
-          # Путь к заголовочным файлам Khronos внутри установленного NDK
-          NDK_EGL_DIR="${ANDROID_SDK_ROOT}/ndk/28.0.12433566/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/EGL"
-          
-          # Скачиваем самые свежие заголовочные файлы напрямую от Khronos Group
-          echo "Updating EGL headers in NDK..."
-          curl -sSL -o "${NDK_EGL_DIR}/egl.h" https://registry.khronos.org/EGL/api/EGL/egl.h
-          curl -sSL -o "${NDK_EGL_DIR}/eglext.h" https://registry.khronos.org/EGL/api/EGL/eglext.h
-
-      - name: Patch wlroots Meson Check
-        run: |
-          MESON_FILE="compositor/native/subprojects/wlroots/render/meson.build"
-          if [ -f "$MESON_FILE" ]; then
-            echo "Applying aggressive patch to wlroots meson.build..."
-            
-            # Находим строку, где упоминается EGL_EGLEXT_VERSION, 
-            # и принудительно вставляем переопределение переменной прямо под ней.
-            # Это сработает независимо от форматирования функции cc.get_define.
-            sed -i "/EGL_EGLEXT_VERSION/a \ \ egl_ext_version = '20181204'" "$MESON_FILE"
-            
-            echo "--- Modified lines in meson.build ---"
-            grep -n -C 3 "egl_ext_version" "$MESON_FILE" || true
-          else
-            echo "Error: wlroots meson.build not found!"
-            exit 1
-          fi
+          echo "CFLAGS=-DEGL_EGLEXT_VERSION=20181204" >> $GITHUB_ENV
+          echo "CPPFLAGS=-DEGL_EGLEXT_VERSION=20181204" >> $GITHUB_ENV
 
       - name: Grant Execute Permission for Gradle
         run: chmod +x gradlew
