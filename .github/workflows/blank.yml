@@ -96,27 +96,31 @@ jobs:
             Set-Content -Path $ManifestPath -Value $ManifestContent -Encoding UTF8
         }
 
-        # 4. ИСПРАВЛЕННЫЙ ПАТЧ ДЛЯ MAINACTION.JAVA (Урезание OnBackInvoked API)
+        # 4. КОМПЛЕКСНЫЙ ПАТЧ ДЛЯ MAINACTION.JAVA (Безопасное урезание OnBackInvoked API)
         $JavaPath = "android-app\src\io\waylandie\display\MainActivity.java"
         if (Test-Path $JavaPath) {
             Write-Host "Лечим Java код MainActivity от несовместимых API Android 13..."
             $JavaContent = Get-Content $JavaPath -Raw
             
-            # 1. Заменяем тип callback-переменной на базовый Object, чтобы класс загружался на Android 12
+            # Заменяем тип callback-переменной на базовый Object
             $JavaContent = $JavaContent -replace 'private OnBackInvokedCallback bridgeBackCallback;', 'private Object bridgeBackCallback;'
             
-            # 2. Оборачиваем весь кусок кода с вызовом OnBackInvokedDispatcher в runtime-проверку версии Android
-            $Pattern = '(?s)getOnBackInvokedDispatcher\(\)\s*\.registerOnBackInvokedCallback\s*\(\s*OnBackInvokedDispatcher\.PRIORITY_DEFAULT,\s*bridgeBackCallback\s*\);'
-            if ($JavaContent -match $Pattern) {
-                Write-Host "Найден проблемный блок регистрации колбэка. Оборачиваем в проверку SDK..."
-                $SafeBlock = "if (android.os.Build.VERSION.SDK_INT >= 33) { getOnBackInvokedDispatcher().registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, (OnBackInvokedCallback)bridgeBackCallback); }"
-                $JavaContent = $JavaContent -replace $Pattern, $SafeBlock
+            # Оборачиваем блок РЕГИСТРАЦИИ колбэка в проверку SDK
+            $RegPattern = '(?s)getOnBackInvokedDispatcher\(\)\s*\.registerOnBackInvokedCallback\s*\(\s*OnBackInvokedDispatcher\.PRIORITY_DEFAULT,\s*bridgeBackCallback\s*\);'
+            if ($JavaContent -match $RegPattern) {
+                Write-Host "Найден блок РЕГИСТРАЦИИ колбэка. Оборачиваем в проверку SDK..."
+                $SafeRegBlock = "if (android.os.Build.VERSION.SDK_INT >= 33) { getOnBackInvokedDispatcher().registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, (OnBackInvokedCallback)bridgeBackCallback); }"
+                $JavaContent = $JavaContent -replace $RegPattern, $SafeRegBlock
+            }
+            
+            # Оборачиваем блок РАЗРЕГИСТРАЦИИ (unregister) колбэка в проверку SDK
+            $UnregPattern = '(?s)getOnBackInvokedDispatcher\(\)\s*\.unregisterOnBackInvokedCallback\s*\(\s*bridgeBackCallback\s*\);'
+            if ($JavaContent -match $UnregPattern) {
+                Write-Host "Найден блок РАЗРЕГИСТРАЦИИ колбэка. Оборачиваем в проверку SDK..."
+                $SafeUnregBlock = "if (android.os.Build.VERSION.SDK_INT >= 33) { getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback((OnBackInvokedCallback)bridgeBackCallback); }"
+                $JavaContent = $JavaContent -replace $UnregPattern, $SafeUnregBlock
             } else {
-                # Запасной вариант на случай неожиданных пробелов
-                Write-Host "Альтернативный метод: комментируем строки регистрации..."
-                $JavaContent = $JavaContent -replace 'getOnBackInvokedDispatcher\(\)', '// getOnBackInvokedDispatcher()'
-                $JavaContent = $JavaContent -replace 'OnBackInvokedDispatcher\.PRIORITY_DEFAULT,', '// OnBackInvokedDispatcher.PRIORITY_DEFAULT,'
-                $JavaContent = $JavaContent -replace 'bridgeBackCallback\);', '// bridgeBackCallback);'
+                $JavaContent = $JavaContent -replace 'getOnBackInvokedDispatcher\(\)\.unregisterOnBackInvokedCallback\(bridgeBackCallback\);', 'if (android.os.Build.VERSION.SDK_INT >= 33) { getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback((OnBackInvokedCallback)bridgeBackCallback); }'
             }
             
             Set-Content -Path $JavaPath -Value $JavaContent -Encoding UTF8
