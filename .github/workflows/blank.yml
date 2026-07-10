@@ -26,53 +26,62 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    # 3. Настраиваем Android SDK и устанавливаем стабильный NDK r26
+    # 3. Настраиваем Android SDK и NDK (автоматически ставит актуальную версию)
     - name: Setup Android SDK & NDK
       uses: android-actions/setup-android@v3
-      with:
-        ndk-version: '26.1.10909125'
 
-    # 4. Адаптируем окружение и патчим скрипт автора для принудительного использования r26
-    - name: Fix SDK Paths & Force NDK Version
+    # 4. Адаптируем окружение SDK и лечим баг заголовка NDK r27
+    - name: Fix SDK Paths & Patch NDK Header Bug
       shell: pwsh
       run: |
-        # 1. Исправляем пути SDK через Junction ссылки
+        # 1. Исправляем пути SDK через Junction ссылки для версии 36.1.0
         $ActualBuildToolsDir = Get-ChildItem -Path "$env:ANDROID_HOME\build-tools" -Directory |
                                 Sort-Object Name -Descending |
                                 Select-Object -First 1
+                
         $ActualPlatformDir = Get-ChildItem -Path "$env:ANDROID_HOME\platforms" -Directory |
                               Sort-Object Name -Descending |
                               Select-Object -First 1
+        
         $FakeBuildToolsPath = Join-Path "$env:ANDROID_HOME\build-tools" "36.1.0"
         if (-not (Test-Path $FakeBuildToolsPath)) {
             New-Item -ItemType Junction -Path $FakeBuildToolsPath -Value $ActualBuildToolsDir.FullName
         }
+        
         $FakePlatformPath = Join-Path "$env:ANDROID_HOME\platforms" "android-36"
         if (-not (Test-Path $FakePlatformPath)) {
             New-Item -ItemType Junction -Path $FakePlatformPath -Value $ActualPlatformDir.FullName
         }
 
-        # 2. ПАТЧИМ BUILD-APK.PS1 НА ХОДУ
-        # Мы заменяем логику автовыбора NDK, жестко указав путь к нашей установленной версии r26
-        $ScriptPath = "android-app\tools\build-apk.ps1"
-        $TargetNdkPath = Join-Path $env:ANDROID_HOME "ndk\26.1.10909125"
+        # 2. ЛЕЧИМ БАГ СИ-СИНТАКСИСА В NDK
+        # Находим проблемный заголовок во всем дереве NDK
+        $TargetHeader = Get-ChildItem -Path "$env:ANDROID_HOME\ndk" -Recurse -Filter "surface_control.h" | Select-Object -First 1
         
-        Write-Host "Патчим $ScriptPath для принудительного использования NDK: $TargetNdkPath"
-        
-        $ScriptContent = Get-Content $ScriptPath -Raw
-        # Внедряем жесткую установку $NdkRoot в самое начало логики после параметров
-        $InjectCode = "`$NdkRoot = '$TargetNdkPath'"
-        $ScriptContent = $ScriptContent -replace '(\$RequiredNdkClangRelativePath = .*)', "`$1`r`n$InjectCode"
-        
-        Set-Content -Path $ScriptPath -Value $ScriptContent -Encoding UTF8
+        if ($TargetHeader) {
+            Write-Host "Найдено заголовочный файл NDK по пути: $($TargetHeader.FullName)"
+            
+            # Скачиваем чистый, рабочий заголовок без C++ ссылок (&) напрямую из официального репозитория Android AOSP
+            $CleanHeaderUrl = "https://android.googlesource.com/platform/frameworks/native/+/refs/heads/main/include/android/surface_control.h?format=TEXT"
+            
+            Write-Host "Заменяем проблемный файл на чистую Си-версию..."
+            $Base64Content = Invoke-RestMethod -Uri $CleanHeaderUrl
+            $CleanContent = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($Base64Content))
+            
+            # Перезаписываем заголовок в NDK
+            Set-Content -Path $TargetHeader.FullName -Value $CleanContent -Encoding UTF8
+            Write-Host "Файл surface_control.h успешно вылечен!"
+        } else {
+            Write-Error "Не удалось найти файл surface_control.h для модификации!"
+        }
 
-    # 5. Запускаем оригинальный PowerShell скрипт автора (теперь он послушно возьмет r26)
+    # 5. Запускаем оригинальный PowerShell скрипт автора
     - name: Build APK via Author's PowerShell Script
       shell: pwsh
       run: |
         cd android-app
         .\tools\build-apk.ps1 `
           -RequireNative `
+          -NdkRoot "$env:ANDROID_NDK_ROOT" `
           -SdkRoot "$env:ANDROID_HOME"
 
     # 6. Собираем финальный бандл
