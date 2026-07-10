@@ -30,7 +30,7 @@ jobs:
     - name: Setup Android SDK & NDK
       uses: android-actions/setup-android@v3
 
-    # 4. Адаптируем окружение SDK и исправляем точечный баг в заголовке NDK r27
+    # 4. Адаптируем окружение SDK и комплексно лечим баги заголовка NDK r27
     - name: Fix SDK Paths & Patch NDK Header Bug
       shell: pwsh
       run: |
@@ -53,25 +53,33 @@ jobs:
             New-Item -ItemType Junction -Path $FakePlatformPath -Value $ActualPlatformDir.FullName
         }
 
-        # 2. ТОЧЕЧНО ИСПРАВЛЯЕМ ОПЕЧАТКУ GOOGLE В NDK r27
-        # Находим родной заголовок во всем дереве NDK
+        # 2. КОМПЛЕКСНОЕ ЛЕЧЕНИЕ SURFACE_CONTROL.H
         $TargetHeader = Get-ChildItem -Path "$env:ANDROID_HOME\ndk" -Recurse -Filter "surface_control.h" | Select-Object -First 1
         
         if ($TargetHeader) {
             Write-Host "Найдено оригинальный заголовочный файл NDK по пути: $($TargetHeader.FullName)"
             
-            # Читаем содержимое родного файла
             $Content = Get-Content $TargetHeader.FullName -Raw
             
-            # Меняем ошибочную C++ ссылку 'const ARect& crop' на стандартный Си-указатель 'const ARect* crop'
-            if ($Content -match 'const ARect& crop') {
-                Write-Host "Обнаружен баг Google. Заменяем 'const ARect& crop' на 'const ARect* crop'..."
-                $Content = $Content -replace 'const ARect& crop', 'const ARect* crop'
-                Set-Content -Path $TargetHeader.FullName -Value $Content -Encoding UTF8
-                Write-Host "Файл surface_control.h успешно исправлен!"
-            } else {
-                Write-Host "Баг в файле не обнаружен или уже исправлен."
+            # Исправляем ВСЕ ошибочные C++ ссылки (const ARect& ...) на Си-указатели (const ARect* ...)
+            Write-Host "Патчим опечатки Google в объявлениях ARect..."
+            $Content = $Content -replace 'const ARect&\s+crop', 'const ARect* crop'
+            $Content = $Content -replace 'const ARect&\s+source', 'const ARect* source'
+            $Content = $Content -replace 'const ARect&\s+destination', 'const ARect* destination'
+            
+            # Добавляем старый макрос/typedef для OnBufferRelease, если его вырезали в r27
+            if ($Content -notmatch 'ASurfaceTransaction_OnBufferRelease') {
+                Write-Host "Добавляем обратную совместимость для ASurfaceTransaction_OnBufferRelease..."
+                $InjectTypedef = @"
+// Хак для совместимости со старым кодом автора
+typedef void (*ASurfaceTransaction_OnBufferRelease)(void* context, int fence);
+"@
+                # Вставляем костыль в самое начало файла после директивы #ifndef
+                $Content = $Content -replace '(#ifndef ANDROID_SURFACE_CONTROL_H)', "`$1`r`n$InjectTypedef"
             }
+
+            Set-Content -Path $TargetHeader.FullName -Value $Content -Encoding UTF8
+            Write-Host "Файл surface_control.h успешно модифицирован и вылечен!"
         } else {
             Write-Error "Не удалось найти файл surface_control.h для модификации!"
         }
