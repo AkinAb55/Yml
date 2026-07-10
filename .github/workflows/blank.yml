@@ -41,23 +41,36 @@ jobs:
           sdkmanager --install "ndk;28.0.12433566"
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/28.0.12433566" >> $GITHUB_ENV
 
-      # Создаем изолированную папку со свежими заголовками EGL от Khronos
-      - name: Download Latest Khronos EGL Headers
-        run: |
-          mkdir -p .egl_fixed/EGL/
-          mkdir -p .egl_fixed/KHR/
-          curl -sSL -o ".egl_fixed/EGL/egl.h" https://registry.khronos.org/EGL/api/EGL/egl.h
-          curl -sSL -o ".egl_fixed/EGL/eglext.h" https://registry.khronos.org/EGL/api/EGL/eglext.h
-          curl -sSL -o ".egl_fixed/KHR/khrplatform.h" https://registry.khronos.org/EGL/api/KHR/khrplatform.h
-          
-          # Передаем путь к этой папке в приоритет компилятора (-I)
-          # Также обманываем проверку wlroots, выставив самую актуальную дату релиза заголовков
-          FIXED_INC_DIR="$GITHUB_WORKSPACE/.egl_fixed"
-          echo "CFLAGS=-I$FIXED_INC_DIR -DEGL_EGLEXT_VERSION=20240000" >> $GITHUB_ENV
-          echo "CPPFLAGS=-I$FIXED_INC_DIR -DEGL_EGLEXT_VERSION=20240000" >> $GITHUB_ENV
-
       - name: Grant Execute Permission for Gradle
         run: chmod +x gradlew
+
+      # Запускаем фоновый демон-патчер, который караулит появление файла от Meson
+      - name: Run Background Live Patcher for wlroots
+        run: |
+          cat << 'EOF' > patcher.sh
+          #!/bin/bash
+          TARGET_FILE="compositor/native/subprojects/wlroots/render/meson.build"
+          echo "Live Patcher started. Waiting for $TARGET_FILE..."
+          
+          # Цикл ожидания (максимум 5 минут)
+          for i in {1..300}; do
+            if [ -f "$TARGET_FILE" ]; then
+              echo "Found $TARGET_FILE! Applying patch..."
+              # Жестко перезаписываем переменную версии EGL прямо перед проверкой
+              sed -i "s/egl_ext_version =.*/egl_ext_version = '20240000'/g" "$TARGET_FILE"
+              # На всякий случай добавим строку сразу после вызова get_define
+              sed -i "/get_define('EGL_EGLEXT_VERSION'/a \ \ egl_ext_version = '20240000'" "$TARGET_FILE"
+              echo "Patch successfully applied!"
+              cat "$TARGET_FILE" | grep -n "egl_ext_version" || true
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Timeout: File $TARGET_FILE not found."
+          exit 1
+          EOF
+          chmod +x patcher.sh
+          ./patcher.sh & # Запуск в фоне через амперсанд
 
       - name: Build Test App APK
         run: ./gradlew :testapp:assembleDebug --stacktrace
