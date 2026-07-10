@@ -24,7 +24,8 @@ jobs:
       - name: Install Native Build Tools (Meson & Ninja)
         run: |
           sudo apt-get update
-          sudo apt-get install -y ninja-build pkg-config wayland-protocols
+          # Устанавливаем системный кросс-компилятор для архитектуры ARM64
+          sudo apt-get install -y ninja-build pkg-config wayland-protocols gcc-aarch64-linux-gnu
           pip install meson
 
       - name: Set up JDK 17
@@ -41,14 +42,11 @@ jobs:
           sdkmanager --install "ndk;28.0.12433566"
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/28.0.12433566" >> $GITHUB_ENV
 
-      # Патчим оригинальный заголовочный файл Android NDK напрямую
-      # Меняем старую дату (любую) на свежую 20240000
       - name: Force Patch EGL version inside Android NDK
         run: |
           NDK_EGLEXT_FILE="${ANDROID_SDK_ROOT}/ndk/28.0.12433566/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/EGL/eglext.h"
           if [ -f "$NDK_EGLEXT_FILE" ]; then
             echo "Found NDK eglext.h. Patching EGL_EGLEXT_VERSION..."
-            # Заменяем строку определения версии на нашу дату
             sudo sed -i 's/#define EGL_EGLEXT_VERSION .*/#define EGL_EGLEXT_VERSION 20240000/g' "$NDK_EGLEXT_FILE"
             echo "--- Verified modified line in NDK eglext.h ---"
             grep -n "EGL_EGLEXT_VERSION" "$NDK_EGLEXT_FILE"
