@@ -1,5 +1,4 @@
 name: Automated Windows Build WayLandIE
-
 on:
   push:
     branches:
@@ -12,10 +11,12 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-    # 1. Клонируем репозиторий (убрали 'repository:', теперь он строго качает ваш форк в правильный корень)
-    - name: Checkout Repository
+    # 1. Клонируем сторонний репозиторий AstroCODEsky
+    - name: Checkout Target Repository
       uses: actions/checkout@v4
       with:
+        repository: 'AstroCODEsky/WayLandIE'
+        ref: 'main'
         submodules: 'recursive'
 
     # 2. Настраиваем Java 17
@@ -25,52 +26,43 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    # 3. Настраиваем Android SDK и NDK r26b (где surface_control.h написан на чистом C)
+    # 3. Настраиваем Android SDK и фиксируем рабочую версию NDK (r26b)
     - name: Setup Android SDK & NDK
       uses: android-actions/setup-android@v3
       with:
-        ndk-version: '26.1.10909125'
+        ndk-version: '26.1.10909125' # Фиксируем стабильную r26, где нет бага r27
 
-    # 4. Адаптируем пути SDK через Junction ссылки
+    # 4. Адаптируем окружение SDK (симлинки для build-tools)
     - name: Fix Android SDK Paths
       shell: pwsh
       run: |
-        $ActualBuildToolsDir = Get-ChildItem -Path "$env:ANDROID_HOME\build-tools" -Directory | 
-                                Sort-Object Name -Descending | 
-                                Select-Object -First 1        
-        $ActualPlatformDir = Get-ChildItem -Path "$env:ANDROID_HOME\platforms" -Directory | 
-                              Sort-Object Name -Descending | 
+        $ActualBuildToolsDir = Get-ChildItem -Path "$env:ANDROID_HOME\build-tools" -Directory |
+                                Sort-Object Name -Descending |
+                                Select-Object -First 1
+                
+        $ActualPlatformDir = Get-ChildItem -Path "$env:ANDROID_HOME\platforms" -Directory |
+                              Sort-Object Name -Descending |
                               Select-Object -First 1
-        
+
         $FakeBuildToolsPath = Join-Path "$env:ANDROID_HOME\build-tools" "36.1.0"
         if (-not (Test-Path $FakeBuildToolsPath)) {
             New-Item -ItemType Junction -Path $FakeBuildToolsPath -Value $ActualBuildToolsDir.FullName
         }
+
         $FakePlatformPath = Join-Path "$env:ANDROID_HOME\platforms" "android-36"
         if (-not (Test-Path $FakePlatformPath)) {
             New-Item -ItemType Junction -Path $FakePlatformPath -Value $ActualPlatformDir.FullName
         }
 
-    # 5. Отлаживаем пути и запускаем оригинальный скрипт автора
+    # 5. Запускаем оригинальный PowerShell скрипт автора (теперь с чистым C-компилятором)
     - name: Build APK via Author's PowerShell Script
       shell: pwsh
       run: |
-        Write-Host "=== Проверяем, где мы находимся ==="
-        Get-Location
-        
-        Write-Host "=== Проверяем файлы в корне ==="
-        Get-ChildItem
-        
-        if (Test-Path .\android-app) {
-            cd android-app
-            .\tools\build-apk.ps1 `
-              -RequireNative `
-              -NdkRoot "$env:ANDROID_NDK_ROOT" `
-              -SdkRoot "$env:ANDROID_HOME"
-        } else {
-            Write-Error "Ошибка: папка android-app всё еще не найдена!"
-            exit 1
-        }
+        cd android-app
+        .\tools\build-apk.ps1 `
+          -RequireNative `
+          -NdkRoot "$env:ANDROID_NDK_ROOT" `
+          -SdkRoot "$env:ANDROID_HOME"
 
     # 6. Собираем финальный бандл
     - name: Prepare Release Bundle
