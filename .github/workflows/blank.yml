@@ -1,69 +1,85 @@
-name: Build Wldroid Test App APK
+name: Remote Build WayLandIE
+
 on:
-  push:
-    branches: [ main, master ]
   workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Ветка для сборки (branch или tag)'
+        required: true
+        default: 'main'
+      build_type:
+        description: 'Тип сборки (Release / Debug)'
+        required: true
+        default: 'Release'
 
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout Original Wldroid Repository
-        uses: actions/checkout@v4
-        with:
-          repository: 'Shelnutt2/wldroid'
-          ref: 'main'
-          submodules: 'recursive'
-          fetch-depth: 0
+    # 1. Клонируем целевой репозиторий AstroCODEsky напрямую, без форка
+    - name: Checkout Target Repository
+      uses: actions/checkout@v4
+      with:
+        repository: 'AstroCODEsky/WayLandIE'
+        ref: ${{ github.event.inputs.branch }}
+        submodules: 'recursive' # На случай, если внутри есть submodules (например, wayland-protocols)
 
-      - name: Set up Python (Required for Meson)
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
+    # 2. Настраиваем Android NDK (необходимо для компиляции под Android / bionic / Termux архитектуру)
+    - name: Setup Android NDK
+      uses: android-actions/setup-android@v3
+      with:
+        ndk-version: '25.2.9519653' # Стабильная версия NDK, часто используемая в Termux-компиляциях
 
-      - name: Install Native Build Tools (Meson & Ninja)
-        run: |
-          sudo apt-get update
-          # Устанавливаем системный кросс-компилятор для архитектуры ARM64
-          sudo apt-get install -y ninja-build pkg-config wayland-protocols gcc-aarch64-linux-gnu
-          pip install meson
+    # 3. Устанавливаем необходимые зависимости сборки (Wayland-scanner, Meson, Ninja, CMake)
+    - name: Install Build Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake ninja-build meson wayland-protocols libwayland-dev pkg-config
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'zulu'
-          java-version: '17'
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android NDK r28
-        run: |
-          sdkmanager --install "ndk;28.0.12433566"
-          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/28.0.12433566" >> $GITHUB_ENV
-
-      - name: Force Patch EGL version inside Android NDK
-        run: |
-          NDK_EGLEXT_FILE="${ANDROID_SDK_ROOT}/ndk/28.0.12433566/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/EGL/eglext.h"
-          if [ -f "$NDK_EGLEXT_FILE" ]; then
-            echo "Found NDK eglext.h. Patching EGL_EGLEXT_VERSION..."
-            sudo sed -i 's/#define EGL_EGLEXT_VERSION .*/#define EGL_EGLEXT_VERSION 20240000/g' "$NDK_EGLEXT_FILE"
-            echo "--- Verified modified line in NDK eglext.h ---"
-            grep -n "EGL_EGLEXT_VERSION" "$NDK_EGLEXT_FILE"
-          else
-            echo "Error: NDK eglext.h not found at expected path!"
-            exit 1
+    # 4. Внутренняя логика сборки (адаптируйте шаги под архитектуру проекта)
+    # Проект может использовать как классический CMake, так и скрипты для сборки APK/бинарников.
+    - name: Compile WayLandIE
+      run: |
+        # Проверяем структуру проекта и выбираем стратегию сборки
+        if [ -f "CMakeLists.txt" ]; then
+          echo "Обнаружен CMakeLists.txt. Запуск CMake сборки для Android (arm64-v8a)..."
+          mkdir build && cd build
+          cmake -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_ROOT/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-24 \
+            -DCMAKE_BUILD_TYPE=${{ github.event.inputs.build_type }} ..
+          ninja
+        elif [ -f "build.sh" ]; then
+          echo "Обнаружен кастомный скрипт сборки build.sh. Запуск..."
+          chmod +x build.sh
+          ./build.sh
+        elif [ -f "gradlew" ]; then
+          echo "Обнаружен Android проект (Gradle). Сборка APK..."
+          chmod +x gradlew
+          ./gradlew assembleRelease
+        else
+          echo "Специфичный файл сборки не найден. Пробуем стандартный ndk-build или Meson..."
+          # Если проект использует meson (стандарт для Wayland)
+          if [ -f "meson.build" ]; then
+            meson setup build --cross-file=cross-android.txt # Если присутствует кросс-файл
+            ninja -C build
           fi
+        fi
 
-      - name: Grant Execute Permission for Gradle
-        run: chmod +x gradlew
+    # 5. Поиск и сбор собранных артефактов (бинарники, библиотеки .so или .apk)
+    - name: Prepare Artifacts
+      run: |
+        mkdir ./output
+        # Ищем любые скомпилированные бинарники, .apk файлы или разделяемые библиотеки .so
+        find . -type f \( -name "*.apk" -o -name "waylandie" -o -name "*.so" \) ! -path "*/.git/*" ! -path "./output/*" -exec cp {} ./output/ \;
+        echo "Сборка завершена. Найденные файлы:"
+        ls -la ./output/
 
-      - name: Build Test App APK
-        run: ./gradlew :testapp:assembleDebug --stacktrace
-
-      - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: wldroid-testapp-debug
-          path: testapp/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
+    # 6. Загрузка готовых файлов в интерфейс GitHub Actions
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: WayLandIE-${{ github.event.inputs.build_type }}-arm64
+        path: ./output/
