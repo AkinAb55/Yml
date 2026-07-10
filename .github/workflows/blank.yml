@@ -101,29 +101,10 @@ jobs:
                 $JavaContent = $JavaContent -replace $UnregPattern, $SafeUnregBlock
             }
 
-            # Собираем код логгера в одну безопасную для YAML строку
-            $LoggerCode = "`n        Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {`n" +
-                          "            @Override`n" +
-                          "            public void uncaughtException(Thread t, Throwable e) {`n" +
-                          "                try {`n" +
-                          "                    java.io.File logFile = new java.io.File(getExternalFilesDir(null), `"waylandie_crash.txt`\");`n" +
-                          "                    java.io.PrintWriter pw = new java.io.PrintWriter(new java.io.FileOutputStream(logFile, true));`n" +
-                          "                    pw.println(`"=== CRASH LOG SEPARATOR ===`\");`n" +
-                          "                    pw.println(`"Device OS API: `" + android.os.Build.VERSION.SDK_INT);`n" +
-                          "                    e.printStackTrace(pw);`n" +
-                          "                    pw.flush();`n" +
-                          "                    pw.close();`n" +
-                          "                } catch (Exception ex) { ex.printStackTrace(); }`n" +
-                          "                System.exit(1);`n" +
-                          "            }`n" +
-                          "        });`n" +
-                          "        try {`n" +
-                          "            java.io.File sysLog = new java.io.File(getExternalFilesDir(null), `"waylandie_sys_err.txt`\");`n" +
-                          "            System.setErr(new java.io.PrintStream(new java.io.FileOutputStream(sysLog, true)));`n" +
-                          "            android.util.Log.e(`"WayLandIEDisplay`\", `"Глубокий логгер успешно запущен на Android 12!`\");`n" +
-                          "        } catch (Exception ex) {}`n"
+            # Код логгера непрерывной строкой, экранированный под PowerShell
+            $LoggerCode = "`n Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() { @Override public void uncaughtException(Thread t, Throwable e) { try { java.io.File logFile = new java.io.File(getExternalFilesDir(null), `"waylandie_crash.txt`"); java.io.PrintWriter pw = new java.io.PrintWriter(new java.io.FileOutputStream(logFile, true)); pw.println(`"=== CRASH LOG SEPARATOR ===`"); pw.println(`"Device OS API: `" + android.os.Build.VERSION.SDK_INT); e.printStackTrace(pw); pw.flush(); pw.close(); } catch (Exception ex) { ex.printStackTrace(); } System.exit(1); } }); try { java.io.File sysLog = new java.io.File(getExternalFilesDir(null), `"waylandie_sys_err.txt`"); System.setErr(new java.io.PrintStream(new java.io.FileOutputStream(sysLog, true))); android.util.Log.e(`"WayLandIEDisplay`\", `"Глубокий логгер запущен`"); } catch (Exception ex) {}`n"
 
-            # Вставляем этот код в самое начало метода onCreate сразу после super.onCreate(savedInstanceState);
+            # Вставляем код логгера сразу после super.onCreate
             $JavaContent = $JavaContent -replace 'super\.onCreate\(savedInstanceState\);', "super.onCreate(savedInstanceState);$LoggerCode"
             
             Set-Content -Path $JavaPath -Value $JavaContent -Encoding UTF8
