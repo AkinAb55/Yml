@@ -1,40 +1,73 @@
-name: Remote Build WayLandIE
+name: Automated Build WayLandIE
 
 on:
+  # 1. Автоматический запуск при любом пуше в ваш репозиторий (в ветку main)
+  push:
+    branches:
+      - main
+  
+  # 2. Автоматический запуск по расписанию (каждое воскресенье в 00:00 UTC)
+  schedule:
+    - cron: '0 0 * * 0'
+
+  # 3. Сохраняем ручной запуск на всякий случай, чтобы можно было потестировать кнопкой
   workflow_dispatch:
-    inputs:
-      branch:
-        description: 'Ветка или тег для сборки'
-        required: true
-        default: 'main'
 
 jobs:
   build-assets:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. Клонируем репозиторий AstroCODEsky напрямую
+    # 1. Клонируем сторонний репозиторий (по умолчанию берется ветка main, если не указано иное)
     - name: Checkout Target Repository
       uses: actions/checkout@v4
       with:
         repository: 'AstroCODEsky/WayLandIE'
-        ref: ${{ github.event.inputs.branch }}
+        ref: 'main'
         submodules: 'recursive'
 
-    # 2. Настраиваем Java (необходима для работы Gradle и сборки Android-приложений)
+    # 2. Настраиваем Java БЕЗ встроенного кэша
     - name: Set up JDK 17
       uses: actions/setup-java@v4
       with:
         java-version: '17'
         distribution: 'temurin'
-        cache: 'gradle'
 
-    # 3. Настраиваем Android SDK и NDK (так как проект использует SurfaceControl и Vulkan)
+    # 3. Настраиваем Android SDK и NDK
     - name: Setup Android SDK & NDK
       uses: android-actions/setup-android@v3
       with:
-        ndk-version: '25.2.9519653' # Стандартная стабильная версия NDK
+        ndk-version: '25.2.9519653'
 
+    # 4. Собираем Android APK через Gradle
+    - name: Build Android App (APK)
+      run: |
+        cd android-app
+        chmod +x gradlew
+        ./gradlew assembleRelease --no-daemon
+
+    # 5. Собираем структуру артефактов
+    - name: Prepare Release Bundle
+      run: |
+        mkdir -p ./release-dist/android-app
+        mkdir -p ./release-dist/linux-runtime
+        mkdir -p ./release-dist/scripts
+        
+        find android-app/build/outputs/apk/ -name "*.apk" -exec cp {} ./release-dist/android-app/ \; || true
+        
+        cp -r linux-runtime/* ./release-dist/linux-runtime/ || true
+        cp -r scripts/* ./release-dist/scripts/ || true
+        cp README.md ./release-dist/ || true
+        
+        echo "=== Результат сборки ==="
+        ls -R ./release-dist/
+
+    # 6. Загружаем готовый zip-архив
+    - name: Upload Complete WayLandIE Bundle
+      uses: actions/upload-artifact@v4
+      with:
+        name: WayLandIE-Full-Bundle
+        path: ./release-dist/
     # 4. Собираем Android APK через Gradle (эквивалент build-apk.ps1 для Linux)
     - name: Build Android App (APK)
       run: |
