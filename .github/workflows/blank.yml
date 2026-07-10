@@ -26,83 +26,78 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    # 3. Настраиваем Android SDK и NDK
+    # 3. Настраиваем Android SDK и NDK (автоматически ставит актуальную версию r27)
     - name: Setup Android SDK & NDK
       uses: android-actions/setup-android@v3
 
-    # 4. Адаптируем окружение SDK, лечим заголовки, манифест и снижаем SDK до Android 12
-    - name: Fix SDK Paths, Patch Header & Adapt for Android 12 Runtime
+    # 4. Комплексная адаптация исходников под Android 12 Runtime
+    - name: Fix SDK Paths, Patch NDK & Java Code for Android 12
       shell: pwsh
       run: |
         # 1. Исправляем пути SDK через Junction ссылки для версии 36.1.0
         $ActualBuildToolsDir = Get-ChildItem -Path "$env:ANDROID_HOME\build-tools" -Directory |
                                 Sort-Object Name -Descending |
                                 Select-Object -First 1
-                
         $ActualPlatformDir = Get-ChildItem -Path "$env:ANDROID_HOME\platforms" -Directory |
                               Sort-Object Name -Descending |
                               Select-Object -First 1
-        
         $FakeBuildToolsPath = Join-Path "$env:ANDROID_HOME\build-tools" "36.1.0"
         if (-not (Test-Path $FakeBuildToolsPath)) {
             New-Item -ItemType Junction -Path $FakeBuildToolsPath -Value $ActualBuildToolsDir.FullName
         }
-        
         $FakePlatformPath = Join-Path "$env:ANDROID_HOME\platforms" "android-36"
         if (-not (Test-Path $FakePlatformPath)) {
             New-Item -ItemType Junction -Path $FakePlatformPath -Value $ActualPlatformDir.FullName
         }
 
-        # 2. КОМПЛЕКСНОЕ ЛЕЧЕНИЕ SURFACE_CONTROL.H (баги Google)
+        # 2. КОМПЛЕКСНОЕ ЛЕЧЕНИЕ SURFACE_CONTROL.H (баги Google NDK)
         $TargetHeader = Get-ChildItem -Path "$env:ANDROID_HOME\ndk" -Recurse -Filter "surface_control.h" | Select-Object -First 1
-        
         if ($TargetHeader) {
             Write-Host "Найдено оригинальный заголовочный файл NDK по пути: $($TargetHeader.FullName)"
             $Content = Get-Content $TargetHeader.FullName -Raw
-            
-            # Исправляем ВСЕ ошибочные C++ ссылки (const ARect& ...) на Си-указатели (const ARect* ...)
-            Write-Host "Патчим опечатки Google в объявлениях ARect..."
             $Content = $Content -replace 'const ARect&\s+crop', 'const ARect* crop'
             $Content = $Content -replace 'const ARect&\s+source', 'const ARect* source'
             $Content = $Content -replace 'const ARect&\s+destination', 'const ARect* destination'
-            
-            # Добавляем старый макрос/typedef для OnBufferRelease
             if ($Content -notmatch 'ASurfaceTransaction_OnBufferRelease') {
-                Write-Host "Добавляем обратную совместимость для ASurfaceTransaction_OnBufferRelease..."
                 $InjectTypedef = "`n// Хак для совместимости со старым кодом автора`ntypedef void (*ASurfaceTransaction_OnBufferRelease)(void* context, int fence);`n"
                 $Content = $Content -replace '(#ifndef ANDROID_SURFACE_CONTROL_H)', "`$1`r`n$InjectTypedef"
             }
             Set-Content -Path $TargetHeader.FullName -Value $Content -Encoding UTF8
         }
 
-        # 3. ПОЛНАЯ АДАПТАЦИЯ СКРИПТА ПОД ANDROID 12 (API 31)
+        # 3. ПОЛНАЯ АДАПТАЦИЯ СКРИПТА СБОРКИ И МАНИФЕСТА ПОД API 31
         $AuthScriptPath = "android-app\tools\build-apk.ps1"
         if (Test-Path $AuthScriptPath) {
-            Write-Host "Патчим скрипт автора для полной совместимости с Android 12..."
             $ScriptContent = Get-Content $AuthScriptPath -Raw
             $ScriptContent = $ScriptContent -replace '--min-sdk-version 33', '--min-sdk-version 31'
             $ScriptContent = $ScriptContent -replace '--min-api 33', '--min-api 31'
             $ScriptContent = $ScriptContent -replace '--target-sdk-version 36', '--target-sdk-version 31'
             Set-Content -Path $AuthScriptPath -Value $ScriptContent -Encoding UTF8
         }
-
-        # 4. ОЧИСТКА АТРИБУТОВ ANDROID 13/14 ИЗ MANIFEST.XML
         $ManifestPath = "android-app\AndroidManifest.xml"
         if (Test-Path $ManifestPath) {
-            Write-Host "Очищаем AndroidManifest.xml от ограничений Android 13/14..."
             $ManifestContent = Get-Content $ManifestPath -Raw
-            
-            # Удаляем разрешение FOREGROUND_SERVICE_DATA_SYNC (Android 14+)
             $ManifestContent = $ManifestContent -replace '<uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"\s*/>', ''
-            
-            # Удаляем разрешение POST_NOTIFICATIONS (Android 13+), так как на Android 12 уведомления работают без него
             $ManifestContent = $ManifestContent -replace '<uses-permission android:name="android.permission.POST_NOTIFICATIONS"\s*/>', ''
-            
-            # Вырезаем тип foregroundServiceType="dataSync" из объявления сервиса (Android 14+)
             $ManifestContent = $ManifestContent -replace 'android:foregroundServiceType="dataSync"', ''
-            
             Set-Content -Path $ManifestPath -Value $ManifestContent -Encoding UTF8
-            Write-Host "Манифест успешно очищен!"
+        }
+
+        # 4. ПАТЧИМ JAVA-КОД ДЛЯ СОВМЕСТИМОСТИ С ANDROID 12 (Заглушаем OnBackInvoked API из Android 13)
+        $JavaPath = "android-app\src\io\waylandie\display\MainActivity.java"
+        if (Test-Path $JavaPath) {
+            Write-Host "Лечим Java код MainActivity от несовместимых API Android 13..."
+            $JavaContent = Get-Content $JavaPath -Raw
+            
+            # Подменяем тип OnBackInvokedCallback на базовый Object, чтобы класс загружался на Android 12
+            $JavaContent = $JavaContent -replace 'private OnBackInvokedCallback bridgeBackCallback;', 'private Object bridgeBackCallback;'
+            
+            # Закомментируем регистрацию колбэка OnBackInvokedDispatcher, если она есть в коде
+            # Этот патч превращает вызовы диспетчера в безопасные строки комментариев
+            $JavaContent = $JavaContent -replace 'getOnBackInvokedDispatcher\(\)', '// getOnBackInvokedDispatcher()'
+            
+            Set-Content -Path $JavaPath -Value $JavaContent -Encoding UTF8
+            Write-Host "Java код успешно адаптирован!"
         }
 
     # 5. Запускаем оригинальный PowerShell скрипт автора
