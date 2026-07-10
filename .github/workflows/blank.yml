@@ -3,19 +3,22 @@ name: Build Wldroid Test App APK
 on:
   push:
     branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
-  workflow_dispatch: # Позволяет запускать сборку вручную кнопкой на GitHub
+  workflow_dispatch: # Позволяет запускать сборку вручную кнопкой в панели Actions
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Source Code with Submodules
+      - name: Checkout Original Wldroid Repository
         uses: actions/checkout@v4
         with:
-          submodules: 'recursive' # Скачивает все субмодули
+          # Указываем репозиторий автора напрямую!
+          repository: 'Shelnutt2/wldroid'
+          # Указываем ветку, из которой собирать (main)
+          ref: 'main'
+          # Скачиваем все 17 скрытых субмодулей оригинального проекта
+          submodules: 'recursive'
           fetch-depth: 0
 
       - name: Set up Python (Required for Meson)
@@ -34,7 +37,6 @@ jobs:
         with:
           distribution: 'zulu'
           java-version: '17'
-          cache: 'gradle'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
