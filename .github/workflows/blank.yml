@@ -30,24 +30,21 @@ jobs:
     - name: Setup Android SDK & NDK
       uses: android-actions/setup-android@v3
 
-    # 4. Комплексная адаптация исходников под Android 12 Runtime
-    - name: Fix SDK Paths, Patch NDK & Java Code for Android 12
+    # 4. Комплексная адаптация исходников под Android 12 Runtime + Глубокий Логгер
+    - name: Fix SDK Paths, Patch NDK & Inject Deep Crash Logger
       shell: pwsh
       run: |
         # 1. Исправляем пути SDK через Junction ссылки для версии 36.1.0
         $ActualBuildToolsDir = Get-ChildItem -Path "$env:ANDROID_HOME\build-tools" -Directory |
                                 Sort-Object Name -Descending |
                                 Select-Object -First 1
-                
         $ActualPlatformDir = Get-ChildItem -Path "$env:ANDROID_HOME\platforms" -Directory |
                               Sort-Object Name -Descending |
                               Select-Object -First 1
-        
         $FakeBuildToolsPath = Join-Path "$env:ANDROID_HOME\build-tools" "36.1.0"
         if (-not (Test-Path $FakeBuildToolsPath)) {
             New-Item -ItemType Junction -Path $FakeBuildToolsPath -Value $ActualBuildToolsDir.FullName
         }
-        
         $FakePlatformPath = Join-Path "$env:ANDROID_HOME\platforms" "android-36"
         if (-not (Test-Path $FakePlatformPath)) {
             New-Item -ItemType Junction -Path $FakePlatformPath -Value $ActualPlatformDir.FullName
@@ -55,20 +52,12 @@ jobs:
 
         # 2. КОМПЛЕКСНОЕ ЛЕЧЕНИЕ SURFACE_CONTROL.H (баги Google NDK)
         $TargetHeader = Get-ChildItem -Path "$env:ANDROID_HOME\ndk" -Recurse -Filter "surface_control.h" | Select-Object -First 1
-        
         if ($TargetHeader) {
-            Write-Host "Найдено оригинальный заголовочный файл NDK по пути: $($TargetHeader.FullName)"
             $Content = Get-Content $TargetHeader.FullName -Raw
-            
-            # Исправляем ВСЕ ошибочные C++ ссылки (const ARect& ...) на Си-указатели (const ARect* ...)
-            Write-Host "Патчим опечатки Google в объявлениях ARect..."
             $Content = $Content -replace 'const ARect&\s+crop', 'const ARect* crop'
             $Content = $Content -replace 'const ARect&\s+source', 'const ARect* source'
             $Content = $Content -replace 'const ARect&\s+destination', 'const ARect* destination'
-            
-            # Добавляем старый макрос/typedef для OnBufferRelease
             if ($Content -notmatch 'ASurfaceTransaction_OnBufferRelease') {
-                Write-Host "Добавляем обратную совместимость для ASurfaceTransaction_OnBufferRelease..."
                 $InjectTypedef = "`n// Хак для совместимости со старым кодом автора`ntypedef void (*ASurfaceTransaction_OnBufferRelease)(void* context, int fence);`n"
                 $Content = $Content -replace '(#ifndef ANDROID_SURFACE_CONTROL_H)', "`$1`r`n$InjectTypedef"
             }
@@ -78,17 +67,14 @@ jobs:
         # 3. ПОЛНАЯ АДАПТАЦИЯ СКРИПТА СБОРКИ И МАНИФЕСТА ПОД API 31
         $AuthScriptPath = "android-app\tools\build-apk.ps1"
         if (Test-Path $AuthScriptPath) {
-            Write-Host "Патчим скрипт автора для полной совместимости с Android 12..."
             $ScriptContent = Get-Content $AuthScriptPath -Raw
             $ScriptContent = $ScriptContent -replace '--min-sdk-version 33', '--min-sdk-version 31'
             $ScriptContent = $ScriptContent -replace '--min-api 33', '--min-api 31'
             $ScriptContent = $ScriptContent -replace '--target-sdk-version 36', '--target-sdk-version 31'
             Set-Content -Path $AuthScriptPath -Value $ScriptContent -Encoding UTF8
         }
-        
         $ManifestPath = "android-app\AndroidManifest.xml"
         if (Test-Path $ManifestPath) {
-            Write-Host "Очищаем AndroidManifest.xml от ограничений Android 13/14..."
             $ManifestContent = Get-Content $ManifestPath -Raw
             $ManifestContent = $ManifestContent -replace '<uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"\s*/>', ''
             $ManifestContent = $ManifestContent -replace '<uses-permission android:name="android.permission.POST_NOTIFICATIONS"\s*/>', ''
@@ -96,35 +82,56 @@ jobs:
             Set-Content -Path $ManifestPath -Value $ManifestContent -Encoding UTF8
         }
 
-        # 4. КОМПЛЕКСНЫЙ ПАТЧ ДЛЯ MAINACTION.JAVA (Безопасное урезание OnBackInvoked API)
+        # 4. КОМПЛЕКСНЫЙ ПАТЧ И ВНЕДРЕНИЕ ГЛУБОКОГО ЛОГГЕРА В MAINACTION.JAVA
         $JavaPath = "android-app\src\io\waylandie\display\MainActivity.java"
         if (Test-Path $JavaPath) {
-            Write-Host "Лечим Java код MainActivity от несовместимых API Android 13..."
+            Write-Host "Внедряем глубокое логгирование ошибок в MainActivity..."
             $JavaContent = Get-Content $JavaPath -Raw
             
-            # Заменяем тип callback-переменной на базовый Object
+            # Адаптация OnBackInvoked под Android 12 (прошлый шаг)
             $JavaContent = $JavaContent -replace 'private OnBackInvokedCallback bridgeBackCallback;', 'private Object bridgeBackCallback;'
-            
-            # Оборачиваем блок РЕГИСТРАЦИИ колбэка в проверку SDK
             $RegPattern = '(?s)getOnBackInvokedDispatcher\(\)\s*\.registerOnBackInvokedCallback\s*\(\s*OnBackInvokedDispatcher\.PRIORITY_DEFAULT,\s*bridgeBackCallback\s*\);'
             if ($JavaContent -match $RegPattern) {
-                Write-Host "Найден блок РЕГИСТРАЦИИ колбэка. Оборачиваем в проверку SDK..."
                 $SafeRegBlock = "if (android.os.Build.VERSION.SDK_INT >= 33) { getOnBackInvokedDispatcher().registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, (OnBackInvokedCallback)bridgeBackCallback); }"
                 $JavaContent = $JavaContent -replace $RegPattern, $SafeRegBlock
             }
-            
-            # Оборачиваем блок РАЗРЕГИСТРАЦИИ (unregister) колбэка в проверку SDK
             $UnregPattern = '(?s)getOnBackInvokedDispatcher\(\)\s*\.unregisterOnBackInvokedCallback\s*\(\s*bridgeBackCallback\s*\);'
             if ($JavaContent -match $UnregPattern) {
-                Write-Host "Найден блок РАЗРЕГИСТРАЦИИ колбэка. Оборачиваем в проверку SDK..."
                 $SafeUnregBlock = "if (android.os.Build.VERSION.SDK_INT >= 33) { getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback((OnBackInvokedCallback)bridgeBackCallback); }"
                 $JavaContent = $JavaContent -replace $UnregPattern, $SafeUnregBlock
-            } else {
-                $JavaContent = $JavaContent -replace 'getOnBackInvokedDispatcher\(\)\.unregisterOnBackInvokedCallback\(bridgeBackCallback\);', 'if (android.os.Build.VERSION.SDK_INT >= 33) { getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback((OnBackInvokedCallback)bridgeBackCallback); }'
             }
+
+            # ВНЕДРЯЕМ ХЕНДЛЕР СБОРА КРАШЕЙ В METOД ONCREATE
+            # Создаем Java-код, который при старте перенаправляет логи в файл во внутренней памяти
+            $LoggerCode = @"
+        // Инициализация глубокого логгера (сборщик крашей в файл)
+        Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
+            @Override
+            public void uncaughtException(Thread t, Throwable e) {
+                try {
+                    java.io.File logFile = new java.io.File(getExternalFilesDir(null), "waylandie_crash.txt");
+                    java.io.PrintWriter pw = new java.io.PrintWriter(new java.io.FileOutputStream(logFile, true));
+                    pw.println("=== CRASH LOG SEPARATOR ===");
+                    pw.println("Device OS API: " + android.os.Build.VERSION.SDK_INT);
+                    e.printStackTrace(pw);
+                    pw.flush();
+                    pw.close();
+                } catch (Exception ex) { ex.printStackTrace(); }
+                System.exit(1);
+            }
+        });
+        try {
+            java.io.File sysLog = new java.io.File(getExternalFilesDir(null), "waylandie_sys_err.txt");
+            System.setErr(new java.io.PrintStream(new java.io.FileOutputStream(sysLog, true)));
+            Log.e("WayLandIEDisplay", "Глубокий логгер успешно запущен на Android 12!");
+        } catch (Exception ex) {}
+"@
+            
+            # Вставляем этот код в самое начало метода onCreate сразу после super.onCreate(savedInstanceState);
+            $JavaContent = $JavaContent -replace 'super\.onCreate\(savedInstanceState\);', "super.onCreate(savedInstanceState);`r`n$LoggerCode"
             
             Set-Content -Path $JavaPath -Value $JavaContent -Encoding UTF8
-            Write-Host "Java код успешно адаптирован для компилятора!"
+            Write-Host "Логгер успешно интегрирован в исходный код!"
         }
 
     # 5. Запускаем оригинальный PowerShell скрипт автора
