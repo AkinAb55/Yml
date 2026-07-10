@@ -70,10 +70,10 @@ jobs:
             # Добавляем старый макрос/typedef для OnBufferRelease, если его вырезали в r27
             if ($Content -notmatch 'ASurfaceTransaction_OnBufferRelease') {
                 Write-Host "Добавляем обратную совместимость для ASurfaceTransaction_OnBufferRelease..."
-                $InjectTypedef = @"
-// Хак для совместимости со старым кодом автора
-typedef void (*ASurfaceTransaction_OnBufferRelease)(void* context, int fence);
-"@
+                
+                # Записываем сигнатуру в одну строку с переводами строк `n, чтобы не ломать YAML
+                $InjectTypedef = "`n// Хак для совместимости со старым кодом автора`ntypedef void (*ASurfaceTransaction_OnBufferRelease)(void* context, int fence);`n"
+                
                 # Вставляем костыль в самое начало файла после директивы #ifndef
                 $Content = $Content -replace '(#ifndef ANDROID_SURFACE_CONTROL_H)', "`$1`r`n$InjectTypedef"
             }
