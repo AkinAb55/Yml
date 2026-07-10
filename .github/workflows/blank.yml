@@ -28,41 +28,45 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
-    # 3. Настраиваем Android SDK и NDK r25
+    # 3. Настраиваем Android SDK и NDK (автоматически ставит r27, если не зафиксировано жестко)
     - name: Setup Android SDK & NDK
       uses: android-actions/setup-android@v3
       with:
-        ndk-version: '25.2.9519653'
+        ndk-version: '27.3.13750724'
 
-    # 4. Адаптируем окружение под жесткие требования скрипта автора
-    - name: Fix Android SDK Versions via Symlinks
+    # 4. Адаптируем окружение SDK и чиним баг компилятора NDK r27
+    - name: Fix Android SDK & NDK Compiler Bug
       shell: pwsh
       run: |
-        # 1. Определяем, какая реальная версия build-tools установлена на сервере
+        # 1. Исправляем пути SDK через Junction ссылки для версии 36.1.0
         $ActualBuildToolsDir = Get-ChildItem -Path "$env:ANDROID_HOME\build-tools" -Directory | 
                                Sort-Object Name -Descending | 
                                Select-Object -First 1
         
-        # 2. Определяем, какая реальная платформа установлена
         $ActualPlatformDir = Get-ChildItem -Path "$env:ANDROID_HOME\platforms" -Directory | 
                              Sort-Object Name -Descending | 
                              Select-Object -First 1
 
-        Write-Host "Найденная стабильная версия Build Tools: $($ActualBuildToolsDir.FullName)"
-        Write-Host "Найденная стабильная версия Platform: $($ActualPlatformDir.FullName)"
-
-        # 3. Создаем фейковую папку '36.1.0', которая ссылается на реальную версию
         $FakeBuildToolsPath = Join-Path "$env:ANDROID_HOME\build-tools" "36.1.0"
         if (-not (Test-Path $FakeBuildToolsPath)) {
             New-Item -ItemType Junction -Path $FakeBuildToolsPath -Value $ActualBuildToolsDir.FullName
-            Write-Host "Создана символическая ссылка для Build Tools 36.1.0"
         }
 
-        # 4. Создаем фейковую папку 'android-36', которая ссылается на реальную версию
         $FakePlatformPath = Join-Path "$env:ANDROID_HOME\platforms" "android-36"
         if (-not (Test-Path $FakePlatformPath)) {
             New-Item -ItemType Junction -Path $FakePlatformPath -Value $ActualPlatformDir.FullName
-            Write-Host "Создана символическая ссылка для platforms/android-36"
+        }
+
+        # 2. Магия: подменяем C-компилятор на C++ компилятор внутри установленного NDK, 
+        # чтобы скомпилировать surface_control.h со ссылками C++ (&)
+        $NdkBinPath = "$env:ANDROID_NDK_ROOT\toolchains\llvm\prebuilt\windows-x86_64\bin"
+        $ClangCmd = Join-Path $NdkBinPath "aarch64-linux-android33-clang.cmd"
+        $ClangPlusPlusCmd = Join-Path $NdkBinPath "aarch64-linux-android33-clang++.cmd"
+
+        if (Test-Path $ClangPlusPlusCmd) {
+            Write-Host "Форсируем использование C++ компилятора для C-файлов автора..."
+            Copy-Item -Force -Path $ClangPlusPlusCmd -Destination $ClangCmd
+            Write-Host "Успешно скопировано!"
         }
 
     # 5. Запускаем оригинальный PowerShell скрипт автора
@@ -70,8 +74,6 @@ jobs:
       shell: pwsh
       run: |
         cd android-app
-        
-        # Передаем путь к NDK и явно указываем SdkRoot, чтобы перебить дефолтный AppData путь автора
         .\tools\build-apk.ps1 `
           -RequireNative `
           -NdkRoot "$env:ANDROID_NDK_ROOT" `
