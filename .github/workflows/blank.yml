@@ -1,19 +1,19 @@
-name: Automated Build WayLandIE
+name: Automated Windows Build WayLandIE
 
 on:
   push:
     branches:
       - main
   schedule:
-    - cron: '0 0 * * 0' # Автосборка каждое воскресенье
-  workflow_dispatch: # Возможность ручного запуска
+    - cron: '0 0 * * 0' # Автосборка каждое воскресенье в 00:00 UTC
+  workflow_dispatch: # Возможность ручного запуска кнопкой
 
 jobs:
-  build-vanilla-android:
-    runs-on: ubuntu-latest
+  build-windows:
+    runs-on: windows-latest
 
     steps:
-    # 1. Клонируем репозиторий AstroCODEsky напрямую
+    # 1. Клонируем сторонний репозиторий AstroCODEsky напрямую в корень
     - name: Checkout Target Repository
       uses: actions/checkout@v4
       with:
@@ -21,123 +21,53 @@ jobs:
         ref: 'main'
         submodules: 'recursive'
 
-    # 2. Настраиваем Java 17 для работы компилятора javac и d8
+    # 2. Настраиваем Java 17 (необходима для работы javac, d8 и других инструментов SDK)
     - name: Set up JDK 17
       uses: actions/setup-java@v4
       with:
         java-version: '17'
         distribution: 'temurin'
 
-    # 3. Настраиваем Android SDK и NDK
+    # 3. Настраиваем Android SDK и NDK (устанавливаем NDK r25, как в требованиях)
     - name: Setup Android SDK & NDK
       uses: android-actions/setup-android@v3
       with:
         ndk-version: '25.2.9519653'
 
-    # 4. Низкоуровневая ручная сборка APK по логике автора (Linux-адаптация)
-    - name: Compile Android App & Native Code
+    # 4. Запускаем оригинальный PowerShell скрипт автора
+    - name: Build APK via Author's PowerShell Script
+      shell: pwsh
       run: |
+        # Переходим в папку с приложением, как написано в README
         cd android-app
         
-        # Настройка путей в соответствии с переменными окружения GitHub runner
-        export BUILD_TOOLS_VERSION="34.0.0" # Используем стабильную версию build-tools
-        export SDK_ROOT=$ANDROID_HOME
-        export NDK_ROOT=$ANDROID_NDK_ROOT
-        
-        export AAPT2=$SDK_ROOT/build-tools/$BUILD_TOOLS_VERSION/aapt2
-        export D8=$SDK_ROOT/build-tools/$BUILD_TOOLS_VERSION/d8
-        export ZIPALIGN=$SDK_ROOT/build-tools/$BUILD_TOOLS_VERSION/zipalign
-        export APKSIGNER=$SDK_ROOT/build-tools/$BUILD_TOOLS_VERSION/apksigner
-        export ANDROID_JAR=$SDK_ROOT/platforms/android-34/android.jar
-        
-        # Путь к компилятору NDK Clang для Linux x86_64 -> Android arm64-v8a
-        export NDK_CLANG=$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android33-clang
-        export NDK_STRIP=$NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip
+        # Запускаем скрипт, передавая RequireNative и путь к NDK из переменной окружения
+        .\tools\build-apk.ps1 `
+          -RequireNative `
+          -NdkRoot "$env:ANDROID_NDK_ROOT"
 
-        # Создаем структуру временных папок сборки (obj/)
-        mkdir -p obj/gen obj/classes obj/dex obj/flat obj/native/apk/lib/arm64-v8a out keystore
-
-        echo "=== 1. Компиляция нативного C-кода (Vulkan/SurfaceControl) ==="
-        $NDK_CLANG -shared -fPIC -O3 -Wall -Wextra \
-          -o obj/native/apk/lib/arm64-v8a/libwaylandie_display_native.so \
-          native/waylandie_display_native.c -landroid -llog
-        
-        # Стрипаем (сжимаем) бинарник
-        $NDK_STRIP --strip-unneeded obj/native/apk/lib/arm64-v8a/libwaylandie_display_native.so
-
-        echo "=== 2. Сборка ресурсов через AAPT2 ==="
-        $AAPT2 compile --dir res -o obj/flat/
-        
-        # Получаем список всех скомпилированных .flat файлов
-        FLAT_FILES=$(find obj/flat -name "*.flat")
-        
-        echo "=== 3. Линовка ресурсов и манифеста ==="
-        $AAPT2 link \
-          -o obj/waylandie-display-unsigned.apk \
-          -I $ANDROID_JAR \
-          --manifest AndroidManifest.xml \
-          --java obj/gen \
-          --min-sdk-version 33 \
-          --target-sdk-version 34 \
-          --version-code 1 \
-          --version-name "0.1.0" \
-          $FLAT_FILES
-
-        echo "=== 4. Компиляция Java исходников ==="
-        JAVA_FILES=$(find src obj/gen -name "*.java")
-        javac -encoding UTF-8 -source 17 -target 17 -classpath $ANDROID_JAR -d obj/classes $JAVA_FILES
-
-        echo "=== 5. Трансляция Java-классов в Dex (d8) ==="
-        CLASS_FILES=$(find obj/classes -name "*.class")
-        $D8 --min-api 33 --output obj/dex $CLASS_FILES
-
-        echo "=== 6. Упаковка DEX и Native библиотек в APK ==="
-        cp obj/waylandie-display-unsigned.apk obj/waylandie-display-dexed.apk
-        
-        # Переходим в папки, чтобы правильно упаковать файлы без лишних путей внутри zip
-        cd obj/dex && jar uf ../waylandie-display-dexed.apk classes.dex && cd ../..
-        cd obj/native/apk && jar uf ../../waylandie-display-dexed.apk lib/arm64-v8a/libwaylandie_display_native.so && cd ../..
-
-        echo "=== 7. Выравнивание APK через Zipalign ==="
-        $ZIPALIGN -f -p 4 obj/waylandie-display-dexed.apk out/waylandie-display-aligned.apk
-
-        echo "=== 8. Генерация временного Keystore для подписи ==="
-        keytool -genkeypair \
-          -keystore keystore/debug.keystore \
-          -storepass android \
-          -keypass android \
-          -alias androiddebugkey \
-          -keyalg RSA \
-          -keysize 2048 \
-          -validity 10000 \
-          -dname "CN=Android Debug,O=Android,C=US"
-
-        echo "=== 9. Подпись готового приложения ==="
-        $APKSIGNER sign \
-          --ks keystore/debug.keystore \
-          --ks-pass pass:android \
-          --key-pass pass:android \
-          --out out/waylandie-display-mvp.apk \
-          out/waylandie-display-aligned.apk
-
-        echo "=== Сборка APK успешно завершена! ==="
-        ls -la out/
-
-    # 5. Формируем финальный бандл (APK + скрипты рантайма для Termux)
+    # 5. Собираем финальный бандл (APK + скрипты рантайма Linux для Termux)
     - name: Prepare Release Bundle
+      shell: pwsh
       run: |
-        mkdir -p ./release-dist/android-app
-        mkdir -p ./release-dist/linux-runtime
-        mkdir -p ./release-dist/scripts
+        New-Item -ItemType Directory -Force -Path .\release-dist\android-app
+        New-Item -ItemType Directory -Force -Path .\release-dist\linux-runtime
+        New-Item -ItemType Directory -Force -Path .\release-dist\scripts
         
-        cp android-app/out/waylandie-display-mvp.apk ./release-dist/android-app/
-        cp -r linux-runtime/* ./release-dist/linux-runtime/ || true
-        cp -r scripts/* ./release-dist/scripts/ || true
-        cp README.md ./release-dist/ || true
+        # Копируем собранный MVP APK из папки out, которую создал скрипт автора
+        Copy-Item -Path .\android-app\out\waylandie-display-mvp.apk -Destination .\release-dist\android-app\
+        
+        # Копируем остальные компоненты системы
+        Copy-Item -Recurse -Force -Path .\linux-runtime\* -Destination .\release-dist\linux-runtime\
+        Copy-Item -Recurse -Force -Path .\scripts\* -Destination .\release-dist\scripts\
+        if (Test-Path .\README.md) { Copy-Item -Path .\README.md -Destination .\release-dist\ }
+        
+        Write-Host "=== Содержимое бандла ==="
+        Get-ChildItem -Path .\release-dist -Recurse
 
-    # 6. Публикация артефакта в Github Actions
+    # 6. Публикация готового ZIP-архива в артефакты GitHub Actions
     - name: Upload Complete WayLandIE Bundle
       uses: actions/upload-artifact@v4
       with:
-        name: WayLandIE-Full-Bundle
-        path: ./release-dist/
+        name: WayLandIE-WindowsCompiled-Bundle
+        path: .\release-dist\
