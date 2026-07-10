@@ -5,15 +5,15 @@ on:
     branches:
       - main
   schedule:
-    - cron: '0 0 * * 0' # Автосборка каждое воскресенье в 00:00 UTC
-  workflow_dispatch: # Возможность ручного запуска кнопкой
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
 
 jobs:
   build-windows:
     runs-on: windows-latest
 
     steps:
-    # 1. Клонируем сторонний репозиторий AstroCODEsky напрямую в корень
+    # 1. Клонируем сторонний репозиторий AstroCODEsky
     - name: Checkout Target Repository
       uses: actions/checkout@v4
       with:
@@ -21,32 +21,63 @@ jobs:
         ref: 'main'
         submodules: 'recursive'
 
-    # 2. Настраиваем Java 17 (необходима для работы javac, d8 и других инструментов SDK)
+    # 2. Настраиваем Java 17
     - name: Set up JDK 17
       uses: actions/setup-java@v4
       with:
         java-version: '17'
         distribution: 'temurin'
 
-    # 3. Настраиваем Android SDK и NDK (устанавливаем NDK r25, как в требованиях)
+    # 3. Настраиваем Android SDK и NDK r25
     - name: Setup Android SDK & NDK
       uses: android-actions/setup-android@v3
       with:
         ndk-version: '25.2.9519653'
 
-    # 4. Запускаем оригинальный PowerShell скрипт автора
+    # 4. Адаптируем окружение под жесткие требования скрипта автора
+    - name: Fix Android SDK Versions via Symlinks
+      shell: pwsh
+      run: |
+        # 1. Определяем, какая реальная версия build-tools установлена на сервере
+        $ActualBuildToolsDir = Get-ChildItem -Path "$env:ANDROID_HOME\build-tools" -Directory | 
+                               Sort-Object Name -Descending | 
+                               Select-Object -First 1
+        
+        # 2. Определяем, какая реальная платформа установлена
+        $ActualPlatformDir = Get-ChildItem -Path "$env:ANDROID_HOME\platforms" -Directory | 
+                             Sort-Object Name -Descending | 
+                             Select-Object -First 1
+
+        Write-Host "Найденная стабильная версия Build Tools: $($ActualBuildToolsDir.FullName)"
+        Write-Host "Найденная стабильная версия Platform: $($ActualPlatformDir.FullName)"
+
+        # 3. Создаем фейковую папку '36.1.0', которая ссылается на реальную версию
+        $FakeBuildToolsPath = Join-Path "$env:ANDROID_HOME\build-tools" "36.1.0"
+        if (-not (Test-Path $FakeBuildToolsPath)) {
+            New-Item -ItemType Junction -Path $FakeBuildToolsPath -Value $ActualBuildToolsDir.FullName
+            Write-Host "Создана символическая ссылка для Build Tools 36.1.0"
+        }
+
+        # 4. Создаем фейковую папку 'android-36', которая ссылается на реальную версию
+        $FakePlatformPath = Join-Path "$env:ANDROID_HOME\platforms" "android-36"
+        if (-not (Test-Path $FakePlatformPath)) {
+            New-Item -ItemType Junction -Path $FakePlatformPath -Value $ActualPlatformDir.FullName
+            Write-Host "Создана символическая ссылка для platforms/android-36"
+        }
+
+    # 5. Запускаем оригинальный PowerShell скрипт автора
     - name: Build APK via Author's PowerShell Script
       shell: pwsh
       run: |
-        # Переходим в папку с приложением, как написано в README
         cd android-app
         
-        # Запускаем скрипт, передавая RequireNative и путь к NDK из переменной окружения
+        # Передаем путь к NDK и явно указываем SdkRoot, чтобы перебить дефолтный AppData путь автора
         .\tools\build-apk.ps1 `
           -RequireNative `
-          -NdkRoot "$env:ANDROID_NDK_ROOT"
+          -NdkRoot "$env:ANDROID_NDK_ROOT" `
+          -SdkRoot "$env:ANDROID_HOME"
 
-    # 5. Собираем финальный бандл (APK + скрипты рантайма Linux для Termux)
+    # 6. Собираем финальный бандл
     - name: Prepare Release Bundle
       shell: pwsh
       run: |
@@ -54,10 +85,7 @@ jobs:
         New-Item -ItemType Directory -Force -Path .\release-dist\linux-runtime
         New-Item -ItemType Directory -Force -Path .\release-dist\scripts
         
-        # Копируем собранный MVP APK из папки out, которую создал скрипт автора
         Copy-Item -Path .\android-app\out\waylandie-display-mvp.apk -Destination .\release-dist\android-app\
-        
-        # Копируем остальные компоненты системы
         Copy-Item -Recurse -Force -Path .\linux-runtime\* -Destination .\release-dist\linux-runtime\
         Copy-Item -Recurse -Force -Path .\scripts\* -Destination .\release-dist\scripts\
         if (Test-Path .\README.md) { Copy-Item -Path .\README.md -Destination .\release-dist\ }
@@ -65,7 +93,7 @@ jobs:
         Write-Host "=== Содержимое бандла ==="
         Get-ChildItem -Path .\release-dist -Recurse
 
-    # 6. Публикация готового ZIP-архива в артефакты GitHub Actions
+    # 7. Публикация готового архива
     - name: Upload Complete WayLandIE Bundle
       uses: actions/upload-artifact@v4
       with:
