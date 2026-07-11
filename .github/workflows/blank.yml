@@ -29,7 +29,7 @@ jobs:
       - name: Install Host Tools
         run: |
           sudo apt-get update
-          # ИСПРАВЛЕНО: Добавлены libtool-bin и pkgconf для корректной сборки нативного Си-кода (libhybris/Mesa)
+          # Включает libtool-bin и pkgconf для предотвращения ошибок сборки Си-компонентов
           sudo apt-get install -y --no-install-recommends \
             build-essential git cmake ninja-build pkgconf pkg-config \
             python3 python3-pip python3-venv python3-mako \
@@ -80,7 +80,6 @@ jobs:
           set -e
           mkdir -p /tmp/wayland-src
           
-          # ИСПРАВЛЕНО: Корректный синтаксис ссылки без лишних экранирований скобок
           curl -L "https://gitlab.freedesktop.org/wayland/wayland/-/archive/${{ env.WAYLAND_VERSION }}/wayland-${{ env.WAYLAND_VERSION }}.tar.gz" \
             | tar -xz -C /tmp/wayland-src --strip-components=1
                     
@@ -97,8 +96,16 @@ jobs:
           sudo cp /tmp/wayland-host/lib/x86_64-linux-gnu/pkgconfig/wayland-scanner.pc /usr/local/share/pkgconfig/wayland-scanner.pc
           sudo sed -i 's|wayland_scanner=.*|wayland_scanner=/usr/bin/wayland-scanner|g' /usr/local/share/pkgconfig/wayland-scanner.pc
                     
+          # Копируем заголовок туда, где его будет искать XWayland
           mkdir -p deps/xwayland-src/wayland/egl
           cp /tmp/wayland-src/egl/wayland-egl-backend.h deps/xwayland-src/wayland/egl/
+          
+          # ИСПРАВЛЕНО: Копируем заголовок в структуру хоста для C_INCLUDE_PATH / CPLUS_INCLUDE_PATH
+          cp /tmp/wayland-src/egl/wayland-egl-backend.h /tmp/wayland-host/include/
+          
+          # ИСПРАВЛЕНО: Копируем заголовок напрямую в исходники libhybris, чтобы вылечить фатальную ошибку компиляции
+          mkdir -p deps/libhybris/hybris/egl/platforms/wayland
+          cp /tmp/wayland-src/egl/wayland-egl-backend.h deps/libhybris/hybris/egl/platforms/wayland/
                     
           echo "WAYLAND_SCANNER=/usr/bin/wayland-scanner" >> $GITHUB_ENV
           echo "HOST_WAYLAND_INC=/tmp/wayland-host/include" >> $GITHUB_ENV
@@ -117,9 +124,11 @@ jobs:
       - name: Build App
         run: |
           set -ex
-          # ИСПРАВЛЕНО: Восстановлен чистый синтаксис переменной пути к Android NDK
           export ANDROID_NDK_HOME="${{ env.ANDROID_HOME }}/ndk/${{ env.ANDROID_NDK_VERSION }}"
+          
+          # ИСПРАВЛЕНО: Пути прокинуты как для C, так и для C++ (CPLUS) компилятора, собирающего libhybris (.cpp файлы)
           export C_INCLUDE_PATH="${{ env.HOST_WAYLAND_INC }}"
+          export CPLUS_INCLUDE_PATH="${{ env.HOST_WAYLAND_INC }}"
           export PKG_CONFIG_PATH="/usr/local/share/pkgconfig"
                     
           ./scripts/build-app.sh --abi=arm64-v8a \
