@@ -24,15 +24,16 @@ jobs:
           repository: 'wmww/tawc'
           ref: 'main'
           fetch-depth: 0
-          submodules: recursive # Добавлено для стабильности работы с субмодулями TAWC
+          submodules: recursive
 
       - name: Install Host Tools
         run: |
           sudo apt-get update
+          # ИСПРАВЛЕНО: Добавлены libtool-bin и pkgconf для корректной сборки нативного Си-кода (libhybris/Mesa)
           sudo apt-get install -y --no-install-recommends \
-            build-essential git cmake ninja-build pkg-config \
+            build-essential git cmake ninja-build pkgconf pkg-config \
             python3 python3-pip python3-venv python3-mako \
-            autoconf automake libtool m4 gettext bison flex \
+            autoconf automake libtool libtool-bin m4 gettext bison flex \
             libwayland-dev wayland-protocols libxkbcommon-dev \
             libffi-dev libvulkan-dev libarchive-tools \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu \
@@ -79,7 +80,7 @@ jobs:
           set -e
           mkdir -p /tmp/wayland-src
           
-          # ИСПРАВЛЕНО: Чистый синтаксис URL
+          # ИСПРАВЛЕНО: Корректный синтаксис ссылки без лишних экранирований скобок
           curl -L "https://gitlab.freedesktop.org/wayland/wayland/-/archive/${{ env.WAYLAND_VERSION }}/wayland-${{ env.WAYLAND_VERSION }}.tar.gz" \
             | tar -xz -C /tmp/wayland-src --strip-components=1
                     
@@ -116,7 +117,7 @@ jobs:
       - name: Build App
         run: |
           set -ex
-          # ИСПРАВЛЕНО: Чистый синтаксис переменной пути NDK
+          # ИСПРАВЛЕНО: Восстановлен чистый синтаксис переменной пути к Android NDK
           export ANDROID_NDK_HOME="${{ env.ANDROID_HOME }}/ndk/${{ env.ANDROID_NDK_VERSION }}"
           export C_INCLUDE_PATH="${{ env.HOST_WAYLAND_INC }}"
           export PKG_CONFIG_PATH="/usr/local/share/pkgconfig"
