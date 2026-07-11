@@ -1,146 +1,166 @@
-name: Automated Windows Build WayLandIE
+name: Build TAWC — Full Monolithic Production Build
+
 on:
   push:
-    branches:
-      - main
-  schedule:
-    - cron: '0 0 * * 0'
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
   workflow_dispatch:
 
+env:
+  ANDROID_NDK_VERSION: "27.2.12479018"
+  ANDROID_COMPILE_SDK: "36"
+  TAWC_ABIS: "arm64-v8a,x86_64"
+  WAYLAND_VERSION: "1.25.0"
+
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  build-monolithic-apk:
+    name: Build TAWC Full Monolithic APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
     steps:
-    # 1. Клонируем сторонний репозиторий AstroCODEsky
-    - name: Checkout Target Repository
-      uses: actions/checkout@v4
-      with:
-        repository: 'AstroCODEsky/WayLandIE'
-        ref: 'main'
-        submodules: 'recursive'
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          repository: 'wmww/tawc'
+          ref: 'main'
+          fetch-depth: 0
 
-    # 2. Настраиваем Java 17
-    - name: Set up JDK 17
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: 'temurin'
+      - name: Install Host Tools & Cross-Compilers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential git cmake ninja-build pkg-config \
+            python3 python3-pip python3-setuptools python3-venv python3-mako \
+            autoconf automake libtool libtool-bin m4 gettext bison flex texinfo gperf \
+            libwayland-dev wayland-protocols libxkbcommon-dev \
+            libx11-dev libxcb1-dev libxcb-xkb-dev libx11-xcb-dev \
+            libffi-dev libegl1-mesa-dev libgles-dev libdrm-dev libepoxy-dev libexpat1-dev \
+            curl unzip bc patchelf rsync libvulkan-dev libarchive-tools \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            gcc-x86-64-linux-gnu g++-x86-64-linux-gnu pkgconf
+          
+          sudo pip3 install --break-system-packages --upgrade meson
+          meson --version
+        shell: bash
 
-    # 3. Настраиваем Android SDK и NDK (автоматически ставит актуальную версию r27)
-    - name: Setup Android SDK & NDK
-      uses: android-actions/setup-android@v3
+      - name: Setup Java (for Gradle)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+          cache: gradle
 
-    # 4. Комплексная адаптация исходников под Android 12 Runtime + Глубокий Логгер
-    - name: Fix SDK Paths, Patch NDK & Inject Deep Crash Logger
-      shell: pwsh
-      run: |
-        # 1. Исправляем пути SDK через Junction ссылки для версии 36.1.0
-        $ActualBuildToolsDir = Get-ChildItem -Path "$env:ANDROID_HOME\build-tools" -Directory |
-                                Sort-Object Name -Descending |
-                                Select-Object -First 1
-        $ActualPlatformDir = Get-ChildItem -Path "$env:ANDROID_HOME\platforms" -Directory |
-                              Sort-Object Name -Descending |
-                              Select-Object -First 1
-        $FakeBuildToolsPath = Join-Path "$env:ANDROID_HOME\build-tools" "36.1.0"
-        if (-not (Test-Path $FakeBuildToolsPath)) {
-            New-Item -ItemType Junction -Path $FakeBuildToolsPath -Value $ActualBuildToolsDir.FullName
-        }
-        $FakePlatformPath = Join-Path "$env:ANDROID_HOME\platforms" "android-36"
-        if (-not (Test-Path $FakePlatformPath)) {
-            New-Item -ItemType Junction -Path $FakePlatformPath -Value $ActualPlatformDir.FullName
-        }
+      - name: Setup Android SDK & NDK
+        uses: android-actions/setup-android@v3
+        with:
+          api-level: ${{ env.ANDROID_COMPILE_SDK }}
+          ndk: ${{ env.ANDROID_NDK_VERSION }}
+          components: |
+            platform-tools
+            "platforms;android-${{ env.ANDROID_COMPILE_SDK }}"
+            "build-tools;36.0.0"
+            "ndk;${{ env.ANDROID_NDK_VERSION }}"
 
-        # 2. КОМПЛЕКСНОЕ ЛЕЧЕНИЕ SURFACE_CONTROL.H (баги Google NDK)
-        $TargetHeader = Get-ChildItem -Path "$env:ANDROID_HOME\ndk" -Recurse -Filter "surface_control.h" | Select-Object -First 1
-        if ($TargetHeader) {
-            $Content = Get-Content $TargetHeader.FullName -Raw
-            $Content = $Content -replace 'const ARect&\s+crop', 'const ARect* crop'
-            $Content = $Content -replace 'const ARect&\s+source', 'const ARect* source'
-            $Content = $Content -replace 'const ARect&\s+destination', 'const ARect* destination'
-            if ($Content -notmatch 'ASurfaceTransaction_OnBufferRelease') {
-                $InjectTypedef = "`n// Хак для совместимости со старым кодом автора`ntypedef void (*ASurfaceTransaction_OnBufferRelease)(void* context, int fence);`n"
-                $Content = $Content -replace '(#ifndef ANDROID_SURFACE_CONTROL_H)', "`$1`r`n$InjectTypedef"
-            }
-            Set-Content -Path $TargetHeader.FullName -Value $Content -Encoding UTF8
-        }
+      - name: Setup Rust & cargo-ndk
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          source $HOME/.cargo/env
+          rustup default stable
+          rustup target add aarch64-linux-android x86_64-linux-android
+          rustup target add aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu
+          cargo install --locked cargo-ndk
+          echo "${HOME}/.cargo/bin" >> $GITHUB_PATH
+        shell: bash
 
-        # 3. ПОЛНАЯ АДАПТАЦИЯ СКРИПТА СБОРКИ И МАНИФЕСТА ПОД API 31
-        $AuthScriptPath = "android-app\tools\build-apk.ps1"
-        if (Test-Path $AuthScriptPath) {
-            $ScriptContent = Get-Content $AuthScriptPath -Raw
-            $ScriptContent = $ScriptContent -replace '--min-sdk-version 33', '--min-sdk-version 31'
-            $ScriptContent = $ScriptContent -replace '--min-api 33', '--min-api 31'
-            $ScriptContent = $ScriptContent -replace '--target-sdk-version 36', '--target-sdk-version 31'
-            Set-Content -Path $AuthScriptPath -Value $ScriptContent -Encoding UTF8
-        }
-        $ManifestPath = "android-app\AndroidManifest.xml"
-        if (Test-Path $ManifestPath) {
-            $ManifestContent = Get-Content $ManifestPath -Raw
-            $ManifestContent = $ManifestContent -replace '<uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"\s*/>', ''
-            $ManifestContent = $ManifestContent -replace '<uses-permission android:name="android.permission.POST_NOTIFICATIONS"\s*/>', ''
-            $ManifestContent = $ManifestContent -replace 'android:foregroundServiceType="dataSync"', ''
-            Set-Content -Path $ManifestPath -Value $ManifestContent -Encoding UTF8
-        }
+      - name: Pre-download Vendored Dependencies
+        run: |
+          set -ex
+          chmod +x scripts/*.sh
+          ./scripts/ensure-deps.sh --verify-all
+          ./scripts/ensure-deps.sh termux-app
+          ./scripts/ensure-deps.sh wayland libffi xwayland pixman libdrm xkeyboard-config libhybris smithay mesa rutabaga_gfx gfxstream
+        shell: bash
 
-        # 4. БЕЗОПАСНЫЙ ИНЖЕКТ ЛОГГЕРА В MAINACTION.JAVA (Без опасных кавычек)
-        $JavaPath = "android-app\src\io\waylandie\display\MainActivity.java"
-        if (Test-Path $JavaPath) {
-            Write-Host "Внедряем глубокое логгирование ошибок в MainActivity..."
-            $JavaContent = Get-Content $JavaPath -Raw
-            
-            # Адаптация OnBackInvoked под Android 12
-            $JavaContent = $JavaContent -replace 'private OnBackInvokedCallback bridgeBackCallback;', 'private Object bridgeBackCallback;'
-            $RegPattern = '(?s)getOnBackInvokedDispatcher\(\)\s*\.registerOnBackInvokedCallback\s*\(\s*OnBackInvokedDispatcher\.PRIORITY_DEFAULT,\s*bridgeBackCallback\s*\);'
-            if ($JavaContent -match $RegPattern) {
-                $SafeRegBlock = "if (android.os.Build.VERSION.SDK_INT >= 33) { getOnBackInvokedDispatcher().registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, (OnBackInvokedCallback)bridgeBackCallback); }"
-                $JavaContent = $JavaContent -replace $RegPattern, $SafeRegBlock
-            }
-            $UnregPattern = '(?s)getOnBackInvokedDispatcher\(\)\s*\.unregisterOnBackInvokedCallback\s*\(\s*bridgeBackCallback\s*\);'
-            if ($JavaContent -match $UnregPattern) {
-                $SafeUnregBlock = "if (android.os.Build.VERSION.SDK_INT >= 33) { getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback((OnBackInvokedCallback)bridgeBackCallback); }"
-                $JavaContent = $JavaContent -replace $UnregPattern, $SafeUnregBlock
-            }
+      - name: Build and Install Wayland 1.25 Scanner & Headers
+        run: |
+          set -e
+          mkdir -p /tmp/wayland-src
+          curl -L "https://gitlab.freedesktop.org/wayland/wayland/-/archive/\( {{ env.WAYLAND_VERSION }}/wayland- \){{ env.WAYLAND_VERSION }}.tar.gz" \
+            | tar -xz -C /tmp/wayland-src --strip-components=1
+          
+          meson setup /tmp/wayland-src/build /tmp/wayland-src \
+            -Dtests=false -Ddocumentation=false -Dlibraries=true \
+            --prefix=/tmp/wayland-host
+          ninja -C /tmp/wayland-src/build install
+          
+          sudo rm -f /usr/bin/wayland-scanner
+          sudo cp /tmp/wayland-host/bin/wayland-scanner /usr/bin/wayland-scanner
+          sudo chmod +x /usr/bin/wayland-scanner
+          
+          sudo mkdir -p /usr/local/share/pkgconfig
+          sudo cp /tmp/wayland-host/lib/x86_64-linux-gnu/pkgconfig/wayland-scanner.pc /usr/local/share/pkgconfig/wayland-scanner.pc
+          sudo sed -i 's|wayland_scanner=.*|wayland_scanner=/usr/bin/wayland-scanner|g' /usr/local/share/pkgconfig/wayland-scanner.pc
+          
+          mkdir -p deps/xwayland-src/wayland/egl
+          cp /tmp/wayland-src/egl/wayland-egl-backend.h deps/xwayland-src/wayland/egl/
+          
+          echo "WAYLAND_SCANNER=/usr/bin/wayland-scanner" >> $GITHUB_ENV
+          echo "HOST_WAYLAND_INC=/tmp/wayland-host/include" >> $GITHUB_ENV
+          echo "PKG_CONFIG_PATH=/usr/local/share/pkgconfig" >> $GITHUB_ENV
+        shell: bash
 
-            # Код логгера
-            $LoggerCode = "`n Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() { @Override public void uncaughtException(Thread t, Throwable e) { try { java.io.File logFile = new java.io.File(getExternalFilesDir(null), new String(new char[]{ 'w','a','y','l','a','n','d','i','e','_','c','r','a','s','h','.','t','x','t' })); java.io.PrintWriter pw = new java.io.PrintWriter(new java.io.FileOutputStream(logFile, true)); pw.println(new String(new char[]{ 'C','R','A','S','H' })); pw.println(android.os.Build.VERSION.SDK_INT); e.printStackTrace(pw); pw.flush(); pw.close(); } catch (Exception ex) {} System.exit(1); } }); try { java.io.File sysLog = new java.io.File(getExternalFilesDir(null), new String(new char[]{ 'w','a','y','l','a','n','d','i','e','_','s','y','s','_','e','r','r','.','t','x','t' })); System.setErr(new java.io.PrintStream(new java.io.FileOutputStream(sysLog, true))); } catch (Exception ex) {}`n"
-            $JavaContent = $JavaContent -replace 'super\.onCreate\(savedInstanceState\);', "super.onCreate(savedInstanceState);$LoggerCode"
-            
-            # ФИКС: Вырезаем вызов несовместимого метода .setHidden()
-            $JavaContent = $JavaContent -replace '\.setHidden\([^)]+\)', ''
+      - name: Upgrade libffi and Hotfix build script
+        run: |
+          set -ex
+          sed -i 's|e2eda0cf72a0598b44278cc91860ea402273fa29\tv3.5.2|f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf\tv3.6.0|g' deps/deps.list
+          git -C deps/xwayland-src/libffi fetch origin f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf || true
+          git -C deps/xwayland-src/libffi checkout f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf || true
+          sed -i '/build_autotools libffi/i \  sed -i "s|LT_SYS_SYMBOL_USCORE|sys_symbol_underscore=no|g" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh
+        shell: bash
 
-            Set-Content -Path $JavaPath -Value $JavaContent -Encoding UTF8
-            Write-Host "Логгер успешно интегрирован и код очищен от .setHidden()!"
-        }
+      - name: Build Host Sysroot (needed for Mesa/gfxstream)
+        run: |
+          set -ex
+          ./scripts/build-host-sysroot.sh --abi=aarch64 --profile=prod
+          ./scripts/build-host-sysroot.sh --abi=x86_64 --profile=prod
+        shell: bash
 
-    # 5. Запускаем оригинальный PowerShell скрипт автора
-    - name: Build APK via Author's PowerShell Script
-      shell: pwsh
-      run: |
-        cd android-app
-        .\tools\build-apk.ps1 `
-          -RequireNative `
-          -NdkRoot "$env:ANDROID_NDK_ROOT" `
-          -SdkRoot "$env:ANDROID_HOME"
+      - name: Run Final Gradle Monolithic Build
+        run: |
+          set -ex
+          export ANDROID_NDK_HOME="\( {{ env.ANDROID_HOME }}/ndk/ \){{ env.ANDROID_NDK_VERSION }}"
+          export ANDROID_NDK_ROOT="${{ env.ANDROID_NDK_HOME }}"
+          export ANDROID_SDK_ROOT="${{ env.ANDROID_HOME }}"
+          
+          unset LDFLAGS
+          export C_INCLUDE_PATH="${{ env.HOST_WAYLAND_INC }}"
+          export CPLUS_INCLUDE_PATH="${{ env.HOST_WAYLAND_INC }}"
+          export PKG_CONFIG_PATH="/usr/local/share/pkgconfig"
+          
+          export NINJA_ARGS="-v"
+          export VERBOSE=1
+          
+          ./scripts/build-app.sh --abi=both \
+            --graphics=libhybris,libhybris-zink,gfxstream,cpu \
+            --xwayland
+        env:
+          RUSTFLAGS: "-A warnings"
+          PKG_CONFIG_ALLOW_CROSS: "1"
+        shell: bash
 
-    # 6. Собираем финальный бандл
-    - name: Prepare Release Bundle
-      shell: pwsh
-      run: |
-        New-Item -ItemType Directory -Force -Path .\release-dist\android-app
-        New-Item -ItemType Directory -Force -Path .\release-dist\linux-runtime
-        New-Item -ItemType Directory -Force -Path .\release-dist\scripts
-                
-        Copy-Item -Path .\android-app\out\waylandie-display-mvp.apk -Destination .\release-dist\android-app\
-        Copy-Item -Recurse -Force -Path .\linux-runtime\* -Destination .\release-dist\linux-runtime\
-        Copy-Item -Recurse -Force -Path .\scripts\* -Destination .\release-dist\scripts\
-        if (Test-Path .\README.md) { Copy-Item -Path .\README.md -Destination .\release-dist\ }
-                
-        Write-Host "=== Содержимое бандла ==="
-        Get-ChildItem -Path .\release-dist -Recurse
+      - name: Upload Complete TAWC APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: tawc-full-monolithic-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
 
-    # 7. Публикация готового архива
-    - name: Upload Complete WayLandIE Bundle
-      uses: actions/upload-artifact@v4
-      with:
-        name: WayLandIE-WindowsCompiled-Bundle
-        path: .\release-dist\
+      - name: Upload Generated Assets for Debugging
+        uses: actions/upload-artifact@v4
+        with:
+          name: tawc-built-native-libs
+          path: |
+            app/src/main/jniLibs
+            app/src/main/assets
+          if-no-files-found: warn
