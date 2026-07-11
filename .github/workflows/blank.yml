@@ -29,13 +29,16 @@ jobs:
       - name: Install Host Tools
         run: |
           sudo apt-get update
-          # Включает libtool-bin и pkgconf для предотвращения ошибок сборки Си-компонентов
+          # ИСПРАВЛЕНО: Возвращены библиотеки libx11-dev, libxcb1-dev, libxcb-xkb-dev, libx11-xcb-dev и libgles-dev
+          # Это необходимо, чтобы модули X11/XCB внутри libhybris и Mesa успешно находили заголовочные файлы.
           sudo apt-get install -y --no-install-recommends \
             build-essential git cmake ninja-build pkgconf pkg-config \
             python3 python3-pip python3-venv python3-mako \
             autoconf automake libtool libtool-bin m4 gettext bison flex \
             libwayland-dev wayland-protocols libxkbcommon-dev \
-            libffi-dev libvulkan-dev libarchive-tools \
+            libx11-dev libxcb1-dev libxcb-xkb-dev libx11-xcb-dev \
+            libffi-dev libegl1-mesa-dev libgles-dev libdrm-dev libepoxy-dev libexpat1-dev \
+            libvulkan-dev libarchive-tools \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu \
             curl unzip patchelf rsync
           sudo pip3 install --break-system-packages --upgrade meson
@@ -100,10 +103,10 @@ jobs:
           mkdir -p deps/xwayland-src/wayland/egl
           cp /tmp/wayland-src/egl/wayland-egl-backend.h deps/xwayland-src/wayland/egl/
           
-          # ИСПРАВЛЕНО: Копируем заголовок в структуру хоста для C_INCLUDE_PATH / CPLUS_INCLUDE_PATH
+          # Копируем заголовок в структуру хоста для C_INCLUDE_PATH / CPLUS_INCLUDE_PATH
           cp /tmp/wayland-src/egl/wayland-egl-backend.h /tmp/wayland-host/include/
           
-          # ИСПРАВЛЕНО: Копируем заголовок напрямую в исходники libhybris, чтобы вылечить фатальную ошибку компиляции
+          # Копируем заголовок напрямую в исходники libhybris
           mkdir -p deps/libhybris/hybris/egl/platforms/wayland
           cp /tmp/wayland-src/egl/wayland-egl-backend.h deps/libhybris/hybris/egl/platforms/wayland/
                     
@@ -126,7 +129,6 @@ jobs:
           set -ex
           export ANDROID_NDK_HOME="${{ env.ANDROID_HOME }}/ndk/${{ env.ANDROID_NDK_VERSION }}"
           
-          # ИСПРАВЛЕНО: Пути прокинуты как для C, так и для C++ (CPLUS) компилятора, собирающего libhybris (.cpp файлы)
           export C_INCLUDE_PATH="${{ env.HOST_WAYLAND_INC }}"
           export CPLUS_INCLUDE_PATH="${{ env.HOST_WAYLAND_INC }}"
           export PKG_CONFIG_PATH="/usr/local/share/pkgconfig"
