@@ -1,4 +1,4 @@
-name: Build TAWC — Full Monolithic Production Build
+name: Build TAWC — Arm64 Only
 
 on:
   push:
@@ -10,14 +10,14 @@ on:
 env:
   ANDROID_NDK_VERSION: "27.2.12479018"
   ANDROID_COMPILE_SDK: "36"
-  TAWC_ABIS: "arm64-v8a,x86_64"
+  TAWC_ABIS: "arm64-v8a"
   WAYLAND_VERSION: "1.25.0"
 
 jobs:
-  build-monolithic-apk:
-    name: Build TAWC Full Monolithic APK
+  build-arm64-apk:
+    name: Build TAWC Arm64 APK
     runs-on: ubuntu-24.04
-    timeout-minutes: 360
+    timeout-minutes: 300
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -37,14 +37,12 @@ jobs:
             libx11-dev libxcb1-dev libxcb-xkb-dev libx11-xcb-dev \
             libffi-dev libegl1-mesa-dev libgles-dev libdrm-dev libepoxy-dev libexpat1-dev \
             curl unzip bc patchelf rsync libvulkan-dev libarchive-tools \
-            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            gcc-x86-64-linux-gnu g++-x86-64-linux-gnu pkgconf
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu pkgconf
           
           sudo pip3 install --break-system-packages --upgrade meson
-          meson --version
         shell: bash
 
-      - name: Setup Java (for Gradle)
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
@@ -67,8 +65,8 @@ jobs:
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           source $HOME/.cargo/env
           rustup default stable
-          rustup target add aarch64-linux-android x86_64-linux-android
-          rustup target add aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu
+          rustup target add aarch64-linux-android
+          rustup target add aarch64-unknown-linux-gnu
           cargo install --locked cargo-ndk
           echo "${HOME}/.cargo/bin" >> $GITHUB_PATH
         shell: bash
@@ -78,8 +76,6 @@ jobs:
           set -ex
           chmod +x scripts/*.sh
           ./scripts/ensure-deps.sh --verify-all
-          ./scripts/ensure-deps.sh termux-app
-          ./scripts/ensure-deps.sh wayland libffi xwayland pixman libdrm xkeyboard-config libhybris smithay mesa rutabaga_gfx gfxstream
         shell: bash
 
       - name: Build and Install Wayland 1.25 Scanner & Headers
@@ -119,14 +115,7 @@ jobs:
           sed -i '/build_autotools libffi/i \  sed -i "s|LT_SYS_SYMBOL_USCORE|sys_symbol_underscore=no|g" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh
         shell: bash
 
-      - name: Build Host Sysroot (needed for Mesa/gfxstream)
-        run: |
-          set -ex
-          ./scripts/build-host-sysroot.sh --abi=aarch64 --profile=prod
-          ./scripts/build-host-sysroot.sh --abi=x86_64 --profile=prod
-        shell: bash
-
-      - name: Run Final Gradle Monolithic Build
+      - name: Run Build
         run: |
           set -ex
           export ANDROID_NDK_HOME="\( {{ env.ANDROID_HOME }}/ndk/ \){{ env.ANDROID_NDK_VERSION }}"
@@ -138,10 +127,7 @@ jobs:
           export CPLUS_INCLUDE_PATH="${{ env.HOST_WAYLAND_INC }}"
           export PKG_CONFIG_PATH="/usr/local/share/pkgconfig"
           
-          export NINJA_ARGS="-v"
-          export VERBOSE=1
-          
-          ./scripts/build-app.sh --abi=both \
+          ./scripts/build-app.sh --abi=arm64-v8a \
             --graphics=libhybris,libhybris-zink,gfxstream,cpu \
             --xwayland
         env:
@@ -149,18 +135,9 @@ jobs:
           PKG_CONFIG_ALLOW_CROSS: "1"
         shell: bash
 
-      - name: Upload Complete TAWC APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: tawc-full-monolithic-debug-apk
+          name: tawc-arm64-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-
-      - name: Upload Generated Assets for Debugging
-        uses: actions/upload-artifact@v4
-        with:
-          name: tawc-built-native-libs
-          path: |
-            app/src/main/jniLibs
-            app/src/main/assets
-          if-no-files-found: warn
