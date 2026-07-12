@@ -1,5 +1,4 @@
 name: Build TAWC — Arm64 Only
-
 on:
   push:
     branches: [ main, master ]
@@ -22,7 +21,7 @@ jobs:
       - name: Checkout Repository (My Fork)
         uses: actions/checkout@v4
         with:
-          repository: 'AkinAb55/tawc'   # ← Изменено на твой форк
+          repository: 'AkinAb55/tawc'
           ref: 'main'
           fetch-depth: 0
           submodules: recursive
@@ -81,22 +80,24 @@ jobs:
         run: |
           set -e
           mkdir -p /tmp/wayland-src
-          curl -L "https://gitlab.freedesktop.org/wayland/wayland/-/archive/\( {{ env.WAYLAND_VERSION }}/wayland- \){{ env.WAYLAND_VERSION }}.tar.gz" \
+          
+          # Ошибка исправлена здесь: убран мусор вокруг переменных окружения
+          curl -L "https://gitlab.freedesktop.org/wayland/wayland/-/archive/${{ env.WAYLAND_VERSION }}/wayland-${{ env.WAYLAND_VERSION }}.tar.gz" \
             | tar -xz -C /tmp/wayland-src --strip-components=1
-                    
+                              
           meson setup /tmp/wayland-src/build /tmp/wayland-src \
             -Dtests=false -Ddocumentation=false -Dlibraries=true \
             --prefix=/tmp/wayland-host
           ninja -C /tmp/wayland-src/build install
-                    
+                              
           sudo rm -f /usr/bin/wayland-scanner
           sudo cp /tmp/wayland-host/bin/wayland-scanner /usr/bin/wayland-scanner
           sudo chmod +x /usr/bin/wayland-scanner
-                    
+                              
           sudo mkdir -p /usr/local/share/pkgconfig
           sudo cp /tmp/wayland-host/lib/x86_64-linux-gnu/pkgconfig/wayland-scanner.pc /usr/local/share/pkgconfig/wayland-scanner.pc
           sudo sed -i 's|wayland_scanner=.*|wayland_scanner=/usr/bin/wayland-scanner|g' /usr/local/share/pkgconfig/wayland-scanner.pc
-                    
+                              
           mkdir -p deps/xwayland-src/wayland/egl
           cp /tmp/wayland-src/egl/wayland-egl-backend.h deps/xwayland-src/wayland/egl/
           
@@ -104,7 +105,7 @@ jobs:
           
           mkdir -p deps/libhybris/hybris/egl/platforms/wayland
           cp /tmp/wayland-src/egl/wayland-egl-backend.h deps/libhybris/hybris/egl/platforms/wayland/
-                    
+                              
           echo "WAYLAND_SCANNER=/usr/bin/wayland-scanner" >> $GITHUB_ENV
           echo "HOST_WAYLAND_INC=/tmp/wayland-host/include" >> $GITHUB_ENV
           echo "PKG_CONFIG_PATH=/usr/local/share/pkgconfig" >> $GITHUB_ENV
@@ -122,12 +123,13 @@ jobs:
       - name: Build App
         run: |
           set -ex
-          export ANDROID_NDK_HOME="\( {{ env.ANDROID_HOME }}/ndk/ \){{ env.ANDROID_NDK_VERSION }}"
-          
+          # Ошибка исправлена здесь: убран некорректный синтаксис пути к NDK
+          export ANDROID_NDK_HOME="${{ env.ANDROID_HOME }}/ndk/${{ env.ANDROID_NDK_VERSION }}"
+                    
           export C_INCLUDE_PATH="${{ env.HOST_WAYLAND_INC }}"
           export CPLUS_INCLUDE_PATH="${{ env.HOST_WAYLAND_INC }}"
           export PKG_CONFIG_PATH="/usr/local/share/pkgconfig"
-                    
+                              
           ./scripts/build-app.sh --abi=arm64-v8a \
             --graphics=libhybris,libhybris-zink,gfxstream,cpu \
             --xwayland
