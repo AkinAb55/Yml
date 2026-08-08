@@ -403,7 +403,9 @@ jobs:
       # ============================================================
       # 15. Verify project XML before MSBuild
       #
-      # This catches malformed .csproj modifications immediately.
+      # IMPORTANT:
+      # This step only validates the project structure.
+      # It does NOT modify the .csproj.
       # ============================================================
       - name: Verify project XML
         shell: pwsh
@@ -417,6 +419,10 @@ jobs:
           $projectFile = `
             (Resolve-Path ".\subsystem.master.csproj").Path
 
+          # --------------------------------------------------------
+          # A. Validate XML syntax
+          # --------------------------------------------------------
+
           try {
             [xml]$projectXml = Get-Content `
               $projectFile `
@@ -428,48 +434,116 @@ jobs:
 
           Write-Host "Project XML is valid."
 
-          $targetFrameworks = `
-            $projectXml.Project.PropertyGroup.TargetFrameworks
+          # --------------------------------------------------------
+          # B. Read TargetFrameworks safely
+          # --------------------------------------------------------
 
-          if (-not $targetFrameworks) {
+          $targetFrameworkNode = `
+            $projectXml.Project.PropertyGroup.TargetFrameworks |
+            Select-Object -First 1
+
+          if (-not $targetFrameworkNode) {
             throw "TargetFrameworks element was not found."
           }
 
+          $targetFrameworks = `
+            [string]$targetFrameworkNode
+
           Write-Host "TargetFrameworks: $targetFrameworks"
 
-          if ($targetFrameworks -notmatch "net11\.0-android") {
+          # Do NOT use PowerShell XML node comparison here.
+          # Convert explicitly to a normal string first.
+
+          if ($targetFrameworks -notlike "*net11.0-android*") {
             throw "net11.0-android target framework is missing."
           }
 
-          $androidPropertyGroups = @(
-            $projectXml.Project.PropertyGroup |
-              Where-Object {
-                $_.Condition -eq "'`$(TargetFramework)' == 'net11.0-android'"
-              }
-          )
+          Write-Host "net11.0-android target framework confirmed."
 
-          if ($androidPropertyGroups.Count -eq 0) {
-            throw "Android PropertyGroup was not found."
+          # --------------------------------------------------------
+          # C. Find Android PropertyGroup
+          #
+          # We intentionally do not require an exact XML Condition
+          # string. We inspect all PropertyGroups and look for the
+          # Android target condition.
+          # --------------------------------------------------------
+
+          $androidPropertyGroup = $null
+
+          foreach ($group in $projectXml.Project.PropertyGroup) {
+
+            $condition = [string]$group.Condition
+
+            if ($condition -and
+                $condition -match "TargetFramework.*net11\.0-android") {
+
+              $androidPropertyGroup = $group
+              break
+            }
+          }
+
+          if (-not $androidPropertyGroup) {
+            throw "Android PropertyGroup for net11.0-android was not found."
           }
 
           Write-Host "Android PropertyGroup confirmed."
 
-          # Diagnostics must remain normal SDK Compile items.
-          # They must NOT be manually inserted inside PropertyGroup.
-          $badCompile = Select-String `
+          # --------------------------------------------------------
+          # D. Check for malformed Compile placement
+          #
+          # A Compile Include is valid only inside ItemGroup.
+          # This check is intentionally informational here.
+          # --------------------------------------------------------
+
+          $compileLines = Select-String `
             -Path $projectFile `
             -Pattern '<Compile Include=' `
             -SimpleMatch
 
-          if ($badCompile) {
+          if ($compileLines) {
+
             Write-Host ""
-            Write-Host "Explicit Compile items found in project:"
-            $badCompile | ForEach-Object {
-              Write-Host $_.Line
+            Write-Host "Explicit Compile items found:"
+            
+            foreach ($line in $compileLines) {
+              Write-Host "  $($line.Line.Trim())"
             }
+
             Write-Host ""
-            Write-Host "These are allowed only as ItemGroup children."
+            Write-Host "Compile items detected in project."
+            Write-Host "MSBuild will validate their placement."
           }
+          else {
+            Write-Host ""
+            Write-Host "No explicit Compile Include entries found."
+            Write-Host "SDK-style implicit Compile inclusion remains active."
+          }
+
+          # --------------------------------------------------------
+          # E. Verify required Diagnostics files exist
+          # --------------------------------------------------------
+
+          $requiredDiagnostics = @(
+            ".\src\runspace\Diagnostics\Dg.cs",
+            ".\src\runspace\Diagnostics\AgentSettings.cs",
+            ".\src\runspace\Diagnostics\PackageInfoDb.cs",
+            ".\src\runspace\Diagnostics\SqliteProbe.cs"
+          )
+
+          Write-Host ""
+          Write-Host "Checking Diagnostics source files..."
+
+          foreach ($file in $requiredDiagnostics) {
+
+            if (-not (Test-Path $file)) {
+              throw "Required Diagnostics source is missing: $file"
+            }
+
+            Write-Host "  OK: $file"
+          }
+
+          Write-Host ""
+          Write-Host "Project XML validation completed successfully."
 
       # ============================================================
       # 16. Verify Android Compile items
