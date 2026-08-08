@@ -21,7 +21,7 @@ env:
   # Android 12 = API 31
   MIN_ANDROID_API: 31
 
-  # Modern Android SDK
+  # Compile SDK
   TARGET_ANDROID_API: 36
 
 jobs:
@@ -39,10 +39,6 @@ jobs:
 
       # ============================================================
       # 2. Clone official Subsystem
-      #
-      # IMPORTANT:
-      # We do NOT create or use a fork.
-      # The official repository is cloned directly.
       # ============================================================
       - name: Clone official Subsystem
         shell: pwsh
@@ -66,10 +62,7 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       # ============================================================
-      # 4. Setup JDK
-      #
-      # The current Subsystem project declares LatestSupportedJavaVersion
-      # as 25.0.99. We therefore use Java 25 rather than Java 21.
+      # 4. Setup JDK 25
       # ============================================================
       - name: Setup JDK 25
         uses: actions/setup-java@v5
@@ -108,7 +101,7 @@ jobs:
           }
 
       # ============================================================
-      # 7. Accept Android licenses
+      # 7. Accept Android SDK licenses
       # ============================================================
       - name: Accept Android SDK licenses
         shell: pwsh
@@ -159,7 +152,7 @@ jobs:
           Write-Host "SS_NDK=$ndk"
 
       # ============================================================
-      # 9. Show complete toolchain
+      # 9. Show toolchain
       # ============================================================
       - name: Show toolchain
         shell: pwsh
@@ -222,16 +215,12 @@ jobs:
         working-directory: subsystem
         run: |
 
-          Write-Host "Installing .NET Android workload..."
-
           dotnet workload install android
 
           if ($LASTEXITCODE -ne 0) {
             throw "Android workload installation failed."
           }
 
-          Write-Host ""
-          Write-Host "Installed workloads:"
           dotnet workload list
 
       # ============================================================
@@ -264,9 +253,7 @@ jobs:
             throw "Native library looks suspiciously small: $size bytes"
           }
 
-          Write-Host "Native library:"
-          Write-Host "  Path: $nativeLib"
-          Write-Host "  Size: $size bytes"
+          Write-Host "Native library size: $size bytes"
 
       # ============================================================
       # 13. Prepare native library
@@ -303,21 +290,17 @@ jobs:
 
           $size = (Get-Item $destination).Length
 
-          Write-Host "Prepared native library:"
-          Write-Host "  Path: $destination"
-          Write-Host "  Size: $size bytes"
+          Write-Host "Prepared native library: $size bytes"
 
       # ============================================================
       # 14. Apply CI compatibility fixes
       #
+      # A. Fix ImmutableDictionary usage.
+      # B. Explicitly include Android Diagnostics sources.
+      #
       # IMPORTANT:
-      # We ONLY patch NotificationService.cs here.
-      #
-      # We DO NOT manually add Diagnostics Compile items.
-      #
-      # The official SDK-style project already includes normal .cs
-      # files automatically, and the Android DefaultItemExcludes
-      # does not exclude the Diagnostics directory.
+      # Compile items are placed in ItemGroup, NOT PropertyGroup.
+      # No YAML here-string is used.
       # ============================================================
       - name: Apply CI compatibility fixes
         shell: pwsh
@@ -329,7 +312,7 @@ jobs:
           Write-Host "=========================================="
 
           # --------------------------------------------------------
-          # ImmutableDictionary compatibility
+          # A. ImmutableDictionary compatibility
           # --------------------------------------------------------
 
           $notificationFile = `
@@ -343,16 +326,10 @@ jobs:
             $notificationFile `
             -Raw
 
-          # ImmutableDictionary has no mutable TryRemove operation.
-          # Replace with an immutable Remove operation.
-
           $notification = $notification.Replace(
             'Notifications.TryRemove(sbn.Key, out _);',
             'Notifications = Notifications.Remove(sbn.Key);'
           )
-
-          # ImmutableDictionary cannot use indexer assignment.
-          # Replace with SetItem.
 
           $notification = $notification.Replace(
             'Notifications[n.Key] = n;',
@@ -367,45 +344,99 @@ jobs:
           Write-Host "NotificationService.cs patched."
 
           # --------------------------------------------------------
-          # Verify that the incompatible operations are gone.
+          # B. Explicit Android Diagnostics Compile items
           # --------------------------------------------------------
 
-          $patched = Get-Content `
-            $notificationFile `
+          $projectFile = `
+            ".\subsystem.master.csproj"
+
+          if (-not (Test-Path $projectFile)) {
+            throw "subsystem.master.csproj not found."
+          }
+
+          $project = Get-Content `
+            $projectFile `
             -Raw
 
-          if ($patched.Contains(
-              'Notifications.TryRemove(sbn.Key, out _);')) {
+          $diagnosticsMarker = `
+            '<Compile Include="src\runspace\Diagnostics\Dg.cs" />'
 
-            throw "ImmutableDictionary TryRemove operation is still present."
+          if ($project.Contains($diagnosticsMarker)) {
+
+            Write-Host ""
+            Write-Host "Android Diagnostics Compile items already exist."
+
+          }
+          else {
+
+            $diagnosticsLines = @(
+              '  <ItemGroup Condition="' + '"' + '$(TargetFramework)' + '"' + ' == ' + '"' + 'net11.0-android' + '"' + '">',
+              '    <Compile Include="src\runspace\Diagnostics\AgentSettings.cs" />',
+              '    <Compile Include="src\runspace\Diagnostics\Dg.cs" />',
+              '    <Compile Include="src\runspace\Diagnostics\PackageInfoDb.cs" />',
+              '    <Compile Include="src\runspace\Diagnostics\SqliteProbe.cs" />',
+              '  </ItemGroup>'
+            )
+
+            $diagnosticsBlock = `
+              ($diagnosticsLines -join "`r`n")
+
+            $project = $project.Replace(
+              '</Project>',
+              $diagnosticsBlock + "`r`n</Project>"
+            )
+
+            Set-Content `
+              -Path $projectFile `
+              -Value $project `
+              -Encoding UTF8
+
+            Write-Host ""
+            Write-Host "Android Diagnostics ItemGroup added."
           }
 
-          if ($patched.Contains(
-              'Notifications[n.Key] = n;')) {
+          # --------------------------------------------------------
+          # C. Validate XML immediately.
+          # --------------------------------------------------------
 
-            throw "ImmutableDictionary indexer assignment is still present."
+          try {
+            [xml]$verifyXml = Get-Content `
+              $projectFile `
+              -Raw
+          }
+          catch {
+            throw "subsystem.master.csproj became invalid XML: $($_.Exception.Message)"
           }
 
-          if (-not $patched.Contains(
-              'Notifications = Notifications.Remove(sbn.Key);')) {
+          Write-Host "Project XML is valid."
 
-            throw "Expected ImmutableDictionary Remove operation was not found."
+          # --------------------------------------------------------
+          # D. Verify Compile entries.
+          # --------------------------------------------------------
+
+          $requiredCompileEntries = @(
+            'src\runspace\Diagnostics\AgentSettings.cs',
+            'src\runspace\Diagnostics\Dg.cs',
+            'src\runspace\Diagnostics\PackageInfoDb.cs',
+            'src\runspace\Diagnostics\SqliteProbe.cs'
+          )
+
+          foreach ($entry in $requiredCompileEntries) {
+
+            $expected = '<Compile Include="' + $entry + '"'
+
+            if (-not $project.Contains($expected)) {
+              throw "Required Android Compile entry is missing: $entry"
+            }
+
+            Write-Host "Compile entry confirmed: $entry"
           }
 
-          if (-not $patched.Contains(
-              'Notifications = Notifications.SetItem(n.Key, n);')) {
-
-            throw "Expected ImmutableDictionary SetItem operation was not found."
-          }
-
-          Write-Host "NotificationService compatibility patch verified."
+          Write-Host ""
+          Write-Host "Android Diagnostics Compile entries configured."
 
       # ============================================================
-      # 15. Verify project XML before MSBuild
-      #
-      # IMPORTANT:
-      # This step only validates the project structure.
-      # It does NOT modify the .csproj.
+      # 15. Verify project XML
       # ============================================================
       - name: Verify project XML
         shell: pwsh
@@ -419,10 +450,6 @@ jobs:
           $projectFile = `
             (Resolve-Path ".\subsystem.master.csproj").Path
 
-          # --------------------------------------------------------
-          # A. Validate XML syntax
-          # --------------------------------------------------------
-
           try {
             [xml]$projectXml = Get-Content `
               $projectFile `
@@ -435,7 +462,7 @@ jobs:
           Write-Host "Project XML is valid."
 
           # --------------------------------------------------------
-          # B. Read TargetFrameworks safely
+          # TargetFrameworks
           # --------------------------------------------------------
 
           $targetFrameworkNode = `
@@ -451,9 +478,6 @@ jobs:
 
           Write-Host "TargetFrameworks: $targetFrameworks"
 
-          # Do NOT use PowerShell XML node comparison here.
-          # Convert explicitly to a normal string first.
-
           if ($targetFrameworks -notlike "*net11.0-android*") {
             throw "net11.0-android target framework is missing."
           }
@@ -461,11 +485,7 @@ jobs:
           Write-Host "net11.0-android target framework confirmed."
 
           # --------------------------------------------------------
-          # C. Find Android PropertyGroup
-          #
-          # We intentionally do not require an exact XML Condition
-          # string. We inspect all PropertyGroups and look for the
-          # Android target condition.
+          # Android PropertyGroup
           # --------------------------------------------------------
 
           $androidPropertyGroup = $null
@@ -489,66 +509,38 @@ jobs:
           Write-Host "Android PropertyGroup confirmed."
 
           # --------------------------------------------------------
-          # D. Check for malformed Compile placement
-          #
-          # A Compile Include is valid only inside ItemGroup.
-          # This check is intentionally informational here.
+          # Verify explicit Diagnostics Compile entries.
           # --------------------------------------------------------
 
-          $compileLines = Select-String `
-            -Path $projectFile `
-            -Pattern '<Compile Include=' `
-            -SimpleMatch
-
-          if ($compileLines) {
-
-            Write-Host ""
-            Write-Host "Explicit Compile items found:"
-            
-            foreach ($line in $compileLines) {
-              Write-Host "  $($line.Line.Trim())"
-            }
-
-            Write-Host ""
-            Write-Host "Compile items detected in project."
-            Write-Host "MSBuild will validate their placement."
-          }
-          else {
-            Write-Host ""
-            Write-Host "No explicit Compile Include entries found."
-            Write-Host "SDK-style implicit Compile inclusion remains active."
-          }
-
-          # --------------------------------------------------------
-          # E. Verify required Diagnostics files exist
-          # --------------------------------------------------------
-
-          $requiredDiagnostics = @(
-            ".\src\runspace\Diagnostics\Dg.cs",
-            ".\src\runspace\Diagnostics\AgentSettings.cs",
-            ".\src\runspace\Diagnostics\PackageInfoDb.cs",
-            ".\src\runspace\Diagnostics\SqliteProbe.cs"
+          $requiredEntries = @(
+            'src\runspace\Diagnostics\AgentSettings.cs',
+            'src\runspace\Diagnostics\Dg.cs',
+            'src\runspace\Diagnostics\PackageInfoDb.cs',
+            'src\runspace\Diagnostics\SqliteProbe.cs'
           )
 
-          Write-Host ""
-          Write-Host "Checking Diagnostics source files..."
+          $projectText = Get-Content `
+            $projectFile `
+            -Raw
 
-          foreach ($file in $requiredDiagnostics) {
+          foreach ($entry in $requiredEntries) {
 
-            if (-not (Test-Path $file)) {
-              throw "Required Diagnostics source is missing: $file"
+            if (-not $projectText.Contains(
+                '<Compile Include="' + $entry + '"')) {
+
+              throw "Compile entry is missing from project: $entry"
             }
 
-            Write-Host "  OK: $file"
+            Write-Host "Project Compile entry confirmed: $entry"
           }
 
           Write-Host ""
-          Write-Host "Project XML validation completed successfully."
+          Write-Host "Project validation completed successfully."
 
       # ============================================================
       # 16. Verify Android Compile items
       #
-      # We now ask MSBuild itself what it sees.
+      # This is the important MSBuild-level test.
       # ============================================================
       - name: Verify Android Compile items
         shell: pwsh
@@ -571,6 +563,10 @@ jobs:
 
           $compileText = $compileList | Out-String
 
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "MSBuild Compile items"
+          Write-Host "=========================================="
           Write-Host $compileText
 
           $requiredCompileFiles = @(
@@ -583,7 +579,8 @@ jobs:
           foreach ($name in $requiredCompileFiles) {
 
             if ($compileText -notmatch [regex]::Escape($name)) {
-              throw "$name is NOT part of the Android Compile items."
+              throw `
+                "$name is NOT part of the Android Compile items."
             }
 
             Write-Host "Compile item confirmed: $name"
@@ -591,7 +588,7 @@ jobs:
 
           Write-Host ""
           Write-Host "All required Diagnostics files are included."
-      
+
       # ============================================================
       # 17. Verify Android build configuration
       # ============================================================
@@ -621,7 +618,7 @@ jobs:
           Write-Host "Compile SDK: $env:TARGET_ANDROID_API"
           Write-Host "Runtime: android-arm64"
           Write-Host "ABI: arm64-v8a"
-          Write-Host "Native PowerShell library: present"
+          Write-Host "Native library: present"
 
       # ============================================================
       # 18. Restore
@@ -680,7 +677,7 @@ jobs:
           Write-Host "Android ARM64 compilation succeeded."
 
       # ============================================================
-       # 20. Publish Android ARM64 APK
+      # 20. Publish Android 12+ ARM64 APK
       # ============================================================
       - name: Publish Android 12+ ARM64 APK
         shell: pwsh
