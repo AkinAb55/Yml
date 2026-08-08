@@ -243,13 +243,13 @@ jobs:
             -Value $notification `
             -Encoding UTF8
           
-          # C. Android 12 minimum
+          # C. Android 12 minimum (Targeting exact csproj line)
           $projectFile = ".\subsystem.master.csproj"
           $project = Get-Content `
             $projectFile `
             -Raw
           $project = $project -replace `
-            '<SupportedOSPlatformVersion>36\.0</SupportedOSPlatformVersion>', `
+            '<SupportedOSPlatformVersion Condition="\''\$\(SupportedOSPlatformVersion\)\'' == \'\'\'\'">36\.0</SupportedOSPlatformVersion>', `
             '<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier(''$(TargetFramework)'')) == ''android''">31.0</SupportedOSPlatformVersion><SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier(''$(TargetFramework)'')) != ''android''">36.0</SupportedOSPlatformVersion>'
           Set-Content `
             -Path $projectFile `
@@ -268,7 +268,7 @@ jobs:
           Write-Host "CI compatibility patches applied."
 
       # ============================================================
-      # 14. Verify native library and Android minimum (FIXED REGEX)
+      # 14. Verify native library and Android minimum
       # ============================================================
       - name: Verify build inputs
         shell: pwsh
@@ -286,7 +286,7 @@ jobs:
           $project = Get-Content `
             ".\subsystem.master.csproj" `
             -Raw
-          if ($project -notmatch "SupportedOSPlatformVersion.*android.*31\.0") {
+          if ($project -notmatch "SupportedOSPlatformVersion.*31\.0") {
             throw "Android minimum API 31 was not configured."
           }
           Write-Host "Android minimum API: 31"
