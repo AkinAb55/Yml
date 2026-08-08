@@ -243,35 +243,34 @@ jobs:
             -Value $notification `
             -Encoding UTF8
           
-          # C. Android 12 minimum (Safe replacement without parser errors)
+          # C. Android 12 minimum & include diagnostics for Android
           $projectFile = ".\subsystem.master.csproj"
           $project = Get-Content `
             $projectFile `
             -Raw
+            
           $targetLine = '<SupportedOSPlatformVersion Condition="''$(SupportedOSPlatformVersion)'' == ''''">36.0</SupportedOSPlatformVersion>'
           $replacement = '<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier(''$(TargetFramework)'')) == ''android''">31.0</SupportedOSPlatformVersion><SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier(''$(TargetFramework)'')) != ''android''">36.0</SupportedOSPlatformVersion>'
           
-          if ($project -notcontains $targetLine) {
-            # Fallback replace using string search if exact match fails
-            $project = $project.Replace('36.0</SupportedOSPlatformVersion>', '36.0</SupportedOSPlatformVersion>')
-          }
           $project = $project.Replace($targetLine, $replacement)
+          
+          # Force inclusion of diagnostics source files for Android build
+          $diagnosticsInclusion = @"
+          
+          <ItemGroup Condition="'$(TargetFramework)' == 'net11.0-android'">
+            <Compile Include="src\runspace\Diagnostics\*.cs" />
+          </ItemGroup>
+          </Project>
+          "@
+          
+          $project = $project.TrimEnd().Replace('</Project>', $diagnosticsInclusion)
           
           Set-Content `
             -Path $projectFile `
             -Value $project `
             -Encoding UTF8
           
-          # D. Display resulting configuration
-          Write-Host ""
-          Write-Host "=============================="
-          Write-Host "Patched project configuration"
-          Write-Host "=============================="
-          Select-String `
-            -Path $projectFile `
-            -Pattern "SupportedOSPlatformVersion"
-          Write-Host ""
-          Write-Host "CI compatibility patches applied."
+          Write-Host "CI compatibility patches applied successfully."
 
       # ============================================================
       # 14. Verify native library and Android minimum
@@ -324,7 +323,7 @@ jobs:
             -r android-arm64 `
             --no-restore `
             -p:SupportedOSPlatformVersion=31.0 `
-            -p:AndroidSupportedAbis=arm64-v8a `
+            -p:RuntimeIdentifiers=android-arm64 `
             -p:AndroidSdkDirectory="$env:ANDROID_HOME"
           if ($LASTEXITCODE -ne 0) {
             throw "Android ARM64 compilation failed."
@@ -345,7 +344,7 @@ jobs:
             --no-restore `
             -p:SubsystemRelease=true `
             -p:SupportedOSPlatformVersion=31.0 `
-            -p:AndroidSupportedAbis=arm64-v8a `
+            -p:RuntimeIdentifiers=android-arm64 `
             -p:AndroidSdkDirectory="$env:ANDROID_HOME"
           if ($LASTEXITCODE -ne 0) {
             throw "Android publish failed."
