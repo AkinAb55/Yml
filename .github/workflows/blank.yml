@@ -17,16 +17,20 @@ permissions:
 env:
   DOTNET_VERSION: 11.0.100-preview.5.26302.115
   ANDROID_NDK_VERSION: 27.2.12479018
-  # Android 12 = API 31.
+
+  # Android 12 = API 31
   MIN_ANDROID_API: 31
-  # Compile with modern Android SDK.
+
+  # Modern Android SDK
   TARGET_ANDROID_API: 36
 
 jobs:
   build:
     name: Build Subsystem ARM64 APK for Android 12+
     runs-on: windows-latest
+
     steps:
+
       # ============================================================
       # 1. Checkout workflow repository
       # ============================================================
@@ -35,6 +39,10 @@ jobs:
 
       # ============================================================
       # 2. Clone official Subsystem
+      #
+      # IMPORTANT:
+      # We do NOT create or use a fork.
+      # The official repository is cloned directly.
       # ============================================================
       - name: Clone official Subsystem
         shell: pwsh
@@ -42,9 +50,11 @@ jobs:
           git clone --depth 1 `
             https://github.com/MansfieldPlumbing/Subsystem.git `
             subsystem
+
           if ($LASTEXITCODE -ne 0) {
             throw "Failed to clone Subsystem."
           }
+
           Write-Host "Subsystem cloned successfully."
 
       # ============================================================
@@ -56,13 +66,16 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       # ============================================================
-      # 4. Setup JDK 21
+      # 4. Setup JDK
+      #
+      # The current Subsystem project declares LatestSupportedJavaVersion
+      # as 25.0.99. We therefore use Java 25 rather than Java 21.
       # ============================================================
-      - name: Setup JDK 21
+      - name: Setup JDK 25
         uses: actions/setup-java@v5
         with:
           distribution: microsoft
-          java-version: '21'
+          java-version: '25'
 
       # ============================================================
       # 5. Setup Android SDK
@@ -79,14 +92,17 @@ jobs:
           $sdkmanager = Join-Path `
             $env:ANDROID_HOME `
             "cmdline-tools\latest\bin\sdkmanager.bat"
+
           if (-not (Test-Path $sdkmanager)) {
             throw "sdkmanager not found: $sdkmanager"
           }
+
           & $sdkmanager `
             "platform-tools" `
             "platforms;android-${env:TARGET_ANDROID_API}" `
             "build-tools;36.0.0" `
             "ndk;${env:ANDROID_NDK_VERSION}"
+
           if ($LASTEXITCODE -ne 0) {
             throw "Android SDK/NDK installation failed."
           }
@@ -100,9 +116,15 @@ jobs:
           $sdkmanager = Join-Path `
             $env:ANDROID_HOME `
             "cmdline-tools\latest\bin\sdkmanager.bat"
+
+          if (-not (Test-Path $sdkmanager)) {
+            throw "sdkmanager not found: $sdkmanager"
+          }
+
           1..50 | ForEach-Object {
             "y"
           } | & $sdkmanager --licenses
+
           if ($LASTEXITCODE -ne 0) {
             throw "Android license acceptance failed."
           }
@@ -116,38 +138,45 @@ jobs:
           $ndk = Join-Path `
             $env:ANDROID_HOME `
             "ndk\${env:ANDROID_NDK_VERSION}"
+
           if (-not (Test-Path $ndk)) {
             throw "NDK not found: $ndk"
           }
+
           "ANDROID_NDK_HOME=$ndk" |
             Out-File `
               -FilePath $env:GITHUB_ENV `
               -Append `
               -Encoding utf8
+
           "SS_NDK=$ndk" |
             Out-File `
               -FilePath $env:GITHUB_ENV `
               -Append `
               -Encoding utf8
+
           Write-Host "ANDROID_NDK_HOME=$ndk"
           Write-Host "SS_NDK=$ndk"
 
       # ============================================================
-      # 9. Show toolchain
+      # 9. Show complete toolchain
       # ============================================================
       - name: Show toolchain
         shell: pwsh
         working-directory: subsystem
         run: |
+
           Write-Host "=========================================="
           Write-Host ".NET"
           Write-Host "=========================================="
           dotnet --info
+
           Write-Host ""
           Write-Host "=========================================="
           Write-Host "Java"
           Write-Host "=========================================="
           java -version
+
           Write-Host ""
           Write-Host "=========================================="
           Write-Host "Android"
@@ -163,19 +192,25 @@ jobs:
         shell: pwsh
         working-directory: subsystem
         run: |
+
           Write-Host "Checking required source files..."
+
           $requiredFiles = @(
             ".\subsystem.master.csproj",
             ".\src\runspace\Diagnostics\Dg.cs",
             ".\src\runspace\Diagnostics\AgentSettings.cs",
             ".\src\runspace\Diagnostics\PackageInfoDb.cs",
             ".\src\runspace\Diagnostics\SqliteProbe.cs",
-            ".\src\runspace\native\build-native.ps1"
+            ".\src\runspace\native\build-native.ps1",
+            ".\src\runspace\Services\NotificationService.cs"
           )
+
           foreach ($file in $requiredFiles) {
+
             if (-not (Test-Path $file)) {
               throw "Required source file is missing: $file"
             }
+
             Write-Host "OK: $file"
           }
 
@@ -186,35 +221,52 @@ jobs:
         shell: pwsh
         working-directory: subsystem
         run: |
+
+          Write-Host "Installing .NET Android workload..."
+
           dotnet workload install android
+
           if ($LASTEXITCODE -ne 0) {
             throw "Android workload installation failed."
           }
+
+          Write-Host ""
+          Write-Host "Installed workloads:"
           dotnet workload list
 
       # ============================================================
-      # 12. Build native PowerShell library
+      # 12. Build native PowerShell Android library
       # ============================================================
       - name: Build native PowerShell Android library
         shell: pwsh
         working-directory: subsystem\src\runspace\native
         run: |
+
           Write-Host "=========================================="
           Write-Host "Building native PowerShell Android library"
           Write-Host "=========================================="
+
           & .\build-native.ps1
+
           if ($LASTEXITCODE -ne 0) {
             throw "Native PowerShell build failed."
           }
+
           $nativeLib = ".\libs\arm64-v8a\libpsl-android.so"
+
           if (-not (Test-Path $nativeLib)) {
             throw "Native library was not created: $nativeLib"
           }
+
           $size = (Get-Item $nativeLib).Length
+
           if ($size -lt 1000) {
             throw "Native library looks suspiciously small: $size bytes"
           }
-          Write-Host "Native library size: $size bytes"
+
+          Write-Host "Native library:"
+          Write-Host "  Path: $nativeLib"
+          Write-Host "  Size: $size bytes"
 
       # ============================================================
       # 13. Prepare native library
@@ -223,212 +275,348 @@ jobs:
         shell: pwsh
         working-directory: subsystem
         run: |
+
           $source = `
             ".\src\runspace\native\libs\arm64-v8a\libpsl-android.so"
+
           $destination = `
             ".\src\runspace\libs\arm64-v8a\libpsl-android.so"
+
           if (-not (Test-Path $source)) {
             throw "Native library source not found: $source"
           }
+
           New-Item `
             -ItemType Directory `
             -Force `
             -Path ".\src\runspace\libs\arm64-v8a" |
             Out-Null
+
           Copy-Item `
             -Path $source `
             -Destination $destination `
             -Force
+
           if (-not (Test-Path $destination)) {
             throw "Native library was not copied."
           }
+
           $size = (Get-Item $destination).Length
-          Write-Host "Prepared native library: $size bytes"
+
+          Write-Host "Prepared native library:"
+          Write-Host "  Path: $destination"
+          Write-Host "  Size: $size bytes"
 
       # ============================================================
       # 14. Apply CI compatibility fixes
       #
       # IMPORTANT:
-      # Explicitly include Android Diagnostics sources.
+      # We ONLY patch NotificationService.cs here.
+      #
+      # We DO NOT manually add Diagnostics Compile items.
+      #
+      # The official SDK-style project already includes normal .cs
+      # files automatically, and the Android DefaultItemExcludes
+      # does not exclude the Diagnostics directory.
       # ============================================================
       - name: Apply CI compatibility fixes
         shell: pwsh
         working-directory: subsystem
         run: |
+
           Write-Host "=========================================="
           Write-Host "Applying CI compatibility fixes"
           Write-Host "=========================================="
+
           # --------------------------------------------------------
-          # A. ImmutableDictionary compatibility
+          # ImmutableDictionary compatibility
           # --------------------------------------------------------
+
           $notificationFile = `
             ".\src\runspace\Services\NotificationService.cs"
+
           if (-not (Test-Path $notificationFile)) {
             throw "NotificationService.cs not found."
           }
+
           $notification = Get-Content `
             $notificationFile `
             -Raw
+
+          # ImmutableDictionary has no mutable TryRemove operation.
+          # Replace with an immutable Remove operation.
+
           $notification = $notification.Replace(
             'Notifications.TryRemove(sbn.Key, out _);',
             'Notifications = Notifications.Remove(sbn.Key);'
           )
+
+          # ImmutableDictionary cannot use indexer assignment.
+          # Replace with SetItem.
+
           $notification = $notification.Replace(
             'Notifications[n.Key] = n;',
             'Notifications = Notifications.SetItem(n.Key, n);'
           )
+
           Set-Content `
             -Path $notificationFile `
             -Value $notification `
             -Encoding UTF8
+
           Write-Host "NotificationService.cs patched."
+
           # --------------------------------------------------------
-          # B. Explicitly include Android Diagnostics sources
-          #
-          # The current SDK-style project normally discovers these
-          # automatically, but the Android compilation currently
-          # reports Dg/AgentSettings as missing.
-          #
-          # We therefore make their inclusion explicit.
+          # Verify that the incompatible operations are gone.
           # --------------------------------------------------------
-          $projectFile = ".\subsystem.master.csproj"
-          $project = Get-Content `
-            $projectFile `
+
+          $patched = Get-Content `
+            $notificationFile `
             -Raw
-          $androidPropertyMarker = `
-            "<PropertyGroup Condition=""'`$(TargetFramework)' == 'net11.0-android'"">"
-          if (-not $project.Contains($androidPropertyMarker)) {
-            throw "Android PropertyGroup was not found."
+
+          if ($patched.Contains(
+              'Notifications.TryRemove(sbn.Key, out _);')) {
+
+            throw "ImmutableDictionary TryRemove operation is still present."
           }
-          $compileBlock = @'
-              <Compile Include="src\runspace\Diagnostics\AgentSettings.cs" />
-              <Compile Include="src\runspace\Diagnostics\Dg.cs" />
-              <Compile Include="src\runspace\Diagnostics\PackageInfoDb.cs" />
-              <Compile Include="src\runspace\Diagnostics\SqliteProbe.cs" />
-          '@
-          if ($project -notmatch `
-              'Compile Include="src\\runspace\\Diagnostics\\Dg\.cs"') {
-            $project = $project.Replace(
-              $androidPropertyMarker,
-              $androidPropertyMarker + $compileBlock
-            )
+
+          if ($patched.Contains(
+              'Notifications[n.Key] = n;')) {
+
+            throw "ImmutableDictionary indexer assignment is still present."
           }
-          Set-Content `
-            -Path $projectFile `
-            -Value $project `
-            -Encoding UTF8
-          Write-Host ""
-          Write-Host "Android Diagnostics sources explicitly enabled."
+
+          if (-not $patched.Contains(
+              'Notifications = Notifications.Remove(sbn.Key);')) {
+
+            throw "Expected ImmutableDictionary Remove operation was not found."
+          }
+
+          if (-not $patched.Contains(
+              'Notifications = Notifications.SetItem(n.Key, n);')) {
+
+            throw "Expected ImmutableDictionary SetItem operation was not found."
+          }
+
+          Write-Host "NotificationService compatibility patch verified."
 
       # ============================================================
-      # 15. Inspect MSBuild Compile items
+      # 15. Verify project XML before MSBuild
       #
-      # This is critical. We want to prove that Dg.cs and
-      # AgentSettings.cs are actually part of the Android build.
+      # This catches malformed .csproj modifications immediately.
+      # ============================================================
+      - name: Verify project XML
+        shell: pwsh
+        working-directory: subsystem
+        run: |
+
+          Write-Host "=========================================="
+          Write-Host "Validating subsystem.master.csproj"
+          Write-Host "=========================================="
+
+          $projectFile = `
+            (Resolve-Path ".\subsystem.master.csproj").Path
+
+          try {
+            [xml]$projectXml = Get-Content `
+              $projectFile `
+              -Raw
+          }
+          catch {
+            throw "subsystem.master.csproj is not valid XML: $($_.Exception.Message)"
+          }
+
+          Write-Host "Project XML is valid."
+
+          $targetFrameworks = `
+            $projectXml.Project.PropertyGroup.TargetFrameworks
+
+          if (-not $targetFrameworks) {
+            throw "TargetFrameworks element was not found."
+          }
+
+          Write-Host "TargetFrameworks: $targetFrameworks"
+
+          if ($targetFrameworks -notmatch "net11\.0-android") {
+            throw "net11.0-android target framework is missing."
+          }
+
+          $androidPropertyGroups = @(
+            $projectXml.Project.PropertyGroup |
+              Where-Object {
+                $_.Condition -eq "'`$(TargetFramework)' == 'net11.0-android'"
+              }
+          )
+
+          if ($androidPropertyGroups.Count -eq 0) {
+            throw "Android PropertyGroup was not found."
+          }
+
+          Write-Host "Android PropertyGroup confirmed."
+
+          # Diagnostics must remain normal SDK Compile items.
+          # They must NOT be manually inserted inside PropertyGroup.
+          $badCompile = Select-String `
+            -Path $projectFile `
+            -Pattern '<Compile Include=' `
+            -SimpleMatch
+
+          if ($badCompile) {
+            Write-Host ""
+            Write-Host "Explicit Compile items found in project:"
+            $badCompile | ForEach-Object {
+              Write-Host $_.Line
+            }
+            Write-Host ""
+            Write-Host "These are allowed only as ItemGroup children."
+          }
+
+      # ============================================================
+      # 16. Verify Android Compile items
+      #
+      # We now ask MSBuild itself what it sees.
       # ============================================================
       - name: Verify Android Compile items
         shell: pwsh
         working-directory: subsystem
         run: |
+
           Write-Host "=========================================="
           Write-Host "Checking Android Compile items"
           Write-Host "=========================================="
+
           $compileList = `
             dotnet msbuild .\subsystem.master.csproj `
               -p:TargetFramework=net11.0-android `
               -p:SupportedOSPlatformVersion=31.0 `
               -getItem:Compile
+
           if ($LASTEXITCODE -ne 0) {
             throw "Could not query MSBuild Compile items."
           }
+
           $compileText = $compileList | Out-String
+
           Write-Host $compileText
+
           $requiredCompileFiles = @(
             "Dg.cs",
             "AgentSettings.cs",
             "PackageInfoDb.cs",
             "SqliteProbe.cs"
           )
+
           foreach ($name in $requiredCompileFiles) {
+
             if ($compileText -notmatch [regex]::Escape($name)) {
               throw "$name is NOT part of the Android Compile items."
             }
+
             Write-Host "Compile item confirmed: $name"
           }
+
           Write-Host ""
           Write-Host "All required Diagnostics files are included."
-
+      
       # ============================================================
-      # 16. Verify Android build configuration
+      # 17. Verify Android build configuration
       # ============================================================
       - name: Verify Android build configuration
         shell: pwsh
         working-directory: subsystem
         run: |
+
           $project = Get-Content `
             ".\subsystem.master.csproj" `
             -Raw
+
           if ($project -notmatch "net11\.0-android") {
             throw "Android target framework not found."
           }
+
           if (-not (Test-Path `
               ".\src\runspace\libs\arm64-v8a\libpsl-android.so")) {
             throw "ARM64 native library is missing."
           }
+
+          Write-Host "=========================================="
+          Write-Host "Android build configuration"
+          Write-Host "=========================================="
           Write-Host "Target framework: net11.0-android"
-          Write-Host "Minimum Android API: 31"
-          Write-Host "Compile SDK: 36"
+          Write-Host "Minimum Android API: $env:MIN_ANDROID_API"
+          Write-Host "Compile SDK: $env:TARGET_ANDROID_API"
           Write-Host "Runtime: android-arm64"
           Write-Host "ABI: arm64-v8a"
+          Write-Host "Native PowerShell library: present"
 
       # ============================================================
-      # 17. Restore
+      # 18. Restore
       # ============================================================
       - name: Restore Subsystem
         shell: pwsh
         working-directory: subsystem
         run: |
-          dotnet restore .\subsystem.master.csproj
+
+          Write-Host "=========================================="
+          Write-Host "Restoring Subsystem"
+          Write-Host "=========================================="
+
+          dotnet restore .\subsystem.master.csproj `
+            -p:TargetFramework=net11.0-android `
+            -p:SupportedOSPlatformVersion=31.0 `
+            -p:AndroidSdkDirectory="$env:ANDROID_HOME"
+
           if ($LASTEXITCODE -ne 0) {
             throw "dotnet restore failed."
           }
 
+          Write-Host "Restore succeeded."
+
       # ============================================================
-      # 18. Build Android ARM64
+      # 19. Build Android ARM64
       # ============================================================
       - name: Build Android ARM64
         shell: pwsh
         working-directory: subsystem
         run: |
+
           Write-Host "=========================================="
           Write-Host "Building Subsystem for Android ARM64"
           Write-Host "=========================================="
-          Write-Host "Minimum Android API: 31"
-          Write-Host "Compile SDK: 36"
+
+          Write-Host "Minimum Android API: $env:MIN_ANDROID_API"
+          Write-Host "Compile SDK: $env:TARGET_ANDROID_API"
           Write-Host "Runtime: android-arm64"
+          Write-Host "ABI: arm64-v8a"
+
           dotnet build .\subsystem.master.csproj `
             -c Release `
             -f net11.0-android `
             -r android-arm64 `
             --no-restore `
+            -p:SubsystemRelease=true `
             -p:SupportedOSPlatformVersion=31.0 `
             -p:AndroidSdkDirectory="$env:ANDROID_HOME"
+
           if ($LASTEXITCODE -ne 0) {
             throw "Android ARM64 compilation failed."
           }
+
           Write-Host ""
           Write-Host "Android ARM64 compilation succeeded."
 
       # ============================================================
-      # 19. Publish APK
+       # 20. Publish Android ARM64 APK
       # ============================================================
       - name: Publish Android 12+ ARM64 APK
         shell: pwsh
         working-directory: subsystem
         run: |
+
           Write-Host "=========================================="
           Write-Host "Publishing Android ARM64 APK"
           Write-Host "=========================================="
+
           dotnet publish .\subsystem.master.csproj `
             -c Release `
             -f net11.0-android `
@@ -438,50 +626,60 @@ jobs:
             -p:SubsystemRelease=true `
             -p:SupportedOSPlatformVersion=31.0 `
             -p:AndroidSdkDirectory="$env:ANDROID_HOME"
+
           if ($LASTEXITCODE -ne 0) {
             throw "Android publish failed."
           }
+
           Write-Host ""
           Write-Host "Android publish succeeded."
 
       # ============================================================
-      # 20. Find generated APK
+      # 21. Find generated APK
       # ============================================================
       - name: Find generated APK
         shell: pwsh
         working-directory: subsystem
         run: |
+
           Write-Host "Searching for APK files..."
+
           $apks = Get-ChildItem `
             -Path . `
             -Filter *.apk `
             -Recurse `
             -File
+
           if (-not $apks) {
             throw "No APK was produced."
           }
+
           Write-Host ""
           Write-Host "=========================================="
           Write-Host "APK FILES"
           Write-Host "=========================================="
+
           foreach ($apk in $apks) {
+
             Write-Host ""
             Write-Host "FILE: $($apk.FullName)"
             Write-Host "SIZE: $([math]::Round($apk.Length / 1MB, 2)) MB"
           }
 
       # ============================================================
-      # 21. Prepare final artifact
+      # 22. Prepare final artifact
       # ============================================================
       - name: Prepare APK artifact
         shell: pwsh
         working-directory: subsystem
         run: |
+
           New-Item `
             -ItemType Directory `
             -Force `
             -Path "..\artifacts" |
             Out-Null
+
           $apks = Get-ChildItem `
             -Path . `
             -Filter *.apk `
@@ -490,33 +688,41 @@ jobs:
             Where-Object {
               $_.FullName -notmatch "\\obj\\"
             }
+
           if (-not $apks) {
             throw "Could not locate final APK."
           }
+
           $apk = $apks |
             Sort-Object Length -Descending |
             Select-Object -First 1
+
           if (-not $apk) {
             throw "Could not select final APK."
           }
+
           $destination = `
             "..\artifacts\Subsystem-Android12-ARM64.apk"
+
           Copy-Item `
             -Path $apk.FullName `
             -Destination $destination `
             -Force
+
           if (-not (Test-Path $destination)) {
             throw "Final APK was not copied."
           }
+
           Write-Host ""
           Write-Host "=========================================="
           Write-Host "FINAL APK"
           Write-Host "=========================================="
+
           Get-Item $destination |
             Format-List FullName,Length,LastWriteTime
 
       # ============================================================
-      # 22. Upload APK
+      # 23. Upload APK
       # ============================================================
       - name: Upload APK
         uses: actions/upload-artifact@v4
