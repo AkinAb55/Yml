@@ -158,14 +158,13 @@ jobs:
           dotnet workload list
 
       # ============================================================
-      # 11. Build native PowerShell Android library (FIXED WORKING DIRECTORY)
+      # 11. Build native PowerShell Android library
       # ============================================================
       - name: Build native PowerShell Android library
         shell: pwsh
         working-directory: subsystem\src\runspace\native
         run: |
           Write-Host "Building native PowerShell Android library..."
-          # Исправлен путь вызова скрипта с учетом перехода в папку native
           & .\build-native.ps1
           if ($LASTEXITCODE -ne 0) {
             throw "Native build failed."
@@ -269,7 +268,7 @@ jobs:
           Write-Host "CI compatibility patches applied."
 
       # ============================================================
-      # 14. Verify native library and Android minimum
+      # 14. Verify native library and Android minimum (FIXED REGEX)
       # ============================================================
       - name: Verify build inputs
         shell: pwsh
@@ -287,7 +286,7 @@ jobs:
           $project = Get-Content `
             ".\subsystem.master.csproj" `
             -Raw
-          if ($project -notmatch "SupportedOSPlatformVersion.*31\.0") {
+          if ($project -notmatch "SupportedOSPlatformVersion.*android.*31\.0") {
             throw "Android minimum API 31 was not configured."
           }
           Write-Host "Android minimum API: 31"
