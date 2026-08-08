@@ -254,10 +254,10 @@ jobs:
           
           $project = $project.Replace($targetLine, $replacement)
           
-          # Force inclusion of diagnostics source files for Android build
+          # Force inclusion of diagnostics source files for Android build (escaped variables)
           $diagnosticsInclusion = @"
           
-          <ItemGroup Condition="'$(TargetFramework)' == 'net11.0-android'">
+          <ItemGroup Condition="`$([MSBuild]::GetTargetPlatformIdentifier('`$(TargetFramework)')) == 'android'">
             <Compile Include="src\runspace\Diagnostics\*.cs" />
           </ItemGroup>
           </Project>
