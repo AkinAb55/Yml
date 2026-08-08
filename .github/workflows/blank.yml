@@ -158,18 +158,19 @@ jobs:
           dotnet workload list
 
       # ============================================================
-      # 11. Build native PowerShell Android library
+      # 11. Build native PowerShell Android library (FIXED WORKING DIRECTORY)
       # ============================================================
       - name: Build native PowerShell Android library
         shell: pwsh
-        working-directory: subsystem\src\runspace
+        working-directory: subsystem\src\runspace\native
         run: |
           Write-Host "Building native PowerShell Android library..."
-          & .\native\build-native.ps1
+          # Исправлен путь вызова скрипта с учетом перехода в папку native
+          & .\build-native.ps1
           if ($LASTEXITCODE -ne 0) {
             throw "Native build failed."
           }
-          $nativeLib = ".\native\libs\arm64-v8a\libpsl-android.so"
+          $nativeLib = ".\libs\arm64-v8a\libpsl-android.so"
           if (-not (Test-Path $nativeLib)) {
             throw "Native library was not created: $nativeLib"
           }
