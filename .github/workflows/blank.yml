@@ -169,6 +169,7 @@ jobs:
             ".\src\runspace\Diagnostics\Dg.cs",
             ".\src\runspace\Diagnostics\AgentSettings.cs",
             ".\src\runspace\Diagnostics\PackageInfoDb.cs",
+            ".\src\runspace\Diagnostics\SqliteProbe.cs",
             ".\src\runspace\native\build-native.ps1"
           )
           foreach ($file in $requiredFiles) {
@@ -299,10 +300,12 @@ jobs:
           if (-not $project.Contains($androidPropertyMarker)) {
             throw "Android PropertyGroup was not found."
           }
-          $compileBlock = @"    <Compile Include="src\runspace\Diagnostics\AgentSettings.cs" />
+          $compileBlock = @'
+              <Compile Include="src\runspace\Diagnostics\AgentSettings.cs" />
               <Compile Include="src\runspace\Diagnostics\Dg.cs" />
               <Compile Include="src\runspace\Diagnostics\PackageInfoDb.cs" />
-              <Compile Include="src\runspace\Diagnostics\SqliteProbe.cs" />"@"
+              <Compile Include="src\runspace\Diagnostics\SqliteProbe.cs" />
+          '@
           if ($project -notmatch `
               'Compile Include="src\\runspace\\Diagnostics\\Dg\.cs"') {
             $project = $project.Replace(
