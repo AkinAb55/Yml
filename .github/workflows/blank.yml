@@ -1,145 +1,276 @@
-name: Build TAWC — Arm64 Only
+name: Build Subsystem Android
+
 on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
-  ANDROID_NDK_VERSION: "27.2.12479018"
-  ANDROID_COMPILE_SDK: "36"
-  TAWC_ABIS: "arm64-v8a"
-  WAYLAND_VERSION: "1.25.0"
+  DOTNET_VERSION: 11.0.100-preview.5.26302.115
+  ANDROID_NDK_VERSION: 27.2.12479018
+  ANDROID_API_LEVEL: 36
 
 jobs:
-  build-arm64-apk:
-    name: Build TAWC Arm64 APK
-    runs-on: ubuntu-24.04
-    timeout-minutes: 300
+  build:
+    name: Build Subsystem ARM64 APK
+    runs-on: windows-latest
+
     steps:
-      - name: Checkout Repository (My Fork)
-        uses: actions/checkout@v4
-        with:
-          repository: 'AkinAb55/tawc'
-          ref: 'main'
-          fetch-depth: 0
-          submodules: recursive
+      # ------------------------------------------------------------
+      # 1. Checkout our repository
+      # ------------------------------------------------------------
+      - name: Checkout workflow repository
+        uses: actions/checkout@v5
 
-      - name: Install Host Tools
+      # ------------------------------------------------------------
+      # 2. Clone the official Subsystem repository
+      # ------------------------------------------------------------
+      - name: Clone official Subsystem
+        shell: pwsh
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential git cmake ninja-build pkgconf pkg-config \
-            python3 python3-pip python3-venv python3-mako \
-            autoconf automake libtool libtool-bin m4 gettext bison flex \
-            libwayland-dev wayland-protocols libxkbcommon-dev \
-            libx11-dev libxcb1-dev libxcb-xkb-dev libx11-xcb-dev \
-            libffi-dev libegl1-mesa-dev libgles-dev libdrm-dev libepoxy-dev libexpat1-dev \
-            libvulkan-dev libarchive-tools \
-            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu \
-            curl unzip patchelf rsync
-          sudo pip3 install --break-system-packages --upgrade meson
-        shell: bash
+          git clone --depth 1 https://github.com/MansfieldPlumbing/Subsystem.git subsystem
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
+      # ------------------------------------------------------------
+      # 3. Install exact .NET SDK required by Subsystem
+      # ------------------------------------------------------------
+      - name: Setup .NET 11 Preview
+        uses: actions/setup-dotnet@v5
         with:
-          distribution: 'temurin'
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      # ------------------------------------------------------------
+      # 4. JDK 21
+      # ------------------------------------------------------------
+      - name: Setup JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: microsoft
           java-version: '21'
-          cache: gradle
 
-      - name: Setup Android SDK & NDK
+      # ------------------------------------------------------------
+      # 5. Android SDK
+      # ------------------------------------------------------------
+      - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          api-level: ${{ env.ANDROID_COMPILE_SDK }}
-          ndk: ${{ env.ANDROID_NDK_VERSION }}
-          components: |
-            platform-tools
-            "platforms;android-${{ env.ANDROID_COMPILE_SDK }}"
-            "build-tools;36.0.0"
-            "ndk;${{ env.ANDROID_NDK_VERSION }}"
 
-      - name: Setup Rust
+      # ------------------------------------------------------------
+      # 6. Install Android SDK / NDK components
+      # ------------------------------------------------------------
+      - name: Install Android SDK components
+        shell: pwsh
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-          source $HOME/.cargo/env
-          rustup default stable
-          rustup target add aarch64-linux-android aarch64-unknown-linux-gnu
-          cargo install --locked cargo-ndk
-          echo "${HOME}/.cargo/bin" >> $GITHUB_PATH
-        shell: bash
+          $sdkmanager = "$env:ANDROID_HOME\cmdline-tools\latest\bin\sdkmanager.bat"
 
-      - name: Pre-download Dependencies
+          & $sdkmanager `
+            "platform-tools" `
+            "platforms;android-${env:ANDROID_API_LEVEL}" `
+            "ndk;${env:ANDROID_NDK_VERSION}"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Android SDK/NDK installation failed."
+          }
+
+      # ------------------------------------------------------------
+      # 7. Accept Android licenses
+      # ------------------------------------------------------------
+      - name: Accept Android SDK licenses
+        shell: pwsh
         run: |
-          chmod +x scripts/*.sh
-          ./scripts/ensure-deps.sh --verify-all
-        shell: bash
+          $sdkmanager = "$env:ANDROID_HOME\cmdline-tools\latest\bin\sdkmanager.bat"
 
-      - name: Build and Install Wayland 1.25 Scanner & Headers
+          1..20 | ForEach-Object {
+            "y"
+          } | & $sdkmanager --licenses
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Android license acceptance failed."
+          }
+
+      # ------------------------------------------------------------
+      # 8. Verify toolchain
+      # ------------------------------------------------------------
+      - name: Show toolchain
+        shell: pwsh
+        working-directory: subsystem
         run: |
-          set -e
-          mkdir -p /tmp/wayland-src
-          
-          # Ошибка исправлена здесь: убран мусор вокруг переменных окружения
-          curl -L "https://gitlab.freedesktop.org/wayland/wayland/-/archive/${{ env.WAYLAND_VERSION }}/wayland-${{ env.WAYLAND_VERSION }}.tar.gz" \
-            | tar -xz -C /tmp/wayland-src --strip-components=1
-                              
-          meson setup /tmp/wayland-src/build /tmp/wayland-src \
-            -Dtests=false -Ddocumentation=false -Dlibraries=true \
-            --prefix=/tmp/wayland-host
-          ninja -C /tmp/wayland-src/build install
-                              
-          sudo rm -f /usr/bin/wayland-scanner
-          sudo cp /tmp/wayland-host/bin/wayland-scanner /usr/bin/wayland-scanner
-          sudo chmod +x /usr/bin/wayland-scanner
-                              
-          sudo mkdir -p /usr/local/share/pkgconfig
-          sudo cp /tmp/wayland-host/lib/x86_64-linux-gnu/pkgconfig/wayland-scanner.pc /usr/local/share/pkgconfig/wayland-scanner.pc
-          sudo sed -i 's|wayland_scanner=.*|wayland_scanner=/usr/bin/wayland-scanner|g' /usr/local/share/pkgconfig/wayland-scanner.pc
-                              
-          mkdir -p deps/xwayland-src/wayland/egl
-          cp /tmp/wayland-src/egl/wayland-egl-backend.h deps/xwayland-src/wayland/egl/
-          
-          cp /tmp/wayland-src/egl/wayland-egl-backend.h /tmp/wayland-host/include/
-          
-          mkdir -p deps/libhybris/hybris/egl/platforms/wayland
-          cp /tmp/wayland-src/egl/wayland-egl-backend.h deps/libhybris/hybris/egl/platforms/wayland/
-                              
-          echo "WAYLAND_SCANNER=/usr/bin/wayland-scanner" >> $GITHUB_ENV
-          echo "HOST_WAYLAND_INC=/tmp/wayland-host/include" >> $GITHUB_ENV
-          echo "PKG_CONFIG_PATH=/usr/local/share/pkgconfig" >> $GITHUB_ENV
-        shell: bash
+          Write-Host "===== .NET ====="
+          dotnet --info
 
-      - name: libffi Hotfix
+          Write-Host ""
+          Write-Host "===== Java ====="
+          java -version
+
+          Write-Host ""
+          Write-Host "===== Android ====="
+          Write-Host "ANDROID_HOME=$env:ANDROID_HOME"
+          Write-Host "ANDROID_NDK_HOME=$env:ANDROID_NDK_HOME"
+
+          Write-Host ""
+          Write-Host "===== SDK ====="
+          & "$env:ANDROID_HOME\cmdline-tools\latest\bin\sdkmanager.bat" --list |
+            Select-String "platforms;android-${env:ANDROID_API_LEVEL}|ndk;${env:ANDROID_NDK_VERSION}"
+
+      # ------------------------------------------------------------
+      # 9. Install .NET Android workload
+      # ------------------------------------------------------------
+      - name: Install .NET Android workload
+        shell: pwsh
+        working-directory: subsystem
         run: |
-          set -ex
-          sed -i 's|e2eda0cf72a0598b44278cc91860ea402273fa29\tv3.5.2|f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf\tv3.6.0|g' deps/deps.list
-          git -C deps/xwayland-src/libffi fetch origin f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf || true
-          git -C deps/xwayland-src/libffi checkout f6303b8b0dd6353c6a5bb4de2e855a13b86f22cf || true
-          sed -i '/build_autotools libffi/i \  sed -i "s|LT_SYS_SYMBOL_USCORE|sys_symbol_underscore=no|g" deps/xwayland-src/libffi/configure.ac' scripts/build-xwayland.sh
-        shell: bash
+          dotnet workload install android
 
-      - name: Build App
+          if ($LASTEXITCODE -ne 0) {
+            throw ".NET Android workload installation failed."
+          }
+
+          dotnet workload list
+
+      # ------------------------------------------------------------
+      # 10. Prepare native build environment
+      # ------------------------------------------------------------
+      - name: Set Android NDK environment
+        shell: pwsh
         run: |
-          set -ex
-          # Ошибка исправлена здесь: убран некорректный синтаксис пути к NDK
-          export ANDROID_NDK_HOME="${{ env.ANDROID_HOME }}/ndk/${{ env.ANDROID_NDK_VERSION }}"
-                    
-          export C_INCLUDE_PATH="${{ env.HOST_WAYLAND_INC }}"
-          export CPLUS_INCLUDE_PATH="${{ env.HOST_WAYLAND_INC }}"
-          export PKG_CONFIG_PATH="/usr/local/share/pkgconfig"
-                              
-          ./scripts/build-app.sh --abi=arm64-v8a \
-            --graphics=libhybris,libhybris-zink,gfxstream,cpu \
-            --xwayland
-        env:
-          RUSTFLAGS: "-A warnings"
-        shell: bash
+          $ndk = Join-Path $env:ANDROID_HOME "ndk\${env:ANDROID_NDK_VERSION}"
 
+          if (-not (Test-Path $ndk)) {
+            throw "NDK not found: $ndk"
+          }
+
+          "ANDROID_NDK_HOME=$ndk" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "SS_NDK=$ndk" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+          Write-Host "Using NDK:"
+          Write-Host $ndk
+
+      # ------------------------------------------------------------
+      # 11. Build PowerShell native Android shim
+      #
+      # IMPORTANT:
+      # build-native.ps1 creates "libs\arm64-v8a".
+      # Therefore it MUST run with src/runspace as working directory.
+      # ------------------------------------------------------------
+      - name: Build native PowerShell Android library
+        shell: pwsh
+        working-directory: subsystem\src\runspace
+        run: |
+          Write-Host "Running native build..."
+
+          & .\native\build-native.ps1
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Native library build failed."
+          }
+
+          $lib = ".\libs\arm64-v8a\libpsl-android.so"
+
+          if (-not (Test-Path $lib)) {
+            throw "Expected native library was not produced: $lib"
+          }
+
+          Write-Host ""
+          Write-Host "Native library created:"
+          Get-Item $lib | Format-List FullName,Length,LastWriteTime
+
+      # ------------------------------------------------------------
+      # 12. Restore NuGet dependencies
+      # ------------------------------------------------------------
+      - name: Restore Subsystem
+        shell: pwsh
+        working-directory: subsystem
+        run: |
+          dotnet restore .\subsystem.master.csproj
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "dotnet restore failed."
+          }
+
+      # ------------------------------------------------------------
+      # 13. Publish ARM64 Android APK
+      # ------------------------------------------------------------
+      - name: Publish Android ARM64
+        shell: pwsh
+        working-directory: subsystem
+        run: |
+          dotnet publish .\subsystem.master.csproj `
+            -c Release `
+            -f net11.0-android `
+            -r android-arm64 `
+            --self-contained true `
+            -p:SubsystemRelease=true `
+            -p:AndroidSdkDirectory="$env:ANDROID_HOME"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Android publish failed."
+          }
+
+      # ------------------------------------------------------------
+      # 14. Locate APK
+      # ------------------------------------------------------------
+      - name: Find generated APK
+        shell: pwsh
+        working-directory: subsystem
+        run: |
+          Write-Host "Searching for APK files..."
+
+          $apks = Get-ChildItem `
+            -Path . `
+            -Filter *.apk `
+            -Recurse `
+            -File
+
+          if (-not $apks) {
+            throw "No APK was produced."
+          }
+
+          Write-Host ""
+          Write-Host "===== APK FILES ====="
+
+          foreach ($apk in $apks) {
+            Write-Host ""
+            Write-Host "FILE: $($apk.FullName)"
+            Write-Host "SIZE: $([math]::Round($apk.Length / 1MB, 2)) MB"
+          }
+
+      # ------------------------------------------------------------
+      # 15. Copy final APK to a clean artifact directory
+      # ------------------------------------------------------------
+      - name: Prepare APK artifact
+        shell: pwsh
+        working-directory: subsystem
+        run: |
+          New-Item -ItemType Directory -Force ..\artifacts | Out-Null
+
+          $apk = Get-ChildItem `
+            -Path . `
+            -Filter *.apk `
+            -Recurse `
+            -File |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+
+          if (-not $apk) {
+            throw "Could not locate final APK."
+          }
+
+          Copy-Item `
+            $apk.FullName `
+            "..\artifacts\Subsystem-arm64.apk" `
+            -Force
+
+          Write-Host "Artifact:"
+          Get-Item "..\artifacts\Subsystem-arm64.apk" |
+            Format-List FullName,Length,LastWriteTime
+
+      # ------------------------------------------------------------
+      # 16. Upload APK
+      # ------------------------------------------------------------
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: tawc-arm64-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: Subsystem-Android-ARM64
+          path: artifacts/Subsystem-arm64.apk
           if-no-files-found: error
+          retention-days: 14
+```
