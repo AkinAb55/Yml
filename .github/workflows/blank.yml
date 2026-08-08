@@ -243,14 +243,20 @@ jobs:
             -Value $notification `
             -Encoding UTF8
           
-          # C. Android 12 minimum (Targeting exact csproj line)
+          # C. Android 12 minimum (Safe replacement without parser errors)
           $projectFile = ".\subsystem.master.csproj"
           $project = Get-Content `
             $projectFile `
             -Raw
-          $project = $project -replace `
-            '<SupportedOSPlatformVersion Condition="\''\$\(SupportedOSPlatformVersion\)\'' == \'\'\'\'">36\.0</SupportedOSPlatformVersion>', `
-            '<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier(''$(TargetFramework)'')) == ''android''">31.0</SupportedOSPlatformVersion><SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier(''$(TargetFramework)'')) != ''android''">36.0</SupportedOSPlatformVersion>'
+          $targetLine = '<SupportedOSPlatformVersion Condition="''$(SupportedOSPlatformVersion)'' == ''''">36.0</SupportedOSPlatformVersion>'
+          $replacement = '<SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier(''$(TargetFramework)'')) == ''android''">31.0</SupportedOSPlatformVersion><SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier(''$(TargetFramework)'')) != ''android''">36.0</SupportedOSPlatformVersion>'
+          
+          if ($project -notcontains $targetLine) {
+            # Fallback replace using string search if exact match fails
+            $project = $project.Replace('36.0</SupportedOSPlatformVersion>', '36.0</SupportedOSPlatformVersion>')
+          }
+          $project = $project.Replace($targetLine, $replacement)
+          
           Set-Content `
             -Path $projectFile `
             -Value $project `
