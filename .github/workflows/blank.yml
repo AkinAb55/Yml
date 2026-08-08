@@ -15,7 +15,6 @@ jobs:
   build:
     name: Build Subsystem ARM64 APK
     runs-on: windows-latest
-
     steps:
       # ------------------------------------------------------------
       # 1. Checkout our repository
@@ -61,12 +60,10 @@ jobs:
         shell: pwsh
         run: |
           $sdkmanager = "$env:ANDROID_HOME\cmdline-tools\latest\bin\sdkmanager.bat"
-
           & $sdkmanager `
             "platform-tools" `
             "platforms;android-${env:ANDROID_API_LEVEL}" `
             "ndk;${env:ANDROID_NDK_VERSION}"
-
           if ($LASTEXITCODE -ne 0) {
             throw "Android SDK/NDK installation failed."
           }
@@ -78,11 +75,9 @@ jobs:
         shell: pwsh
         run: |
           $sdkmanager = "$env:ANDROID_HOME\cmdline-tools\latest\bin\sdkmanager.bat"
-
           1..20 | ForEach-Object {
             "y"
           } | & $sdkmanager --licenses
-
           if ($LASTEXITCODE -ne 0) {
             throw "Android license acceptance failed."
           }
@@ -96,16 +91,13 @@ jobs:
         run: |
           Write-Host "===== .NET ====="
           dotnet --info
-
           Write-Host ""
           Write-Host "===== Java ====="
           java -version
-
           Write-Host ""
           Write-Host "===== Android ====="
           Write-Host "ANDROID_HOME=$env:ANDROID_HOME"
           Write-Host "ANDROID_NDK_HOME=$env:ANDROID_NDK_HOME"
-
           Write-Host ""
           Write-Host "===== SDK ====="
           & "$env:ANDROID_HOME\cmdline-tools\latest\bin\sdkmanager.bat" --list |
@@ -119,11 +111,9 @@ jobs:
         working-directory: subsystem
         run: |
           dotnet workload install android
-
           if ($LASTEXITCODE -ne 0) {
             throw ".NET Android workload installation failed."
           }
-
           dotnet workload list
 
       # ------------------------------------------------------------
@@ -133,42 +123,30 @@ jobs:
         shell: pwsh
         run: |
           $ndk = Join-Path $env:ANDROID_HOME "ndk\${env:ANDROID_NDK_VERSION}"
-
           if (-not (Test-Path $ndk)) {
             throw "NDK not found: $ndk"
           }
-
           "ANDROID_NDK_HOME=$ndk" | Out-File -FilePath $env:GITHUB_ENV -Append
           "SS_NDK=$ndk" | Out-File -FilePath $env:GITHUB_ENV -Append
-
           Write-Host "Using NDK:"
           Write-Host $ndk
 
       # ------------------------------------------------------------
       # 11. Build PowerShell native Android shim
-      #
-      # IMPORTANT:
-      # build-native.ps1 creates "libs\arm64-v8a".
-      # Therefore it MUST run with src/runspace as working directory.
       # ------------------------------------------------------------
       - name: Build native PowerShell Android library
         shell: pwsh
-        working-directory: subsystem\src\runspace
+        working-directory: subsystem\src\runspace\native
         run: |
           Write-Host "Running native build..."
-
-          & .\native\build-native.ps1
-
+          & .\build-native.ps1
           if ($LASTEXITCODE -ne 0) {
             throw "Native library build failed."
           }
-
-          $lib = ".\libs\arm64-v8a\libpsl-android.so"
-
+          $lib = "..\libs\arm64-v8a\libpsl-android.so"
           if (-not (Test-Path $lib)) {
             throw "Expected native library was not produced: $lib"
           }
-
           Write-Host ""
           Write-Host "Native library created:"
           Get-Item $lib | Format-List FullName,Length,LastWriteTime
@@ -181,7 +159,6 @@ jobs:
         working-directory: subsystem
         run: |
           dotnet restore .\subsystem.master.csproj
-
           if ($LASTEXITCODE -ne 0) {
             throw "dotnet restore failed."
           }
@@ -200,7 +177,6 @@ jobs:
             --self-contained true `
             -p:SubsystemRelease=true `
             -p:AndroidSdkDirectory="$env:ANDROID_HOME"
-
           if ($LASTEXITCODE -ne 0) {
             throw "Android publish failed."
           }
@@ -213,20 +189,16 @@ jobs:
         working-directory: subsystem
         run: |
           Write-Host "Searching for APK files..."
-
           $apks = Get-ChildItem `
             -Path . `
             -Filter *.apk `
             -Recurse `
             -File
-
           if (-not $apks) {
             throw "No APK was produced."
           }
-
           Write-Host ""
           Write-Host "===== APK FILES ====="
-
           foreach ($apk in $apks) {
             Write-Host ""
             Write-Host "FILE: $($apk.FullName)"
@@ -241,7 +213,6 @@ jobs:
         working-directory: subsystem
         run: |
           New-Item -ItemType Directory -Force ..\artifacts | Out-Null
-
           $apk = Get-ChildItem `
             -Path . `
             -Filter *.apk `
@@ -249,16 +220,13 @@ jobs:
             -File |
             Sort-Object LastWriteTime -Descending |
             Select-Object -First 1
-
           if (-not $apk) {
             throw "Could not locate final APK."
           }
-
           Copy-Item `
             $apk.FullName `
             "..\artifacts\Subsystem-arm64.apk" `
             -Force
-
           Write-Host "Artifact:"
           Get-Item "..\artifacts\Subsystem-arm64.apk" |
             Format-List FullName,Length,LastWriteTime
