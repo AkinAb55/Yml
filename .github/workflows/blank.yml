@@ -243,7 +243,7 @@ jobs:
             -Value $notification `
             -Encoding UTF8
           
-          # C. Android 12 minimum & include diagnostics for Android
+          # C. Android 12 minimum & enable diagnostics for Android by removing them from exclusions
           $projectFile = ".\subsystem.master.csproj"
           $project = Get-Content `
             $projectFile `
@@ -254,16 +254,12 @@ jobs:
           
           $project = $project.Replace($targetLine, $replacement)
           
-          # Force inclusion of diagnostics source files for Android build (escaped variables)
-          $diagnosticsInclusion = @"
-          
-          <ItemGroup Condition="`$([MSBuild]::GetTargetPlatformIdentifier('`$(TargetFramework)')) == 'android'">
-            <Compile Include="src\runspace\Diagnostics\*.cs" />
-          </ItemGroup>
-          </Project>
-          "@
-          
-          $project = $project.TrimEnd().Replace('</Project>', $diagnosticsInclusion)
+          # Remove diagnostics exclusions so they compile for Android
+          $project = $project -replace ';src\\runspace\\Diagnostics\\AgentSettings\.cs', ''
+          $project = $project -replace ';src\\runspace\\Diagnostics\\Dg\.cs', ''
+          $project = $project -replace ';src\\runspace\\Diagnostics\\PackageInfoDb\.cs', ''
+          $project = $project -replace ';src\\runspace\\Diagnostics\\TerminalAccessibilityService\.cs', ''
+          $project = $project -replace ';src\\runspace\\Diagnostics\\SqliteProbe\.cs', ''
           
           Set-Content `
             -Path $projectFile `
