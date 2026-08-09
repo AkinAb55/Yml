@@ -720,7 +720,6 @@ jobs:
           Write-Host "Building Subsystem for Android ARM64"
           Write-Host "=========================================="
           
-          # Возвращаем csproj в исходное состояние перед настройкой
           git checkout subsystem.master.csproj
 
           Write-Host "Minimum Android API: $env:MIN_ANDROID_API"
@@ -737,7 +736,7 @@ jobs:
             -p:SubsystemRelease=true `
             -p:SupportedOSPlatformVersion=$env:MIN_ANDROID_API.0 `
             -p:AndroidSdkDirectory="$env:ANDROID_HOME" `
-            -p:DefaultItemExcludes="src\runspace\windows\**;src\shell\platform\Windows\**"
+            "-p:DefaultItemExcludes=src\runspace\windows\**;src\shell\platform\Windows\**"
           
           if ($LASTEXITCODE -ne 0) {
             throw "Android ARM64 compilation failed."
