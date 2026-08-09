@@ -720,24 +720,27 @@ jobs:
           Write-Host "Building Subsystem for Android ARM64"
           Write-Host "=========================================="
           
-          # Очищаем исключения файлов диагностики из csproj, чтобы SDK подхватил их сам
           $projectFile = ".\subsystem.master.csproj"
           [xml]$xml = Get-Content $projectFile -Raw
           
-          foreach ($node in $xml.SelectNodes("//DefaultItemExcludes")) {
-              $node.InnerText = $node.InnerText -replace ';src\\runspace\\Diagnostics\\[^;]+', ''
-              $node.InnerText = $node.InnerText -replace 'src\\runspace\\Diagnostics\\[^;]+;?', ''
-          }
-          # Также проверим текст во всех PropertyGroup на наличие файлов diagnostics
-          foreach ($gp in $xml.Project.PropertyGroup) {
-              if ($gp.InnerXml -match "Diagnostics") {
-                  $gp.InnerXml = $gp.InnerXml -replace ';src\\runspace\\Diagnostics\\[^;]+', ''
-                  $gp.InnerXml = $gp.InnerXml -replace 'src\\runspace\\Diagnostics\\[^;]+;?', ''
+          # Создаем ItemGroup для принудительного включения файлов диагностики под Android
+          $itemGroup = $xml.CreateElement("ItemGroup", $xml.DocumentElement.NamespaceURI)
+          
+          $files = "AgentSettings.cs", "Dg.cs", "PackageInfoDb.cs", "SqliteProbe.cs"
+          foreach ($fileName in $files) {
+              $filePath = "src\runspace\Diagnostics\$fileName"
+              if (Test-Path $filePath) {
+                  $compile = $xml.CreateElement("Compile", $xml.DocumentElement.NamespaceURI)
+                  $compile.SetAttribute("Include", $filePath)
+                  # Указываем условие, чтобы не было конфликтов дублирования на других платформах
+                  $compile.SetAttribute("Condition", "'$(TargetFramework)'=='net11.0-android'")
+                  $itemGroup.AppendChild($compile)
               }
           }
           
+          $xml.DocumentElement.AppendChild($itemGroup)
           $xml.Save($projectFile)
-          Write-Host "Cleaned up diagnostics exclusions from csproj."
+          Write-Host "Forced conditional inclusion of diagnostics files for Android."
 
           Write-Host "Minimum Android API: $env:MIN_ANDROID_API"
           Write-Host "Compile SDK: $env:TARGET_ANDROID_API"
