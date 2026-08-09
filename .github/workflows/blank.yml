@@ -1,15 +1,20 @@
-name: Build Subsystem Android ARM64
+name: Build Subsystem Android 12 ARM64
 
 on:
   workflow_dispatch:
+
   push:
     branches:
       - main
       - master
+
   pull_request:
     branches:
       - main
       - master
+
+permissions:
+  contents: read
 
 env:
   DOTNET_VERSION: 11.0.100-preview.5.26302.115
@@ -18,156 +23,158 @@ env:
   TARGET_ANDROID_API: 36
 
 jobs:
-  build-android-arm64:
-    name: Build Subsystem Android ARM64
+  build:
+    name: Build Subsystem ARM64 APK for Android 12+
     runs-on: windows-latest
-
-    defaults:
-      run:
-        shell: pwsh
 
     steps:
 
       # ============================================================
-      # Checkout
+      # 1. Checkout workflow repository
       # ============================================================
 
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          path: repo
-          fetch-depth: 1
+      - name: Checkout workflow repository
+        uses: actions/checkout@v5
 
       # ============================================================
-      # Diagnose repository layout
+      # 2. Clone official Subsystem
+      #
+      # IMPORTANT:
+      # The workflow repository intentionally does NOT contain
+      # subsystem.master.csproj.
+      #
+      # The actual source is obtained from upstream.
       # ============================================================
 
-      - name: Inspect repository
+      - name: Clone official Subsystem
+        shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
           Write-Host "=========================================="
-          Write-Host "Repository inspection"
+          Write-Host "Cloning official Subsystem"
           Write-Host "=========================================="
 
-          $repoRoot = Join-Path $env:GITHUB_WORKSPACE "repo"
+          if (Test-Path ".\subsystem") {
+            Remove-Item ".\subsystem" -Recurse -Force
+          }
 
-          Write-Host "GITHUB_WORKSPACE:"
-          Write-Host $env:GITHUB_WORKSPACE
+          git clone `
+            --depth 1 `
+            https://github.com/MansfieldPlumbing/Subsystem.git `
+            subsystem
 
-          Write-Host ""
-          Write-Host "Repository root:"
-          Write-Host $repoRoot
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to clone official Subsystem."
+          }
 
-          if (-not (Test-Path $repoRoot)) {
-            throw "Repository checkout directory does not exist: $repoRoot"
+          if (-not (Test-Path ".\subsystem")) {
+            throw "Subsystem directory was not created."
           }
 
           Write-Host ""
-          Write-Host "Top-level repository entries:"
-          Get-ChildItem `
-            -Path $repoRoot `
-            -Force |
-            Select-Object Mode, Name, FullName |
-            Format-Table -AutoSize
+          Write-Host "Subsystem cloned successfully."
 
-          Write-Host ""
-          Write-Host "All project files:"
-          $projects = @(
+          $gitHead = git -C ".\subsystem" rev-parse HEAD
+
+          Write-Host "Subsystem commit:"
+          Write-Host $gitHead
+
+          "SUBSYSTEM_COMMIT=$gitHead" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Append `
+              -Encoding utf8
+
+      # ============================================================
+      # 3. Locate project
+      # ============================================================
+
+      - name: Locate Subsystem project
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "=========================================="
+          Write-Host "Locating subsystem.master.csproj"
+          Write-Host "=========================================="
+
+          $projectFile = Join-Path `
+            $env:GITHUB_WORKSPACE `
+            "subsystem\subsystem.master.csproj"
+
+          if (-not (Test-Path $projectFile)) {
+
+            Write-Host ""
+            Write-Host "Repository contents:"
+
             Get-ChildItem `
-              -Path $repoRoot `
+              -Path (Join-Path $env:GITHUB_WORKSPACE "subsystem") `
               -Recurse `
-              -Filter "*.csproj" `
               -File `
-              -ErrorAction SilentlyContinue
-          )
+              -ErrorAction SilentlyContinue |
+              Select-Object -First 200 -ExpandProperty FullName
 
-          if ($projects.Count -eq 0) {
-            Write-Host "NO .csproj files found."
-          }
-          else {
-            $projects |
-              Select-Object -ExpandProperty FullName
+            throw "Official Subsystem clone does not contain subsystem.master.csproj."
           }
 
-          Write-Host ""
-          Write-Host "Searching specifically for subsystem.master.csproj:"
-
-          $subsystemProjects = @(
-            Get-ChildItem `
-              -Path $repoRoot `
-              -Recurse `
-              -Filter "subsystem.master.csproj" `
-              -File `
-              -ErrorAction SilentlyContinue
-          )
-
-          if ($subsystemProjects.Count -eq 0) {
-            Write-Host "subsystem.master.csproj NOT FOUND."
-            throw "The checked-out repository does not contain subsystem.master.csproj."
-          }
-
-          foreach ($project in $subsystemProjects) {
-            Write-Host "FOUND: $($project.FullName)"
-          }
-
-          $projectFile = $subsystemProjects[0].FullName
+          $projectFile = (Resolve-Path $projectFile).Path
           $projectDirectory = Split-Path $projectFile -Parent
 
-          Write-Host ""
-          Write-Host "Selected project:"
+          Write-Host "Project:"
           Write-Host $projectFile
 
           Write-Host ""
           Write-Host "Project directory:"
           Write-Host $projectDirectory
 
-          "SUBSYSTEM_PROJECT=$projectFile" | Out-File `
-            -FilePath $env:GITHUB_ENV `
-            -Encoding utf8 `
-            -Append
+          "SUBSYSTEM_PROJECT=$projectFile" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Append `
+              -Encoding utf8
 
-          "SUBSYSTEM_DIR=$projectDirectory" | Out-File `
-            -FilePath $env:GITHUB_ENV `
-            -Encoding utf8 `
-            -Append
-
-          "SUBSYSTEM_REPO_ROOT=$repoRoot" | Out-File `
-            -FilePath $env:GITHUB_ENV `
-            -Encoding utf8 `
-            -Append
+          "SUBSYSTEM_DIR=$projectDirectory" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Append `
+              -Encoding utf8
 
       # ============================================================
-      # .NET
+      # 4. Setup .NET
       # ============================================================
 
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+      - name: Setup .NET 11 Preview
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       # ============================================================
-      # Java
+      # 5. Setup JDK
+      #
+      # Keep Java 17 for maximum compatibility with the current
+      # Android/.NET toolchain on the hosted Windows runner.
       # ============================================================
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
+      - name: Setup JDK 17
+        uses: actions/setup-java@v5
         with:
           distribution: microsoft
           java-version: '17'
 
       # ============================================================
-      # Android SDK
+      # 6. Setup Android SDK
       # ============================================================
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
       # ============================================================
-      # Android SDK / NDK
+      # 7. Install Android SDK / NDK
       # ============================================================
 
-      - name: Install Android SDK and NDK
+      - name: Install Android SDK components
+        shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
@@ -175,17 +182,18 @@ jobs:
           Write-Host "Installing Android toolchain"
           Write-Host "=========================================="
 
-          Write-Host "ANDROID_HOME: $env:ANDROID_HOME"
-          Write-Host "NDK version: $env:ANDROID_NDK_VERSION"
-          Write-Host "Compile SDK: $env:TARGET_ANDROID_API"
+          Write-Host "ANDROID_HOME:"
+          Write-Host $env:ANDROID_HOME
 
-          if (-not $env:ANDROID_HOME) {
-            throw "ANDROID_HOME is not defined."
+          $sdkmanager = Join-Path `
+            $env:ANDROID_HOME `
+            "cmdline-tools\latest\bin\sdkmanager.bat"
+
+          if (-not (Test-Path $sdkmanager)) {
+            throw "sdkmanager not found: $sdkmanager"
           }
 
-          sdkmanager --version
-
-          sdkmanager `
+          & $sdkmanager `
             "platform-tools" `
             "platforms;android-$env:TARGET_ANDROID_API" `
             "build-tools;36.0.0" `
@@ -196,29 +204,59 @@ jobs:
           }
 
       # ============================================================
-      # Validate NDK
+      # 8. Accept Android licenses
       # ============================================================
 
-      - name: Validate Android NDK
+      - name: Accept Android SDK licenses
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $sdkmanager = Join-Path `
+            $env:ANDROID_HOME `
+            "cmdline-tools\latest\bin\sdkmanager.bat"
+
+          if (-not (Test-Path $sdkmanager)) {
+            throw "sdkmanager not found."
+          }
+
+          1..50 |
+            ForEach-Object { "y" } |
+            & $sdkmanager --licenses
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Android license acceptance failed."
+          }
+
+      # ============================================================
+      # 9. Configure NDK
+      # ============================================================
+
+      - name: Configure Android NDK
+        shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
           Write-Host "=========================================="
-          Write-Host "Validating Android NDK"
+          Write-Host "Android toolchain"
           Write-Host "=========================================="
 
           $ndk = Join-Path `
             $env:ANDROID_HOME `
             "ndk\$env:ANDROID_NDK_VERSION"
 
-          Write-Host "Expected NDK:"
-          Write-Host $ndk
+          Write-Host "ANDROID_HOME: $env:ANDROID_HOME"
+          Write-Host "NDK: $ndk"
+          Write-Host "Minimum API: $env:MIN_ANDROID_API"
+          Write-Host "Compile SDK: $env:TARGET_ANDROID_API"
 
           if (-not (Test-Path $ndk)) {
             Write-Host ""
-            Write-Host "Available NDK installations:"
+            Write-Host "Installed NDK directories:"
 
-            $ndkRoot = Join-Path $env:ANDROID_HOME "ndk"
+            $ndkRoot = Join-Path `
+              $env:ANDROID_HOME `
+              "ndk"
 
             if (Test-Path $ndkRoot) {
               Get-ChildItem `
@@ -226,31 +264,114 @@ jobs:
                 -Directory |
                 Select-Object -ExpandProperty FullName
             }
-            else {
-              Write-Host "NDK directory does not exist: $ndkRoot"
-            }
 
             throw "Android NDK directory was not found: $ndk"
           }
 
-          Write-Host "NDK found."
+          "ANDROID_NDK_HOME=$ndk" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Append `
+              -Encoding utf8
 
-          "ANDROID_NDK_HOME=$ndk" | Out-File `
-            -FilePath $env:GITHUB_ENV `
-            -Encoding utf8 `
-            -Append
+          "SS_NDK=$ndk" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Append `
+              -Encoding utf8
 
-          "SS_NDK=$ndk" | Out-File `
-            -FilePath $env:GITHUB_ENV `
-            -Encoding utf8 `
-            -Append
+          Write-Host ""
+          Write-Host "ANDROID_NDK_HOME=$ndk"
+          Write-Host "SS_NDK=$ndk"
 
       # ============================================================
-      # Project XML validation
+      # 10. Show complete toolchain
+      # ============================================================
+
+      - name: Show toolchain
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "=========================================="
+          Write-Host ".NET"
+          Write-Host "=========================================="
+
+          dotnet --info
+
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "Java"
+          Write-Host "=========================================="
+
+          java -version
+
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "Android"
+          Write-Host "=========================================="
+
+          Write-Host "ANDROID_HOME=$env:ANDROID_HOME"
+          Write-Host "ANDROID_SDK_ROOT=$env:ANDROID_SDK_ROOT"
+          Write-Host "ANDROID_NDK_HOME=$env:ANDROID_NDK_HOME"
+          Write-Host "SS_NDK=$env:SS_NDK"
+
+      # ============================================================
+      # 11. Inspect source tree
+      #
+      # This is deliberately diagnostic.
+      # We do not modify source here.
+      # ============================================================
+
+      - name: Inspect Subsystem source tree
+        shell: pwsh
+        working-directory: subsystem
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "=========================================="
+          Write-Host "Repository inspection"
+          Write-Host "=========================================="
+
+          Write-Host ""
+          Write-Host "Project:"
+          Write-Host $env:SUBSYSTEM_PROJECT
+
+          Write-Host ""
+          Write-Host "Top-level entries:"
+
+          Get-ChildItem |
+            Select-Object Mode, Name, FullName
+
+          Write-Host ""
+          Write-Host "C# projects:"
+
+          $projects = Get-ChildItem `
+            -Recurse `
+            -Filter "*.csproj" `
+            -File `
+            -ErrorAction SilentlyContinue
+
+          if ($projects.Count -eq 0) {
+            throw "No .csproj files were found in the official Subsystem source tree."
+          }
+
+          $projects |
+            Select-Object -ExpandProperty FullName
+
+          Write-Host ""
+          Write-Host "Target project exists."
+
+      # ============================================================
+      # 12. Validate project XML
+      #
+      # IMPORTANT:
+      # No XML modifications.
       # ============================================================
 
       - name: Validate subsystem.master.csproj
-        working-directory: ${{ env.SUBSYSTEM_DIR }}
+        shell: pwsh
+        working-directory: subsystem
         run: |
           $ErrorActionPreference = "Stop"
 
@@ -258,16 +379,15 @@ jobs:
           Write-Host "Validating subsystem.master.csproj"
           Write-Host "=========================================="
 
-          Write-Host "Project:"
-          Write-Host $env:SUBSYSTEM_PROJECT
+          $projectFile = ".\subsystem.master.csproj"
 
-          if (-not (Test-Path $env:SUBSYSTEM_PROJECT)) {
-            throw "Project does not exist: $env:SUBSYSTEM_PROJECT"
+          if (-not (Test-Path $projectFile)) {
+            throw "Project does not exist: $projectFile"
           }
 
           try {
             [xml]$projectXml = Get-Content `
-              -Path $env:SUBSYSTEM_PROJECT `
+              $projectFile `
               -Raw
           }
           catch {
@@ -276,145 +396,354 @@ jobs:
 
           Write-Host "Project XML is valid."
 
-          $targetFrameworks = `
+          $targetFrameworks = @(
             $projectXml.Project.PropertyGroup.TargetFrameworks
+          ) -join ";"
 
-          if (-not $targetFrameworks) {
-            throw "TargetFrameworks element was not found."
-          }
-
-          Write-Host "TargetFrameworks:"
-          Write-Host $targetFrameworks
+          Write-Host "TargetFrameworks: $targetFrameworks"
 
           if ($targetFrameworks -notmatch "net11\.0-android") {
             throw "net11.0-android target framework is missing."
           }
 
-          $androidPropertyGroups = @(
+          Write-Host ""
+          Write-Host "Android target framework confirmed."
+
+          Write-Host ""
+          Write-Host "Android PropertyGroups:"
+
+          $androidGroups = @(
             $projectXml.Project.PropertyGroup |
               Where-Object {
-                $_.Condition -eq "'`$(TargetFramework)' == 'net11.0-android'"
+                $_.Condition -like "*TargetFramework*android*"
               }
           )
 
-          if ($androidPropertyGroups.Count -eq 0) {
-            throw "Android PropertyGroup was not found."
+          if ($androidGroups.Count -eq 0) {
+            Write-Host "WARNING: no explicit Android PropertyGroup detected."
+          }
+          else {
+            foreach ($group in $androidGroups) {
+              Write-Host $group.OuterXml
+            }
           }
 
-          Write-Host "Android PropertyGroup confirmed."
-
       # ============================================================
-      # Check diagnostics source files
+      # 13. Inspect Diagnostics sources
       #
-      # IMPORTANT:
-      # We only verify physical files here.
-      # We do NOT add explicit Compile items.
+      # We need the real namespaces/API before introducing any
+      # compatibility code.
       # ============================================================
 
-      - name: Verify Diagnostics source files
-        working-directory: ${{ env.SUBSYSTEM_DIR }}
+      - name: Inspect Diagnostics source definitions
+        shell: pwsh
+        working-directory: subsystem
         run: |
           $ErrorActionPreference = "Stop"
 
           Write-Host "=========================================="
-          Write-Host "Checking Diagnostics source files"
+          Write-Host "Inspecting Diagnostics source definitions"
           Write-Host "=========================================="
 
-          $requiredFiles = @(
-            "src\runspace\Diagnostics\Dg.cs",
-            "src\runspace\Diagnostics\AgentSettings.cs",
-            "src\runspace\Diagnostics\PackageInfoDb.cs",
-            "src\runspace\Diagnostics\SqliteProbe.cs"
-          )
+          $diagnosticsDirectory = ".\src\runspace\Diagnostics"
 
-          foreach ($relativePath in $requiredFiles) {
-            $fullPath = Join-Path `
-              $env:SUBSYSTEM_DIR `
-              $relativePath
+          if (-not (Test-Path $diagnosticsDirectory)) {
+            throw "Diagnostics directory not found: $diagnosticsDirectory"
+          }
 
-            if (-not (Test-Path $fullPath)) {
-              throw "Required source file is missing: $relativePath"
+          $diagnosticFiles = Get-ChildItem `
+            $diagnosticsDirectory `
+            -Filter "*.cs" `
+            -File
+
+          if ($diagnosticFiles.Count -eq 0) {
+            throw "No Diagnostics C# files found."
+          }
+
+          foreach ($file in $diagnosticFiles) {
+
+            Write-Host ""
+            Write-Host "------------------------------------------"
+            Write-Host $file.FullName
+            Write-Host "------------------------------------------"
+
+            $text = Get-Content `
+              $file.FullName `
+              -Raw
+
+            $namespaceMatches = [regex]::Matches(
+              $text,
+              '(?m)^\s*namespace\s+([A-Za-z0-9_.]+)'
+            )
+
+            foreach ($match in $namespaceMatches) {
+              Write-Host "namespace: $($match.Groups[1].Value)"
             }
 
-            Write-Host "FOUND: $relativePath"
+            $typeMatches = [regex]::Matches(
+              $text,
+              '(?m)^\s*(?:public\s+|internal\s+|file\s+|static\s+|sealed\s+|partial\s+|abstract\s+)*(class|struct|interface|enum)\s+([A-Za-z0-9_]+)'
+            )
+
+            foreach ($match in $typeMatches) {
+              Write-Host "type: $($match.Groups[2].Value)"
+            }
+          }
+
+      # ============================================================
+      # 14. Inspect known failing references
+      #
+      # This gives us the actual reason for missing Dg,
+      # PackageInfoDb, AgentSettings, etc., instead of guessing.
+      # ============================================================
+
+      - name: Inspect Android compile references
+        shell: pwsh
+        working-directory: subsystem
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "=========================================="
+          Write-Host "Inspecting Android source references"
+          Write-Host "=========================================="
+
+          $patterns = @(
+            "Dg",
+            "AgentSettings",
+            "PackageInfoDb",
+            "SqliteProbe",
+            "PackageInfo",
+            "Resource",
+            "SetBackground"
+          )
+
+          foreach ($pattern in $patterns) {
+
+            Write-Host ""
+            Write-Host "=========================================="
+            Write-Host "References: $pattern"
+            Write-Host "=========================================="
+
+            Get-ChildItem `
+              ".\src\runspace" `
+              -Recurse `
+              -Filter "*.cs" `
+              -File |
+              Select-String `
+                -Pattern "\b$pattern\b" `
+                -SimpleMatch:$false |
+              Select-Object `
+                Path,
+                LineNumber,
+                Line
+          }
+
+      # ============================================================
+      # 15. Install Android workload
+      # ============================================================
+
+      - name: Install .NET Android workload
+        shell: pwsh
+        working-directory: subsystem
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "=========================================="
+          Write-Host "Installing .NET Android workload"
+          Write-Host "=========================================="
+
+          dotnet workload install android
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Android workload installation failed."
+          }
+
+          dotnet workload list
+
+      # ============================================================
+      # 16. Restore
+      #
+      # Restore is separate so failures are easier to distinguish
+      # from compilation failures.
+      # ============================================================
+
+      - name: Restore Subsystem Android
+        shell: pwsh
+        working-directory: subsystem
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "=========================================="
+          Write-Host "Restoring Subsystem Android"
+          Write-Host "=========================================="
+
+          dotnet restore `
+            ".\subsystem.master.csproj" `
+            -p:TargetFramework=net11.0-android `
+            -r android-arm64
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Android restore failed."
+          }
+
+      # ============================================================
+      # 17. Build native PowerShell Android library
+      # ============================================================
+
+      - name: Build native PowerShell Android library
+        shell: pwsh
+        working-directory: subsystem\src\runspace\native
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "=========================================="
+          Write-Host "Building native PowerShell Android library"
+          Write-Host "=========================================="
+
+          $nativeScript = ".\build-native.ps1"
+
+          if (-not (Test-Path $nativeScript)) {
+            throw "Native build script not found: $nativeScript"
+          }
+
+          & $nativeScript
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Native PowerShell build failed."
+          }
+
+          $nativeLib = ".\libs\arm64-v8a\libpsl-android.so"
+
+          if (-not (Test-Path $nativeLib)) {
+            Write-Host ""
+            Write-Host "Native library tree:"
+
+            Get-ChildItem `
+              ".\libs" `
+              -Recurse `
+              -File `
+              -ErrorAction SilentlyContinue |
+              Select-Object FullName, Length
+
+            throw "Native library was not created: $nativeLib"
+          }
+
+          $size = (Get-Item $nativeLib).Length
+
+          if ($size -lt 1000) {
+            throw "Native library looks suspiciously small: $size bytes"
+          }
+
+          Write-Host "Native library created."
+          Write-Host "Size: $size bytes"
+
+      # ============================================================
+      # 18. Prepare native library
+      # ============================================================
+
+      - name: Prepare native library
+        shell: pwsh
+        working-directory: subsystem
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $source = `
+            ".\src\runspace\native\libs\arm64-v8a\libpsl-android.so"
+
+          $destination = `
+            ".\src\runspace\libs\arm64-v8a\libpsl-android.so"
+            if (-not (Test-Path $source)) {
+            throw "Native library source not found: $source"
+          }
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path ".\src\runspace\libs\arm64-v8a" |
+            Out-Null
+
+          Copy-Item `
+            -Path $source `
+            -Destination $destination `
+            -Force
+
+          if (-not (Test-Path $destination)) {
+            throw "Native library was not copied."
+          }
+
+          $size = (Get-Item $destination).Length
+
+          Write-Host "Prepared native library."
+          Write-Host "Size: $size bytes"
+          # ============================================================
+      # 19. Final source sanity check
+      # ============================================================
+
+      - name: Final source sanity check
+        shell: pwsh
+        working-directory: subsystem
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "=========================================="
+          Write-Host "Final source sanity check"
+          Write-Host "=========================================="
+
+          $required = @(
+            ".\subsystem.master.csproj",
+            ".\src\runspace\native\libs\arm64-v8a\libpsl-android.so"
+          )
+
+          foreach ($file in $required) {
+            if (-not (Test-Path $file)) {
+              throw "Required build input missing: $file"
+            }
+
+            Write-Host "OK: $file"
+          }
+          $size = (Get-Item $destination).Length
+
+          Write-Host "Prepared native library."
+          Write-Host "Size: $size bytes"
+
+      # ============================================================
+      # 19. Final source sanity check
+      # ============================================================
+
+      - name: Final source sanity check
+        shell: pwsh
+        working-directory: subsystem
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "=========================================="
+          Write-Host "Final source sanity check"
+          Write-Host "=========================================="
+
+          $required = @(
+            ".\subsystem.master.csproj",
+            ".\src\runspace\native\libs\arm64-v8a\libpsl-android.so"
+          )
+
+          foreach ($file in $required) {
+            if (-not (Test-Path $file)) {
+              throw "Required build input missing: $file"
+            }
+            Write-Host "OK: $file"
           }
 
           Write-Host ""
-          Write-Host "All Diagnostics source files are present."
+          Write-Host "No project XML modifications were performed."
+          Write-Host "No explicit Compile items were injected."
+          Write-Host "SDK default Compile discovery remains enabled."
 
       # ============================================================
-      # Restore
-      # ============================================================
-
-      - name: Restore Android dependencies
-        working-directory: ${{ env.SUBSYSTEM_DIR }}
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          Write-Host "=========================================="
-          Write-Host "Restoring Android dependencies"
-          Write-Host "=========================================="
-
-          dotnet restore .\subsystem.master.csproj `
-            -p:TargetFramework=net11.0-android `
-            -r android-arm64 `
-            -p:SupportedOSPlatformVersion=31.0 `
-            -p:AndroidSdkDirectory="$env:ANDROID_HOME"
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "Android dependency restore failed."
-          }
-
-      # ============================================================
-      # MSBuild Compile inspection
-      # ============================================================
-
-      - name: Verify MSBuild Compile items
-        working-directory: ${{ env.SUBSYSTEM_DIR }}
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          Write-Host "=========================================="
-          Write-Host "Checking MSBuild Compile items"
-          Write-Host "=========================================="
-
-          $compileList = dotnet msbuild `
-            .\subsystem.master.csproj `
-            -p:TargetFramework=net11.0-android `
-            -p:SupportedOSPlatformVersion=31.0 `
-            -getItem:Compile
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "Could not query MSBuild Compile items."
-          }
-
-          $compileText = $compileList | Out-String
-
-          $requiredCompileFiles = @(
-            "Dg.cs",
-            "AgentSettings.cs",
-            "PackageInfoDb.cs",
-            "SqliteProbe.cs"
-          )
-
-          foreach ($name in $requiredCompileFiles) {
-            if ($compileText -notmatch [regex]::Escape($name)) {
-              throw "$name is NOT part of the Android Compile items."
-            }
-
-            Write-Host "Compile item confirmed: $name"
-          }
-
-          Write-Host ""
-          Write-Host "All required Compile items are present."
-          Write-Host "No explicit duplicate Compile entries are being added."
-
-      # ============================================================
-      # Build
+      # 20. Build Android ARM64
       # ============================================================
 
       - name: Build Subsystem for Android ARM64
-        working-directory: ${{ env.SUBSYSTEM_DIR }}
+        shell: pwsh
+        working-directory: subsystem
         run: |
           $ErrorActionPreference = "Stop"
 
@@ -426,14 +755,14 @@ jobs:
           Write-Host "Compile SDK: $env:TARGET_ANDROID_API"
           Write-Host "Runtime: android-arm64"
           Write-Host "ABI: arm64-v8a"
-
-          dotnet build .\subsystem.master.csproj `
+          dotnet build `
+            ".\subsystem.master.csproj" `
             -c Release `
             -f net11.0-android `
             -r android-arm64 `
             --no-restore `
             -p:SubsystemRelease=true `
-            -p:SupportedOSPlatformVersion=31.0 `
+            -p:SupportedOSPlatformVersion=$env:MIN_ANDROID_API.0 `
             -p:AndroidSdkDirectory="$env:ANDROID_HOME"
 
           if ($LASTEXITCODE -ne 0) {
@@ -444,53 +773,216 @@ jobs:
           Write-Host "Android ARM64 compilation succeeded."
 
       # ============================================================
-      # Output
+      # 21. Locate produced APK
       # ============================================================
 
-      - name: Locate Android output
-        working-directory: ${{ env.SUBSYSTEM_DIR }}
-        if: always()
+      - name: Locate Android APK
+        shell: pwsh
+        working-directory: subsystem
         run: |
+          $ErrorActionPreference = "Stop"
+
           Write-Host "=========================================="
-          Write-Host "Android build output"
+          Write-Host "Locating Android APK"
           Write-Host "=========================================="
 
-          $files = @(
+          $apkFiles = @(
             Get-ChildItem `
               -Path . `
               -Recurse `
+              -Filter "*.apk" `
               -File `
-              -ErrorAction SilentlyContinue |
-              Where-Object {
-                $_.Extension -in @(
-                  ".apk",
-                  ".aab",
-                  ".dll"
-                ) -and
-                $_.FullName -match "\\bin\\"
-              }
+              -ErrorAction SilentlyContinue
           )
 
-          if ($files.Count -eq 0) {
-            Write-Host "No Android output files found."
-          }
-          else {
-            $files |
-              Select-Object FullName, Length |
-              Format-Table -AutoSize
+          if ($apkFiles.Count -eq 0) {
+            Write-Host ""
+            Write-Host "Build output:"
+
+            Get-ChildItem `
+              ".\bin" `
+              -Recurse `
+              -File `
+              -ErrorAction SilentlyContinue |
+              Select-Object FullName, Length
+              throw "No APK was produced."
           }
 
+          foreach ($apk in $apkFiles) {
+            Write-Host ""
+            Write-Host "APK:"
+            Write-Host $apk.FullName
+            Write-Host "Size: $($apk.Length) bytes"
+          }
+
+          $arm64Apk = $apkFiles |
+            Where-Object {
+              $_.FullName -match "arm64|android-arm64"
+            } |
+            Select-Object -First 1
+
+          if (-not $arm64Apk) {
+            $arm64Apk = $apkFiles |
+              Sort-Object Length -Descending |
+              Select-Object -First 1
+          }
+
+          if (-not $arm64Apk) {
+            throw "Could not select an Android APK."
+          }
+
+          $artifactDirectory = Join-Path `
+            $env:GITHUB_WORKSPACE `
+            "artifacts"
+            New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $artifactDirectory |
+            Out-Null
+
+          $artifactPath = Join-Path `
+            $artifactDirectory `
+            "Subsystem-Android-ARM64.apk"
+
+          Copy-Item `
+            $arm64Apk.FullName `
+            $artifactPath `
+            -Force
+
+          Write-Host ""
+          Write-Host "Selected APK:"
+          Write-Host $arm64Apk.FullName
+
+          Write-Host ""
+          Write-Host "Artifact:"
+          Write-Host $artifactPath
+
       # ============================================================
-      # Artifacts
+      # 22. Upload APK
       # ============================================================
 
-      - name: Upload Android artifacts
-        if: success()
+      - name: Upload Android ARM64 APK
         uses: actions/upload-artifact@v4
         with:
-          name: subsystem-android-arm64
-          path: |
-            repo/**/bin/**/*.apk
-            repo/**/bin/**/*.aab
-            repo/**/bin/**/*.dll
-          if-no-files-found: warn
+          name: Subsystem-Android-ARM64
+          path: artifacts/Subsystem-Android-ARM64.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      # ============================================================
+      # 23. Diagnostic dump on failure
+      # ============================================================
+
+      - name: Dump build diagnostics on failure
+        if: failure()
+        shell: pwsh
+        working-directory: subsystem
+        run: |
+          Write-Host "=========================================="
+          Write-Host "BUILD FAILURE DIAGNOSTICS"
+          Write-Host "=========================================="
+
+          Write-Host ""
+          Write-Host "Subsystem commit:"
+          Write-Host "$env:SUBSYSTEM_COMMIT"
+
+          Write-Host ""
+          Write-Host "Project:"
+          Write-Host "$env:SUBSYSTEM_PROJECT"
+          Write-Host ""
+          Write-Host "Toolchain:"
+          Write-Host "DOTNET_VERSION=$env:DOTNET_VERSION"
+          Write-Host "ANDROID_NDK_VERSION=$env:ANDROID_NDK_VERSION"
+          Write-Host "MIN_ANDROID_API=$env:MIN_ANDROID_API"
+          Write-Host "TARGET_ANDROID_API=$env:TARGET_ANDROID_API"
+          Write-Host "ANDROID_HOME=$env:ANDROID_HOME"
+          Write-Host "ANDROID_NDK_HOME=$env:ANDROID_NDK_HOME"
+
+          Write-Host ""
+          Write-Host "Project target frameworks:"
+
+          try {
+            [xml]$xml = Get-Content `
+              ".\subsystem.master.csproj" `
+              -Raw
+
+            @(
+              $xml.Project.PropertyGroup.TargetFrameworks
+            ) -join ";"
+            }
+          catch {
+            Write-Host "Could not parse project XML."
+          }
+
+          Write-Host ""
+          Write-Host "Diagnostics source files:"
+
+          Get-ChildItem `
+            ".\src\runspace\Diagnostics" `
+            -Filter "*.cs" `
+            -File `
+            -ErrorAction SilentlyContinue |
+            Select-Object FullName, Length
+
+          Write-Host ""
+          Write-Host "Android source files referencing known symbols:"
+
+          $patterns = @(
+            "Dg",
+            "AgentSettings",
+            "PackageInfoDb",
+            "SqliteProbe",
+            "PackageInfo",
+            "Resource",
+            "SetBackground"
+          )
+          foreach ($pattern in $patterns) {
+
+            Write-Host ""
+            Write-Host "----- $pattern -----"
+
+            Get-ChildItem `
+              ".\src\runspace" `
+              -Recurse `
+              -Filter "*.cs" `
+              -File `
+              -ErrorAction SilentlyContinue |
+              Select-String `
+                -Pattern "\b$pattern\b" `
+                -SimpleMatch:$false |
+              Select-Object `
+                Path,
+                LineNumber,
+                Line
+          }
+
+          Write-Host ""
+          Write-Host "Recent build outputs:"
+
+          Get-ChildItem `
+            ".\bin" `
+            -Recurse `
+            -File `
+            -ErrorAction SilentlyContinue |
+              Select-String `
+                -Pattern "\b$pattern\b" `
+                -SimpleMatch:$false |
+              Select-Object `
+                Path,
+                LineNumber,
+                Line
+          }
+
+          Write-Host ""
+          Write-Host "Recent build outputs:"
+
+          Get-ChildItem `
+            ".\bin" `
+            -Recurse `
+            -File `
+            -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 100 `
+              FullName,
+              Length,
+              LastWriteTime
