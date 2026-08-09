@@ -735,9 +735,10 @@ jobs:
             -r android-arm64 `
             --no-restore `
             -p:SubsystemRelease=true `
-            -p:SupportedOSPlatformVersion=$env:MIN_ANDROID_API.0 `
+            -p:NoDefaultExcludes=true `
+            -p:SupportedOSPlatformVersion=31.0 `
+            -p:TargetPlatformVersion=31.0 `
             -p:AndroidSdkDirectory="$env:ANDROID_HOME"
-
           if ($LASTEXITCODE -ne 0) {
             throw "Android ARM64 compilation failed."
           }
