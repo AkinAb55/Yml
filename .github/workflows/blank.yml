@@ -708,9 +708,7 @@ jobs:
           Write-Host "No project XML modifications were performed."
           Write-Host "No explicit Compile items were injected."
           Write-Host "SDK default Compile discovery remains enabled."
-
-      # ============================================================
-      # ============================================================
+# ============================================================
       # 20. Build Android ARM64
       # ============================================================
       - name: Build Subsystem for Android ARM64
@@ -722,20 +720,24 @@ jobs:
           Write-Host "Building Subsystem for Android ARM64"
           Write-Host "=========================================="
           
-          # Принудительно добавляем файлы Diagnostics в csproj через ItemGroup
+          # Очищаем исключения файлов диагностики из csproj, чтобы SDK подхватил их сам
           $projectFile = ".\subsystem.master.csproj"
           [xml]$xml = Get-Content $projectFile -Raw
           
-          $itemGroup = $xml.CreateElement("ItemGroup", $xml.DocumentElement.NamespaceURI)
-          $diagFiles = Get-ChildItem ".\src\runspace\Diagnostics" -Filter "*.cs"
-          foreach ($file in $diagFiles) {
-              $compile = $xml.CreateElement("Compile", $xml.DocumentElement.NamespaceURI)
-              $compile.SetAttribute("Include", "src\runspace\Diagnostics\$($file.Name)")
-              $itemGroup.AppendChild($compile)
+          foreach ($node in $xml.SelectNodes("//DefaultItemExcludes")) {
+              $node.InnerText = $node.InnerText -replace ';src\\runspace\\Diagnostics\\[^;]+', ''
+              $node.InnerText = $node.InnerText -replace 'src\\runspace\\Diagnostics\\[^;]+;?', ''
           }
-          $xml.DocumentElement.AppendChild($itemGroup)
+          # Также проверим текст во всех PropertyGroup на наличие файлов diagnostics
+          foreach ($gp in $xml.Project.PropertyGroup) {
+              if ($gp.InnerXml -match "Diagnostics") {
+                  $gp.InnerXml = $gp.InnerXml -replace ';src\\runspace\\Diagnostics\\[^;]+', ''
+                  $gp.InnerXml = $gp.InnerXml -replace 'src\\runspace\\Diagnostics\\[^;]+;?', ''
+              }
+          }
+          
           $xml.Save($projectFile)
-          Write-Host "Explicitly injected $($diagFiles.Count) diagnostics files into csproj."
+          Write-Host "Cleaned up diagnostics exclusions from csproj."
 
           Write-Host "Minimum Android API: $env:MIN_ANDROID_API"
           Write-Host "Compile SDK: $env:TARGET_ANDROID_API"
