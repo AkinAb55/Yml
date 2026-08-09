@@ -725,26 +725,33 @@ jobs:
           $projectFile = ".\subsystem.master.csproj"
           [xml]$xml = Get-Content $projectFile -Raw
           
-          # Создаем ItemGroup с правилами удаления (Remove) только для Windows-специфичных файлов под Android
           $itemGroup = $xml.CreateElement("ItemGroup", $xml.DocumentElement.NamespaceURI)
-          $itemGroup.SetAttribute("Condition", '$(TargetFramework)==''net11.0-android''')
           
-          # Исключаем папки Windows через Remove, позволяя SDK автоматически и безопасно собирать всё остальное
+          # 1. Удаляем специфичные для Windows файлы под Android
           $windowsPaths = @(
               "src\runspace\windows\**\*.cs",
               "src\shell\platform\Windows\**\*.cs"
           )
-          
           foreach ($path in $windowsPaths) {
               $compile = $xml.CreateElement("Compile", $xml.DocumentElement.NamespaceURI)
               $compile.SetAttribute("Remove", $path)
+              $compile.SetAttribute("Condition", '$(TargetFramework)==''net11.0-android''')
+              $itemGroup.AppendChild($compile)
+          }
+
+          # 2. Принудительно включаем диагностические файлы для Android, чтобы они не терялись
+          $diagFiles = Get-ChildItem ".\src\runspace\Diagnostics" -Filter "*.cs"
+          foreach ($file in $diagFiles) {
+              $compile = $xml.CreateElement("Compile", $xml.DocumentElement.NamespaceURI)
+              $compile.SetAttribute("Include", "src\runspace\Diagnostics\$($file.Name)")
+              $compile.SetAttribute("Condition", '$(TargetFramework)==''net11.0-android''')
               $itemGroup.AppendChild($compile)
           }
           
           $xml.DocumentElement.AppendChild($itemGroup)
           $xml.Save($projectFile)
           
-          Write-Host "Injected clean Compile Remove rules for Windows files."
+          Write-Host "Applied precise Android build overrides (removed Win files, included Diagnostics)."
 
           Write-Host "Minimum Android API: $env:MIN_ANDROID_API"
           Write-Host "Compile SDK: $env:TARGET_ANDROID_API"
