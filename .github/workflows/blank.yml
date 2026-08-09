@@ -708,7 +708,7 @@ jobs:
           Write-Host "No project XML modifications were performed."
           Write-Host "No explicit Compile items were injected."
           Write-Host "SDK default Compile discovery remains enabled."
-```yaml
+
       # ============================================================
       # 20. Build Android ARM64
       #
