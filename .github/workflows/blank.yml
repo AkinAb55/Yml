@@ -710,6 +710,7 @@ jobs:
           Write-Host "SDK default Compile discovery remains enabled."
 
       # ============================================================
+      # ============================================================
       # 20. Build Android ARM64
       # ============================================================
       - name: Build Subsystem for Android ARM64
@@ -721,16 +722,20 @@ jobs:
           Write-Host "Building Subsystem for Android ARM64"
           Write-Host "=========================================="
           
-          # Убираем файлы диагностики из DefaultItemExcludes в csproj, чтобы они компилировались под Android
+          # Принудительно добавляем файлы Diagnostics в csproj через ItemGroup
           $projectFile = ".\subsystem.master.csproj"
           [xml]$xml = Get-Content $projectFile -Raw
-          foreach ($gp in $xml.Project.PropertyGroup) {
-              if ($gp.DefaultItemExcludes) {
-                  $gp.DefaultItemExcludes = $gp.DefaultItemExcludes -replace ';src\\runspace\\Diagnostics\\[^;]+', ''
-              }
+          
+          $itemGroup = $xml.CreateElement("ItemGroup", $xml.DocumentElement.NamespaceURI)
+          $diagFiles = Get-ChildItem ".\src\runspace\Diagnostics" -Filter "*.cs"
+          foreach ($file in $diagFiles) {
+              $compile = $xml.CreateElement("Compile", $xml.DocumentElement.NamespaceURI)
+              $compile.SetAttribute("Include", "src\runspace\Diagnostics\$($file.Name)")
+              $itemGroup.AppendChild($compile)
           }
+          $xml.DocumentElement.AppendChild($itemGroup)
           $xml.Save($projectFile)
-          Write-Host "Patched DefaultItemExcludes successfully."
+          Write-Host "Explicitly injected $($diagFiles.Count) diagnostics files into csproj."
 
           Write-Host "Minimum Android API: $env:MIN_ANDROID_API"
           Write-Host "Compile SDK: $env:TARGET_ANDROID_API"
@@ -752,7 +757,6 @@ jobs:
           }
           Write-Host ""
           Write-Host "Android ARM64 compilation succeeded."
-
       # ============================================================
       # 21. Locate produced APK
       # ============================================================
