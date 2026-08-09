@@ -3,6 +3,9 @@ name: Build Subsystem Android ARM64
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   DOTNET_VERSION: "11.0.100-preview.5.26302.115"
   ANDROID_NDK_VERSION: "27.2.12479018"
@@ -10,16 +13,9 @@ env:
   TARGET_ANDROID_API: "36"
 
 jobs:
-  build-android-arm64:
+  build-android:
     name: Build Subsystem Android ARM64
     runs-on: windows-latest
-
-    env:
-      DOTNET_ROOT: "C:\\Program Files\\dotnet"
-      ANDROID_HOME: "C:\\Android\\android-sdk"
-      ANDROID_SDK_ROOT: "C:\\Android\\android-sdk"
-      ANDROID_NDK_HOME: "C:\\Android\\android-sdk\\ndk\\27.2.12479018"
-      SS_NDK: "C:\\Android\\android-sdk\\ndk\\27.2.12479018"
 
     steps:
 
@@ -29,123 +25,358 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      # ============================================================
-      # Toolchain
-      # ============================================================
-
-      - name: Configure .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "11.0.100-preview.5.26302.115"
-
-      - name: Configure Android SDK and NDK
-        shell: pwsh
-        run: |
-          Write-Host "=========================================="
-          Write-Host "Android toolchain"
-          Write-Host "=========================================="
-
-          Write-Host "ANDROID_HOME: $env:ANDROID_HOME"
-          Write-Host "NDK: $env:ANDROID_NDK_HOME"
-          Write-Host "Minimum API: $env:MIN_ANDROID_API"
-          Write-Host "Compile SDK: $env:TARGET_ANDROID_API"
-
-          if (-not (Test-Path $env:ANDROID_HOME)) {
-            throw "Android SDK directory was not found: $env:ANDROID_HOME"
-          }
-
-          if (-not (Test-Path $env:ANDROID_NDK_HOME)) {
-            throw "Android NDK directory was not found: $env:ANDROID_NDK_HOME"
-          }
-
-          $adb = Join-Path $env:ANDROID_HOME "platform-tools"
-          $buildTools = Join-Path $env:ANDROID_HOME "build-tools"
-          $platform = Join-Path $env:ANDROID_HOME "platforms\android-$env:TARGET_ANDROID_API"
-
-          Write-Host "SDK: OK"
-          Write-Host "NDK: OK"
-
-          if (-not (Test-Path $platform)) {
-            throw "Android platform API $env:TARGET_ANDROID_API was not found."
-          }
-
-          Write-Host "Android platform API $env:TARGET_ANDROID_API: OK"
-
-          $ndkVersionFile = Join-Path $env:ANDROID_NDK_HOME "source.properties"
-
-          if (Test-Path $ndkVersionFile) {
-            Get-Content $ndkVersionFile
-          }
-
-      # ============================================================
-      # Java
-      # ============================================================
-
-      - name: Validate Java
-        shell: pwsh
-        run: |
-          Write-Host "=========================================="
-          Write-Host "Java"
-          Write-Host "=========================================="
-
-          Write-Host "JAVA_HOME: $env:JAVA_HOME"
-
-          if (-not $env:JAVA_HOME) {
-            throw "JAVA_HOME is not defined."
-          }
-
-          if (-not (Test-Path $env:JAVA_HOME)) {
-            throw "JAVA_HOME does not exist: $env:JAVA_HOME"
-          }
-
-          & "$env:JAVA_HOME\bin\java.exe" -version
 
       # ============================================================
       # .NET
       # ============================================================
 
-      - name: Validate .NET
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+
+      # ============================================================
+      # Java
+      # ============================================================
+
+      - name: Setup Java 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: microsoft
+          java-version: "25"
+
+
+      # ============================================================
+      # Diagnostics
+      # ============================================================
+
+      - name: Show build environment
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+
           Write-Host "=========================================="
-          Write-Host ".NET"
+          Write-Host "Build environment"
           Write-Host "=========================================="
 
+          Write-Host "OS:"
+          Get-CimInstance Win32_OperatingSystem |
+            Select-Object Caption, Version
+
+          Write-Host ""
+          Write-Host "dotnet:"
           dotnet --info
-          dotnet --list-sdks
 
-          $sdk = dotnet --version
+          Write-Host ""
+          Write-Host "Java:"
+          java -version
 
-          Write-Host "Selected SDK: $sdk"
+          Write-Host ""
+          Write-Host "ANDROID_HOME: $env:ANDROID_HOME"
 
-          if ($sdk -notmatch "^11\.0\.100-preview\.5") {
-            throw "Unexpected .NET SDK selected: $sdk"
+          Write-Host ""
+          Write-Host "DOTNET_VERSION: $env:DOTNET_VERSION"
+          Write-Host "ANDROID_NDK_VERSION: $env:ANDROID_NDK_VERSION"
+          Write-Host "MIN_ANDROID_API: $env:MIN_ANDROID_API"
+          Write-Host "TARGET_ANDROID_API: $env:TARGET_ANDROID_API"
+
+
+      # ============================================================
+      # Android SDK / NDK
+      #
+      # Do NOT assume the requested NDK already exists.
+      # GitHub hosted runners may have a different NDK installed.
+      # ============================================================
+
+      - name: Configure Android toolchain
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "=========================================="
+          Write-Host "Android toolchain"
+          Write-Host "=========================================="
+
+          $sdk = $env:ANDROID_HOME
+
+          if ([string]::IsNullOrWhiteSpace($sdk)) {
+            throw "ANDROID_HOME is not defined."
           }
 
+          if (-not (Test-Path $sdk)) {
+            throw "Android SDK directory was not found: $sdk"
+          }
+
+          Write-Host "ANDROID_HOME: $sdk"
+          Write-Host "Required NDK: $env:ANDROID_NDK_VERSION"
+          Write-Host "Minimum API: $env:MIN_ANDROID_API"
+          Write-Host "Compile SDK: $env:TARGET_ANDROID_API"
+
+          # ----------------------------------------------------------
+          # Locate sdkmanager
+          # ----------------------------------------------------------
+
+          $sdkManagerCandidates = @(
+            (Join-Path $sdk "cmdline-tools\latest\bin\sdkmanager.bat"),
+            (Join-Path $sdk "cmdline-tools\bin\sdkmanager.bat")
+          )
+
+          $sdkManager = $sdkManagerCandidates |
+            Where-Object { Test-Path $_ } |
+            Select-Object -First 1
+
+          if (-not $sdkManager) {
+            Write-Host ""
+            Write-Host "Available command-line tools:"
+
+            $cmdlineTools = Join-Path $sdk "cmdline-tools"
+
+            if (Test-Path $cmdlineTools) {
+              Get-ChildItem $cmdlineTools -Directory |
+                ForEach-Object {
+                  Write-Host "  $($_.FullName)"
+                }
+            }
+
+            throw "sdkmanager.bat was not found."
+          }
+
+          Write-Host ""
+          Write-Host "sdkmanager: $sdkManager"
+
+          # ----------------------------------------------------------
+          # Accept licenses
+          # ----------------------------------------------------------
+
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "Android SDK licenses"
+          Write-Host "=========================================="
+
+          1..20 |
+            ForEach-Object { "y" } |
+            & $sdkManager --licenses 2>$null |
+            Out-Null
+
+          # ----------------------------------------------------------
+          # Install required Android components
+          # ----------------------------------------------------------
+
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "Installing Android SDK components"
+          Write-Host "=========================================="
+
+          $packages = @(
+            "platform-tools",
+            "platforms;android-$env:TARGET_ANDROID_API",
+            "build-tools;35.0.0",
+            "ndk;$env:ANDROID_NDK_VERSION"
+          )
+
+          Write-Host "Packages:"
+          $packages |
+            ForEach-Object {
+              Write-Host "  $_"
+            }
+
+          & $sdkManager $packages
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "sdkmanager failed with exit code $LASTEXITCODE."
+          }
+
+          # ----------------------------------------------------------
+          # Verify requested NDK
+          # ----------------------------------------------------------
+
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "Verifying Android NDK"
+          Write-Host "=========================================="
+
+          $ndk = Join-Path `
+            $sdk `
+            "ndk\$env:ANDROID_NDK_VERSION"
+
+          Write-Host "Expected NDK:"
+          Write-Host $ndk
+
+          if (-not (Test-Path $ndk)) {
+            Write-Host ""
+            Write-Host "Installed NDK directories:"
+
+            $ndkRoot = Join-Path $sdk "ndk"
+
+            if (Test-Path $ndkRoot) {
+              Get-ChildItem $ndkRoot -Directory |
+                ForEach-Object {
+                  Write-Host "  $($_.FullName)"
+                }
+            }
+
+            throw "Android NDK directory was not found after sdkmanager installation: $ndk"
+          }
+
+          $sourceProperties = Join-Path `
+            $ndk `
+            "source.properties"
+
+          if (-not (Test-Path $sourceProperties)) {
+            throw "NDK source.properties was not found: $sourceProperties"
+          }
+
+          Write-Host "NDK directory exists."
+          Write-Host "source.properties exists."
+
+          Write-Host ""
+          Write-Host "NDK version:"
+          Get-Content $sourceProperties
+
+          # ----------------------------------------------------------
+          # Export environment for following GitHub Actions steps
+          # ----------------------------------------------------------
+
+          "ANDROID_NDK_HOME=$ndk" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+          "ANDROID_NDK_ROOT=$ndk" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+          "SS_NDK=$ndk" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+          # Also expose SDK explicitly.
+          "ANDROID_HOME=$sdk" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+          "ANDROID_SDK_ROOT=$sdk" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+          Write-Host ""
+          Write-Host "Android toolchain configured successfully."
+
+
       # ============================================================
-      # Locate project
+      # Verify Android toolchain
       # ============================================================
 
-      - name: Validate project
+      - name: Verify Android toolchain
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "=========================================="
+          Write-Host "Verifying Android toolchain"
+          Write-Host "=========================================="
+
+          Write-Host "ANDROID_HOME:"
+          Write-Host $env:ANDROID_HOME
+
+          Write-Host ""
+          Write-Host "ANDROID_NDK_HOME:"
+          Write-Host $env:ANDROID_NDK_HOME
+
+          Write-Host ""
+          Write-Host "ANDROID_NDK_ROOT:"
+          Write-Host $env:ANDROID_NDK_ROOT
+
+          Write-Host ""
+          Write-Host "SS_NDK:"
+          Write-Host $env:SS_NDK
+
+          if (-not (Test-Path $env:ANDROID_HOME)) {
+            throw "ANDROID_HOME does not exist."
+          }
+
+          if (-not (Test-Path $env:ANDROID_NDK_HOME)) {
+            throw "ANDROID_NDK_HOME does not exist: $env:ANDROID_NDK_HOME"
+          }
+
+          $sourceProperties = Join-Path `
+            $env:ANDROID_NDK_HOME `
+            "source.properties"
+
+          if (-not (Test-Path $sourceProperties)) {
+            throw "NDK source.properties does not exist."
+          }
+
+          Write-Host ""
+          Write-Host "NDK:"
+          Get-Content $sourceProperties
+
+          $adb = Join-Path `
+            $env:ANDROID_HOME `
+            "platform-tools\adb.exe"
+
+          if (-not (Test-Path $adb)) {
+            throw "adb.exe was not found: $adb"
+          }
+
+          Write-Host ""
+          Write-Host "ADB:"
+          & $adb version
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "ADB verification failed."
+          }
+
+          $androidJar = Join-Path `
+            $env:ANDROID_HOME `
+            "platforms\android-$env:TARGET_ANDROID_API\android.jar"
+
+          if (-not (Test-Path $androidJar)) {
+            throw "Android API $env:TARGET_ANDROID_API android.jar was not found."
+          }
+
+          Write-Host ""
+          Write-Host "Android SDK platform verified:"
+          Write-Host $androidJar
+
+          Write-Host ""
+          Write-Host "Android toolchain verification succeeded."
+
+
+      # ============================================================
+      # Validate project
+      # ============================================================
+
+      - name: Validate subsystem project
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
           Write-Host "=========================================="
           Write-Host "Validating subsystem.master.csproj"
           Write-Host "=========================================="
 
-          $projectFile = Join-Path $PWD "subsystem.master.csproj"
+          $projectFile = `
+            (Resolve-Path ".\subsystem.master.csproj").Path
 
-          if (-not (Test-Path $projectFile)) {
-            throw "subsystem.master.csproj was not found."
-          }
-
-          Write-Host "Project: $projectFile"
+          Write-Host "Project:"
+          Write-Host $projectFile
 
           try {
-            [xml]$projectXml = Get-Content $projectFile -Raw
+            [xml]$projectXml = Get-Content `
+              $projectFile `
+              -Raw
           }
           catch {
             throw "subsystem.master.csproj is not valid XML: $($_.Exception.Message)"
@@ -153,356 +384,90 @@ jobs:
 
           Write-Host "Project XML is valid."
 
-          $targetFrameworks = [string](
+          $targetFrameworks = `
             $projectXml.Project.PropertyGroup.TargetFrameworks
-          )
 
-          Write-Host "TargetFrameworks: $targetFrameworks"
+          if (-not $targetFrameworks) {
+            throw "TargetFrameworks element was not found."
+          }
 
-          if ($targetFrameworks -notmatch "net11\.0-android") {
+          Write-Host ""
+          Write-Host "TargetFrameworks:"
+          Write-Host $targetFrameworks
+
+          if ($targetFrameworks -notmatch 'net11\.0-android') {
             throw "net11.0-android target framework is missing."
           }
 
-          if ($targetFrameworks -notmatch "net11\.0-windows") {
-            throw "net11.0-windows target framework is missing."
-          }
-
-          $androidGroups = @(
+          $androidPropertyGroups = @(
             $projectXml.Project.PropertyGroup |
               Where-Object {
                 $_.Condition -eq "'`$(TargetFramework)' == 'net11.0-android'"
               }
           )
 
-          if ($androidGroups.Count -eq 0) {
+          if ($androidPropertyGroups.Count -eq 0) {
             throw "Android PropertyGroup was not found."
           }
 
-          Write-Host "Android PropertyGroup count: $($androidGroups.Count)"
-
-      # ============================================================
-      # CI compatibility fixes
-      #
-      # IMPORTANT:
-      # No Compile Include is inserted here.
-      # The SDK owns Compile items.
-      # ============================================================
-
-      - name: Apply CI compatibility fixes
-        shell: pwsh
-        run: |
-          Write-Host "=========================================="
-          Write-Host "Applying CI compatibility fixes"
-          Write-Host "=========================================="
-
-          $projectFile = Join-Path $PWD "subsystem.master.csproj"
-
-          try {
-            [xml]$xml = Get-Content $projectFile -Raw
-          }
-          catch {
-            throw "Cannot parse subsystem.master.csproj before modification: $($_.Exception.Message)"
-          }
-
-          $androidGroups = @(
-            $xml.Project.PropertyGroup |
-              Where-Object {
-                $_.Condition -eq "'`$(TargetFramework)' == 'net11.0-android'"
-              }
-          )
-
-          if ($androidGroups.Count -eq 0) {
-            throw "Android PropertyGroup was not found."
-          }
-
-          foreach ($group in $androidGroups) {
-
-            # --------------------------------------------------------
-            # Remove diagnostic source files from DefaultItemExcludes.
-            #
-            # These files MUST be discovered by the SDK normally.
-            # We intentionally do NOT create Compile Include entries.
-            # --------------------------------------------------------
-
-            $excludeNode = $group.DefaultItemExcludes
-
-            if ($null -eq $excludeNode) {
-              $excludeNode = $xml.CreateElement("DefaultItemExcludes")
-              [void]$group.AppendChild($excludeNode)
-            }
-
-            $current = [string]$excludeNode.InnerText
-
-            $diagnosticFiles = @(
-              "src\runspace\Diagnostics\AgentSettings.cs",
-              "src\runspace\Diagnostics\Dg.cs",
-              "src\runspace\Diagnostics\PackageInfoDb.cs",
-              "src\runspace\Diagnostics\SqliteProbe.cs",
-              "src\runspace\Diagnostics\TerminalAccessibilityService.cs"
-            )
-
-            foreach ($file in $diagnosticFiles) {
-              $current = $current.Replace(";$file", "")
-              $current = $current.Replace($file + ";", "")
-              $current = $current.Replace($file, "")
-            }
-
-            $excludeNode.InnerText = $current
-
-            # --------------------------------------------------------
-            # Explicit Android resource generation.
-            # --------------------------------------------------------
-
-            $useAapt2 = $group.AndroidUseAapt2
-
-            if ($null -eq $useAapt2) {
-              $useAapt2 = $xml.CreateElement("AndroidUseAapt2")
-              [void]$group.AppendChild($useAapt2)
-            }
-
-            $useAapt2.InnerText = "true"
-
-            $resourceDesigner = $group.AndroidResourceDesigner
-
-            if ($null -eq $resourceDesigner) {
-              $resourceDesigner = $xml.CreateElement("AndroidResourceDesigner")
-              [void]$group.AppendChild($resourceDesigner)
-            }
-
-            $resourceDesigner.InnerText = "true"
-          }
+          Write-Host "Android PropertyGroup confirmed."
 
           # ----------------------------------------------------------
-          # Remove any manually inserted Compile items for diagnostics.
+          # Important:
           #
-          # This is deliberately done through XML, not YAML text
-          # replacement, so '<', '>', '$' and quotes cannot corrupt
-          # the workflow parser.
+          # We deliberately DO NOT require explicit Compile Include
+          # entries for normal .cs files.
+          #
+          # Microsoft.NET.Sdk automatically includes:
+          #
+          #     **\*.cs
+          #
+          # Adding those files manually causes NETSDK1022.
           # ----------------------------------------------------------
 
-          $compileNodes = @(
-            $xml.Project.ItemGroup.Compile
-          )
+          $explicitCompile = Select-String `
+            -Path $projectFile `
+            -Pattern '<Compile\s+Include='
 
-          $diagnosticNames = @(
-            "AgentSettings.cs",
-            "Dg.cs",
-            "PackageInfoDb.cs",
-            "SqliteProbe.cs"
-          )
+          if ($explicitCompile) {
+            Write-Host ""
+            Write-Host "Explicit Compile entries currently present:"
 
-          foreach ($compile in $compileNodes) {
-
-            $include = [string]$compile.Include
-
-            foreach ($name in $diagnosticNames) {
-              if ($include -like "*$name") {
-                [void]$compile.ParentNode.RemoveChild($compile)
-                break
-              }
-            }
-          }
-
-          # ----------------------------------------------------------
-          # Save valid XML.
-          # ----------------------------------------------------------
-
-          $settings = New-Object System.Xml.XmlWriterSettings
-          $settings.Indent = $true
-          $settings.OmitXmlDeclaration = $true
-
-          $writer = [System.Xml.XmlWriter]::Create(
-            $projectFile,
-            $settings
-          )
-
-          try {
-            $xml.Save($writer)
-          }
-          finally {
-            $writer.Dispose()
-          }
-
-          # ----------------------------------------------------------
-          # Re-read immediately.
-          # ----------------------------------------------------------
-
-          try {
-            [xml]$verifyXml = Get-Content $projectFile -Raw
-          }
-          catch {
-            throw "subsystem.master.csproj became invalid XML: $($_.Exception.Message)"
-          }
-
-          Write-Host "subsystem.master.csproj remains valid XML."
-
-          $verifyFrameworks = [string](
-            $verifyXml.Project.PropertyGroup.TargetFrameworks
-          )
-
-          if ($verifyFrameworks -notmatch "net11\.0-android") {
-            throw "net11.0-android disappeared after CI patch."
-          }
-
-          Write-Host "TargetFrameworks confirmed."
-
-          Write-Host ""
-          Write-Host "No diagnostic Compile items were manually added."
-          Write-Host "Android resource generation configured."
-          Write-Host "CI compatibility fixes completed."
-
-      # ============================================================
-      # NotificationService compatibility
-      # ============================================================
-
-      - name: Patch NotificationService compatibility
-        shell: pwsh
-        run: |
-          Write-Host "=========================================="
-          Write-Host "NotificationService compatibility"
-          Write-Host "=========================================="
-
-          $files = Get-ChildItem `
-            -Path . `
-            -Filter "NotificationService.cs" `
-            -Recurse `
-            -File
-
-          if ($files.Count -eq 0) {
-            Write-Host "NotificationService.cs not found."
-            Write-Host "No patch required."
-            exit 0
-          }
-
-          foreach ($file in $files) {
-            Write-Host "Checking: $($file.FullName)"
-
-            $text = Get-Content $file.FullName -Raw
-
-            # Keep this step intentionally conservative.
-            # Do not perform broad source transformations here.
-            Set-Content `
-              -Path $file.FullName `
-              -Value $text `
-              -Encoding UTF8
-
-            Write-Host "NotificationService.cs patched."
-          }
-
-      # ============================================================
-      # Validate diagnostics source files
-      # ============================================================
-
-      - name: Validate Android diagnostics sources
-        shell: pwsh
-        run: |
-          Write-Host "=========================================="
-          Write-Host "Validating Android diagnostics sources"
-          Write-Host "=========================================="
-
-          $requiredFiles = @(
-            "src\runspace\Diagnostics\AgentSettings.cs",
-            "src\runspace\Diagnostics\Dg.cs",
-            "src\runspace\Diagnostics\PackageInfoDb.cs",
-            "src\runspace\Diagnostics\SqliteProbe.cs"
-          )
-
-          foreach ($file in $requiredFiles) {
-
-            if (-not (Test-Path $file)) {
-              throw "Required source file is missing: $file"
-            }
-
-            Write-Host "Source confirmed: $file"
-          }
-
-          Write-Host ""
-          Write-Host "All required diagnostics source files exist."
-
-      # ============================================================
-      # Validate Android resources
-      # ============================================================
-
-      - name: Validate Android resources
-        shell: pwsh
-        run: |
-          Write-Host "=========================================="
-          Write-Host "Checking Android resources"
-          Write-Host "=========================================="
-
-          $resourceRoot = Join-Path $PWD "Resources"
-
-          if (-not (Test-Path $resourceRoot)) {
-            Write-Host "Resources directory does not exist."
-            Write-Host "Continuing because the project may generate resources through Android tooling."
-            exit 0
-          }
-
-          Write-Host "Resources directory: $resourceRoot"
-
-          $resourceFiles = @(
-            Get-ChildItem `
-              -Path $resourceRoot `
-              -Recurse `
-              -File `
-              -ErrorAction SilentlyContinue
-          )
-
-          Write-Host "Resource files: $($resourceFiles.Count)"
-
-          if ($resourceFiles.Count -gt 0) {
-            $resourceFiles |
-              Select-Object -First 30 |
+            $explicitCompile |
               ForEach-Object {
-                Write-Host "  $($_.FullName)"
+                Write-Host "  $($_.Line.Trim())"
               }
+
+            Write-Host ""
+            Write-Host "These entries are not automatically an error,"
+            Write-Host "but normal source files must not be duplicated."
           }
 
-      # ============================================================
-      # Restore
-      # ============================================================
+          Write-Host ""
+          Write-Host "Project validation succeeded."
 
-      - name: Restore Android
-        shell: pwsh
-        run: |
-          Write-Host "=========================================="
-          Write-Host "Restoring Android dependencies"
-          Write-Host "=========================================="
-
-          dotnet restore .\subsystem.master.csproj `
-            -p:TargetFramework=net11.0-android `
-            -p:RuntimeIdentifier=android-arm64 `
-            -p:SupportedOSPlatformVersion=31.0 `
-            -p:AndroidSdkDirectory="$env:ANDROID_HOME"
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "Android restore failed."
-          }
-
-          Write-Host "Android restore succeeded."
 
       # ============================================================
-      # Validate MSBuild Compile graph
+      # Inspect MSBuild Compile items
       #
-      # This is the important replacement for the old manual
-      # <Compile Include="..."> approach.
+      # This is diagnostic only.
+      # It does NOT modify the project.
       # ============================================================
 
-      - name: Validate Android Compile items
+      - name: Verify Android Compile items
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+
           Write-Host "=========================================="
           Write-Host "Checking Android Compile items"
           Write-Host "=========================================="
 
-          $projectFile = Join-Path $PWD "subsystem.master.csproj"
-
-          $compileList = dotnet msbuild `
-            $projectFile `
-            -p:TargetFramework=net11.0-android `
-            -p:RuntimeIdentifier=android-arm64 `
-            -p:SupportedOSPlatformVersion=31.0 `
-            -getItem:Compile
+          $compileList = `
+            dotnet msbuild .\subsystem.master.csproj `
+              -p:TargetFramework=net11.0-android `
+              -p:RuntimeIdentifier=android-arm64 `
+              -getItem:Compile
 
           if ($LASTEXITCODE -ne 0) {
             throw "Could not query MSBuild Compile items."
@@ -529,15 +494,45 @@ jobs:
           }
 
           Write-Host ""
-          Write-Host "All required diagnostics files are included by the SDK."
+          Write-Host "All required Diagnostics files are included by MSBuild."
+
 
       # ============================================================
-      # Android build
+      # Restore
+      # ============================================================
+
+      - name: Restore Android project
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Write-Host "=========================================="
+          Write-Host "Restoring Subsystem for Android"
+          Write-Host "=========================================="
+
+          dotnet restore `
+            .\subsystem.master.csproj `
+            -p:TargetFramework=net11.0-android `
+            -p:RuntimeIdentifier=android-arm64 `
+            -p:AndroidSdkDirectory="$env:ANDROID_HOME"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Android restore failed."
+          }
+
+          Write-Host ""
+          Write-Host "Android restore succeeded."
+
+
+      # ============================================================
+      # Build ARM64
       # ============================================================
 
       - name: Build Subsystem for Android ARM64
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+
           Write-Host "=========================================="
           Write-Host "Building Subsystem for Android ARM64"
           Write-Host "=========================================="
@@ -547,20 +542,16 @@ jobs:
           Write-Host "Compile SDK: $env:TARGET_ANDROID_API"
           Write-Host "Runtime: android-arm64"
           Write-Host "ABI: arm64-v8a"
+          Write-Host ""
+          Write-Host "ANDROID_HOME: $env:ANDROID_HOME"
+          Write-Host "ANDROID_NDK_HOME: $env:ANDROID_NDK_HOME"
 
-          $nativeLibrary = Join-Path `
-            $PWD `
-            "src\runspace\libs\arm64-v8a\libpsl-android.so"
-
-          if (Test-Path $nativeLibrary) {
-            Write-Host "Native library: present"
-          }
-          else {
-            Write-Host "Native library: not present at:"
-            Write-Host $nativeLibrary
+          if (-not (Test-Path $env:ANDROID_NDK_HOME)) {
+            throw "ANDROID_NDK_HOME does not exist: $env:ANDROID_NDK_HOME"
           }
 
-          dotnet build .\subsystem.master.csproj `
+          dotnet build `
+            .\subsystem.master.csproj `
             -c Release `
             -f net11.0-android `
             -r android-arm64 `
@@ -578,31 +569,86 @@ jobs:
           Write-Host "Android ARM64 compilation succeeded."
           Write-Host "=========================================="
 
+
       # ============================================================
-      # Locate output
+      # Locate generated artifacts
       # ============================================================
 
-      - name: Inspect Android output
-        if: success()
+      - name: Locate Android artifacts
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+
           Write-Host "=========================================="
-          Write-Host "Android build output"
+          Write-Host "Android build artifacts"
           Write-Host "=========================================="
 
-          $bin = Join-Path $PWD "bin"
-
-          if (-not (Test-Path $bin)) {
-            throw "bin directory was not produced."
-          }
-
-          Get-ChildItem `
-            -Path $bin `
+          $apkFiles = Get-ChildItem `
+            -Path . `
             -Recurse `
             -File `
-            -Include *.apk,*.aab,*.dll,*.so `
-            -ErrorAction SilentlyContinue |
-            ForEach-Object {
-              Write-Host $_.FullName
+            -Filter "*.apk" `
+            -ErrorAction SilentlyContinue
+
+          $aabFiles = Get-ChildItem `
+            -Path . `
+            -Recurse `
+            -File `
+            -Filter "*.aab" `
+            -ErrorAction SilentlyContinue
+
+          if ($apkFiles.Count -eq 0 -and $aabFiles.Count -eq 0) {
+            Write-Host "No APK/AAB artifacts were found."
+
+            Write-Host ""
+            Write-Host "Recent build directories:"
+
+            Get-ChildItem . `
+              -Recurse `
+              -Directory `
+              -ErrorAction SilentlyContinue |
+              Where-Object {
+                $_.FullName -match '\\bin\\' -or
+                $_.FullName -match '\\obj\\'
+              } |
+              Select-Object -First 100 |
+              ForEach-Object {
+                Write-Host $_.FullName
               }
-            
+
+            exit 0
+          }
+
+          if ($apkFiles.Count -gt 0) {
+            Write-Host ""
+            Write-Host "APK files:"
+
+            $apkFiles |
+              ForEach-Object {
+                Write-Host "  $($_.FullName)"
+              }
+          }
+
+          if ($aabFiles.Count -gt 0) {
+            Write-Host ""
+            Write-Host "AAB files:"
+
+            $aabFiles |
+              ForEach-Object {
+                Write-Host "  $($_.FullName)"
+              }
+          }
+
+
+      # ============================================================
+      # Upload artifacts
+      # ============================================================
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: subsystem-android-arm64
+          path: |
+            **/*.apk
+            **/*.aab
+          if-no-files-found: warn
