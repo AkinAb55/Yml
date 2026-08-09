@@ -723,23 +723,26 @@ jobs:
           $projectFile = ".\subsystem.master.csproj"
           [xml]$xml = Get-Content $projectFile -Raw
           
-          $itemGroup = $xml.CreateElement("ItemGroup", $xml.DocumentElement.NamespaceURI)
-          
-          $files = "AgentSettings.cs", "Dg.cs", "PackageInfoDb.cs", "SqliteProbe.cs"
-          foreach ($fileName in $files) {
-              $filePath = "src\runspace\Diagnostics\$fileName"
-              if (Test-Path $filePath) {
-                  $compile = $xml.CreateElement("Compile", $xml.DocumentElement.NamespaceURI)
-                  $compile.SetAttribute("Include", $filePath)
-                  # Используем одинарные кавычки для PowerShell, чтобы знак $ не интерполировался
-                  $compile.SetAttribute("Condition", '$(TargetFramework)==''net11.0-android''')
-                  $itemGroup.AppendChild($compile)
+          # Удаляем любые упоминания папки Diagnostics из любых свойств и исключений в csproj
+          foreach ($node in $xml.SelectNodes("//*")) {
+              if ($node.HasAttribute("DefaultItemExcludes") -or $node.Name -eq "DefaultItemExcludes") {
+                  $val = $node.GetAttribute("DefaultItemExcludes")
+                  if (-not $val) { $val = $node.InnerText }
+                  $val = $val -replace '[^;]*Diagnostics[^;]*;?', ''
+                  if ($node.HasAttribute("DefaultItemExcludes")) {
+                      $node.SetAttribute("DefaultItemExcludes", $val)
+                  } else {
+                      $node.InnerText = $val
+                  }
+              }
+              # Также очищаем любые явные теги Remove, если они там есть
+              if ($node.Name -eq "Compile" -and $node.HasAttribute("Remove") -and $node.GetAttribute("Remove") -match "Diagnostics") {
+                  $node.ParentNode.RemoveChild($node)
               }
           }
           
-          $xml.DocumentElement.AppendChild($itemGroup)
           $xml.Save($projectFile)
-          Write-Host "Forced conditional inclusion of diagnostics files for Android."
+          Write-Host "Stripped all Diagnostics exclusions from csproj rules."
 
           Write-Host "Minimum Android API: $env:MIN_ANDROID_API"
           Write-Host "Compile SDK: $env:TARGET_ANDROID_API"
