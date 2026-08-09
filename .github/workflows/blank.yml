@@ -723,7 +723,6 @@ jobs:
           $projectFile = ".\subsystem.master.csproj"
           [xml]$xml = Get-Content $projectFile -Raw
           
-          # Создаем ItemGroup для принудительного включения файлов диагностики под Android
           $itemGroup = $xml.CreateElement("ItemGroup", $xml.DocumentElement.NamespaceURI)
           
           $files = "AgentSettings.cs", "Dg.cs", "PackageInfoDb.cs", "SqliteProbe.cs"
@@ -732,8 +731,8 @@ jobs:
               if (Test-Path $filePath) {
                   $compile = $xml.CreateElement("Compile", $xml.DocumentElement.NamespaceURI)
                   $compile.SetAttribute("Include", $filePath)
-                  # Указываем условие, чтобы не было конфликтов дублирования на других платформах
-                  $compile.SetAttribute("Condition", "'$(TargetFramework)'=='net11.0-android'")
+                  # Используем одинарные кавычки для PowerShell, чтобы знак $ не интерполировался
+                  $compile.SetAttribute("Condition", '$(TargetFramework)==''net11.0-android''')
                   $itemGroup.AppendChild($compile)
               }
           }
