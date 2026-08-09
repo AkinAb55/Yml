@@ -725,29 +725,26 @@ jobs:
           $projectFile = ".\subsystem.master.csproj"
           [xml]$xml = Get-Content $projectFile -Raw
           
-          # Создаем ItemGroup для принудительного включения диагностики и исключения Windows
-          $propGroup = $xml.CreateElement("PropertyGroup", $xml.DocumentElement.NamespaceURI)
-          $propGroup.SetAttribute("Condition", '$(TargetFramework)==''net11.0-android''')
-          
-          # Расширяем DefaultItemExcludes только для Android, исключая папки Windows
-          $defaultExcludes = $xml.CreateElement("DefaultItemExcludes", $xml.DocumentElement.NamespaceURI)
-          $defaultExcludes.InnerText = '$(DefaultItemExcludes);src\runspace\windows\**;src\shell\platform\Windows\**'
-          $propGroup.AppendChild($defaultExcludes)
-          $xml.DocumentElement.AppendChild($propGroup)
-
-          # Явно добавляем файлы из папки Diagnostics для сборки под Android
+          # Создаем ItemGroup с правилами удаления (Remove) только для Windows-специфичных файлов под Android
           $itemGroup = $xml.CreateElement("ItemGroup", $xml.DocumentElement.NamespaceURI)
-          $diagFiles = Get-ChildItem ".\src\runspace\Diagnostics" -Filter "*.cs"
-          foreach ($file in $diagFiles) {
+          $itemGroup.SetAttribute("Condition", '$(TargetFramework)==''net11.0-android''')
+          
+          # Исключаем папки Windows через Remove, позволяя SDK автоматически и безопасно собирать всё остальное
+          $windowsPaths = @(
+              "src\runspace\windows\**\*.cs",
+              "src\shell\platform\Windows\**\*.cs"
+          )
+          
+          foreach ($path in $windowsPaths) {
               $compile = $xml.CreateElement("Compile", $xml.DocumentElement.NamespaceURI)
-              $compile.SetAttribute("Include", "src\runspace\Diagnostics\$($file.Name)")
-              $compile.SetAttribute("Condition", '$(TargetFramework)==''net11.0-android''')
+              $compile.SetAttribute("Remove", $path)
               $itemGroup.AppendChild($compile)
           }
+          
           $xml.DocumentElement.AppendChild($itemGroup)
           $xml.Save($projectFile)
           
-          Write-Host "Injected Android-specific compilation rules."
+          Write-Host "Injected clean Compile Remove rules for Windows files."
 
           Write-Host "Minimum Android API: $env:MIN_ANDROID_API"
           Write-Host "Compile SDK: $env:TARGET_ANDROID_API"
