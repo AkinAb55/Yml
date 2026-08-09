@@ -726,8 +726,9 @@ jobs:
           [xml]$xml = Get-Content $projectFile -Raw
           
           $itemGroup = $xml.CreateElement("ItemGroup", $xml.DocumentElement.NamespaceURI)
+          $itemGroup.SetAttribute("Condition", '$(TargetFramework)==''net11.0-android''')
           
-          # 1. Удаляем специфичные для Windows файлы под Android
+          # Удаляем только Windows-файлы, а SDK пусть сам собирает всё остальное (включая Diagnostics)
           $windowsPaths = @(
               "src\runspace\windows\**\*.cs",
               "src\shell\platform\Windows\**\*.cs"
@@ -735,23 +736,13 @@ jobs:
           foreach ($path in $windowsPaths) {
               $compile = $xml.CreateElement("Compile", $xml.DocumentElement.NamespaceURI)
               $compile.SetAttribute("Remove", $path)
-              $compile.SetAttribute("Condition", '$(TargetFramework)==''net11.0-android''')
-              $itemGroup.AppendChild($compile)
-          }
-
-          # 2. Принудительно включаем диагностические файлы для Android, чтобы они не терялись
-          $diagFiles = Get-ChildItem ".\src\runspace\Diagnostics" -Filter "*.cs"
-          foreach ($file in $diagFiles) {
-              $compile = $xml.CreateElement("Compile", $xml.DocumentElement.NamespaceURI)
-              $compile.SetAttribute("Include", "src\runspace\Diagnostics\$($file.Name)")
-              $compile.SetAttribute("Condition", '$(TargetFramework)==''net11.0-android''')
               $itemGroup.AppendChild($compile)
           }
           
           $xml.DocumentElement.AppendChild($itemGroup)
           $xml.Save($projectFile)
           
-          Write-Host "Applied precise Android build overrides (removed Win files, included Diagnostics)."
+          Write-Host "Configured clean Android build rules via Compile Remove."
 
           Write-Host "Minimum Android API: $env:MIN_ANDROID_API"
           Write-Host "Compile SDK: $env:TARGET_ANDROID_API"
@@ -766,7 +757,8 @@ jobs:
             --no-restore `
             -p:SubsystemRelease=true `
             -p:SupportedOSPlatformVersion=$env:MIN_ANDROID_API.0 `
-            -p:AndroidSdkDirectory="$env:ANDROID_HOME"
+            -p:AndroidSdkDirectory="$env:ANDROID_HOME" `
+            -p:EnableDefaultCompileItems=true
           
           if ($LASTEXITCODE -ne 0) {
             throw "Android ARM64 compilation failed."
