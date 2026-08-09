@@ -734,7 +734,7 @@ jobs:
             -f net11.0-android `
             -r android-arm64 `
             --no-restore `
-            p:SubsystemRelease=true `
+            -p:SubsystemRelease=true `
             -p:SupportedOSPlatformVersion=$env:MIN_ANDROID_API.0 `
             -p:AndroidSdkDirectory="$env:ANDROID_HOME"
 
