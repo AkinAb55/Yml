@@ -1,1 +1,70 @@
+name: Test Android Build
+on: workflow_dispatch
 
+jobs:
+  build-android:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '11.0.x'
+
+      - name: Build Subsystem for Android ARM64 (Fast Test)
+        shell: pwsh
+        working-directory: subsystem
+        run: |
+          $ErrorActionPreference = "Stop"
+          Write-Host "=========================================="
+          Write-Host "Fast Diagnostic Build Test"
+          Write-Host "=========================================="
+          
+          # 1. Проверка наличия папки диагностики
+          $diagPath = ".\src\runspace\Diagnostics"
+          if (Test-Path $diagPath) {
+              $files = Get-ChildItem $diagPath -Filter "*.cs"
+              Write-Host "Found $($files.Count) files in Diagnostics:"
+              foreach ($f in $files) { Write-Host "  - $($f.Name)" }
+          } else {
+              throw "Diagnostics folder missing!"
+          }
+
+          # 2. Модификация csproj для исключения Windows-файлов под Android
+          $projectFile = ".\subsystem.master.csproj"
+          [xml]$xml = Get-Content $projectFile -Raw
+          
+          $itemGroup = $xml.CreateElement("ItemGroup", $xml.DocumentElement.NamespaceURI)
+          $itemGroup.SetAttribute("Condition", '$(TargetFramework)==''net11.0-android''')
+          
+          $windowsPaths = @(
+              "src\runspace\windows\**\*.cs",
+              "src\shell\platform\Windows\**\*.cs"
+          )
+          foreach ($path in $windowsPaths) {
+              $compile = $xml.CreateElement("Compile", $xml.DocumentElement.NamespaceURI)
+              $compile.SetAttribute("Remove", $path)
+              $itemGroup.AppendChild($compile)
+          }
+          
+          $xml.DocumentElement.AppendChild($itemGroup)
+          $xml.Save($projectFile)
+          Write-Host "Injected Android build rules."
+
+          # 3. Сборка с подробным логированием
+          dotnet build `
+            ".\subsystem.master.csproj" `
+            -c Release `
+            -f net11.0-android `
+            -r android-arm64 `
+            -v normal `
+            -p:SubsystemRelease=true `
+            -p:SupportedOSPlatformVersion=31.0 `
+            -p:AndroidSdkDirectory="$env:ANDROID_SDK_ROOT"
+          
+          if ($LASTEXITCODE -ne 0) {
+            throw "Android ARM64 compilation failed."
+          }
+          Write-Host "Build succeeded!"
