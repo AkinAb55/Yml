@@ -722,6 +722,22 @@ jobs:
           
           git checkout subsystem.master.csproj
 
+          # Добавляем правило исключения Windows-папок для Android прямо в csproj
+          $projectFile = ".\subsystem.master.csproj"
+          [xml]$xml = Get-Content $projectFile -Raw
+          
+          $propGroup = $xml.CreateElement("PropertyGroup", $xml.DocumentElement.NamespaceURI)
+          $propGroup.SetAttribute("Condition", "'$(TargetFramework)'=='net11.0-android'")
+          
+          $defaultExcludes = $xml.CreateElement("DefaultItemExcludes", $xml.DocumentElement.NamespaceURI)
+          $defaultExcludes.InnerText = "$(DefaultItemExcludes);src\runspace\windows\**;src\shell\platform\Windows\**"
+          
+          $propGroup.AppendChild($defaultExcludes)
+          $xml.DocumentElement.AppendChild($propGroup)
+          $xml.Save($projectFile)
+          
+          Write-Host "Injected platform-specific exclusions into csproj."
+
           Write-Host "Minimum Android API: $env:MIN_ANDROID_API"
           Write-Host "Compile SDK: $env:TARGET_ANDROID_API"
           Write-Host "Runtime: android-arm64"
@@ -735,8 +751,7 @@ jobs:
             --no-restore `
             -p:SubsystemRelease=true `
             -p:SupportedOSPlatformVersion=$env:MIN_ANDROID_API.0 `
-            -p:AndroidSdkDirectory="$env:ANDROID_HOME" `
-            "-p:DefaultItemExcludes=src\runspace\windows\**;src\shell\platform\Windows\**"
+            -p:AndroidSdkDirectory="$env:ANDROID_HOME"
           
           if ($LASTEXITCODE -ne 0) {
             throw "Android ARM64 compilation failed."
