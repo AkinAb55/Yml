@@ -725,18 +725,29 @@ jobs:
           $projectFile = ".\subsystem.master.csproj"
           [xml]$xml = Get-Content $projectFile -Raw
           
+          # Создаем ItemGroup для принудительного включения диагностики и исключения Windows
           $propGroup = $xml.CreateElement("PropertyGroup", $xml.DocumentElement.NamespaceURI)
-          # Используем одинарные кавычки для PowerShell, чтобы избежать интерполяции $()
           $propGroup.SetAttribute("Condition", '$(TargetFramework)==''net11.0-android''')
           
+          # Расширяем DefaultItemExcludes только для Android, исключая папки Windows
           $defaultExcludes = $xml.CreateElement("DefaultItemExcludes", $xml.DocumentElement.NamespaceURI)
           $defaultExcludes.InnerText = '$(DefaultItemExcludes);src\runspace\windows\**;src\shell\platform\Windows\**'
-          
           $propGroup.AppendChild($defaultExcludes)
           $xml.DocumentElement.AppendChild($propGroup)
+
+          # Явно добавляем файлы из папки Diagnostics для сборки под Android
+          $itemGroup = $xml.CreateElement("ItemGroup", $xml.DocumentElement.NamespaceURI)
+          $diagFiles = Get-ChildItem ".\src\runspace\Diagnostics" -Filter "*.cs"
+          foreach ($file in $diagFiles) {
+              $compile = $xml.CreateElement("Compile", $xml.DocumentElement.NamespaceURI)
+              $compile.SetAttribute("Include", "src\runspace\Diagnostics\$($file.Name)")
+              $compile.SetAttribute("Condition", '$(TargetFramework)==''net11.0-android''')
+              $itemGroup.AppendChild($compile)
+          }
+          $xml.DocumentElement.AppendChild($itemGroup)
           $xml.Save($projectFile)
           
-          Write-Host "Injected platform-specific exclusions into csproj."
+          Write-Host "Injected Android-specific compilation rules."
 
           Write-Host "Minimum Android API: $env:MIN_ANDROID_API"
           Write-Host "Compile SDK: $env:TARGET_ANDROID_API"
