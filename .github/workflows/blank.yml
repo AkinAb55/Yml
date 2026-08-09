@@ -722,15 +722,15 @@ jobs:
           
           git checkout subsystem.master.csproj
 
-          # Добавляем правило исключения Windows-папок для Android прямо в csproj
           $projectFile = ".\subsystem.master.csproj"
           [xml]$xml = Get-Content $projectFile -Raw
           
           $propGroup = $xml.CreateElement("PropertyGroup", $xml.DocumentElement.NamespaceURI)
-          $propGroup.SetAttribute("Condition", "'$(TargetFramework)'=='net11.0-android'")
+          # Используем одинарные кавычки для PowerShell, чтобы избежать интерполяции $()
+          $propGroup.SetAttribute("Condition", '$(TargetFramework)==''net11.0-android''')
           
           $defaultExcludes = $xml.CreateElement("DefaultItemExcludes", $xml.DocumentElement.NamespaceURI)
-          $defaultExcludes.InnerText = "$(DefaultItemExcludes);src\runspace\windows\**;src\shell\platform\Windows\**"
+          $defaultExcludes.InnerText = '$(DefaultItemExcludes);src\runspace\windows\**;src\shell\platform\Windows\**'
           
           $propGroup.AppendChild($defaultExcludes)
           $xml.DocumentElement.AppendChild($propGroup)
