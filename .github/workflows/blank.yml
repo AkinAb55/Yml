@@ -914,25 +914,131 @@ jobs:
           Write-Host "  Subsystem.Diagnostics"
 
           # --------------------------------------------------------
-          # 20.7 Fix MainActivity.cs
+          # 20.7–20.11 Fix all Dg references
+          #
+          # IMPORTANT:
+          # There are two possible forms:
+          #
+          #     Dg
+          #
+          # and:
+          #
+          #     Subsystem.Dg
+          #
+          # The second form cannot be fixed by adding a using.
+          # Therefore we explicitly replace the fully-qualified
+          # obsolete type everywhere in the Android source tree.
           # --------------------------------------------------------
 
           Write-Host ""
           Write-Host "=========================================="
-          Write-Host "Fixing MainActivity.cs"
+          Write-Host "Fixing Dg references"
           Write-Host "=========================================="
 
-          $mainActivity = ".\src\runspace\MainActivity.cs"
+          $runspaceDirectory = ".\src\runspace"
 
-          if (-not (Test-Path $mainActivity)) {
-            throw "MainActivity.cs not found."
+          if (-not (Test-Path $runspaceDirectory)) {
+            throw "Runspace directory not found: $runspaceDirectory"
           }
 
-          $text = Get-Content `
-            -Path $mainActivity `
-            -Raw
+          # --------------------------------------------------------
+          # 20.7 Replace fully-qualified obsolete references
+          # --------------------------------------------------------
 
-          if ($text -match '\bDg\b') {
+          Write-Host ""
+          Write-Host "Replacing obsolete Subsystem.Dg references..."
+
+          $csFiles = @(
+            Get-ChildItem `
+              -Path $runspaceDirectory `
+              -Recurse `
+              -Filter "*.cs" `
+              -File
+          )
+
+          if ($csFiles.Count -eq 0) {
+            throw "No C# files found under $runspaceDirectory."
+          }
+
+          $changedFiles = 0
+          $changedReferences = 0
+
+          foreach ($file in $csFiles) {
+
+            $text = Get-Content `
+              -Path $file.FullName `
+              -Raw
+
+            if (
+              $text -match '(?<![A-Za-z0-9_])Subsystem\.Dg(?![A-Za-z0-9_])'
+            ) {
+
+              $matches = [regex]::Matches(
+                $text,
+                '(?<![A-Za-z0-9_])Subsystem\.Dg(?![A-Za-z0-9_])'
+              )
+
+              $count = $matches.Count
+
+              $updatedText = [regex]::Replace(
+                $text,
+                '(?<![A-Za-z0-9_])Subsystem\.Dg(?![A-Za-z0-9_])',
+                'Subsystem.Diagnostics.Dg'
+              )
+
+              Set-Content `
+                -Path $file.FullName `
+                -Value $updatedText `
+                -Encoding utf8
+
+              $changedFiles++
+              $changedReferences += $count
+
+              Write-Host ""
+              Write-Host "Fixed:"
+              Write-Host "  $($file.FullName)"
+              Write-Host "  References: $count"
+            }
+          }
+
+          Write-Host ""
+          Write-Host "Files modified: $changedFiles"
+          Write-Host "References fixed: $changedReferences"
+
+          # --------------------------------------------------------
+          # 20.8 Add Diagnostics using where bare Dg is used
+          # --------------------------------------------------------
+
+          Write-Host ""
+          Write-Host "Checking files using bare Dg..."
+
+          $filesUsingBareDg = @()
+
+          foreach ($file in $csFiles) {
+
+            $text = Get-Content `
+              -Path $file.FullName `
+              -Raw
+
+            # Remove fully-qualified occurrences from this test.
+            $bareTest = [regex]::Replace(
+              $text,
+              '(?<![A-Za-z0-9_])Subsystem\.Diagnostics\.Dg',
+              ''
+            )
+
+            if (
+              $bareTest -match '(?<![A-Za-z0-9_])Dg(?![A-Za-z0-9_])'
+            ) {
+              $filesUsingBareDg += $file
+            }
+          }
+
+          foreach ($file in $filesUsingBareDg) {
+
+            $text = Get-Content `
+              -Path $file.FullName `
+              -Raw
 
             if (
               $text -notmatch '(?m)^\s*using\s+Subsystem\.Diagnostics\s*;'
@@ -943,149 +1049,49 @@ jobs:
                 [Environment]::NewLine +
                 $text
 
-              Write-Host "Added using Subsystem.Diagnostics;"
-            }
-            else {
-              Write-Host "Diagnostics using already exists."
-            }
-          }
-          else {
-            Write-Host "No Dg references found in MainActivity.cs."
-          }
+              Set-Content `
+                -Path $file.FullName `
+                -Value $text `
+                -Encoding utf8
 
-          Set-Content `
-            -Path $mainActivity `
-            -Value $text `
-            -Encoding utf8
+              Write-Host ""
+              Write-Host "Added:"
+              Write-Host "  using Subsystem.Diagnostics;"
+              Write-Host "To:"
+              Write-Host "  $($file.FullName)"
+            }
+          }
 
           # --------------------------------------------------------
-          # 20.8 Fix ScreenStreamCmdlets.cs
+          # 20.9 Verify Dg.cs
           # --------------------------------------------------------
 
           Write-Host ""
           Write-Host "=========================================="
-          Write-Host "Fixing ScreenStreamCmdlets.cs"
+          Write-Host "Verifying Dg.cs"
           Write-Host "=========================================="
 
-          $screenStream =
-            ".\src\runspace\Pwsh\Cmdlets\ScreenStreamCmdlets.cs"
+          $dgFile = ".\src\runspace\Diagnostics\Dg.cs"
 
-          if (-not (Test-Path $screenStream)) {
-            throw "ScreenStreamCmdlets.cs not found."
+          if (-not (Test-Path $dgFile)) {
+            throw "Dg.cs was not found."
           }
 
-          $text = Get-Content `
-            -Path $screenStream `
+          $dgText = Get-Content `
+            -Path $dgFile `
             -Raw
 
-          if ($text -match '\bDg\b') {
-
-            if (
-              $text -notmatch '(?m)^\s*using\s+Subsystem\.Diagnostics\s*;'
-            ) {
-
-              $text =
-                "using Subsystem.Diagnostics;" +
-                [Environment]::NewLine +
-                $text
-
-              Write-Host "Added using Subsystem.Diagnostics;"
-            }
-            else {
-              Write-Host "Diagnostics using already exists."
-            }
-          }
-          else {
-            Write-Host "No Dg references found in ScreenStreamCmdlets.cs."
+          if (
+            $dgText -notmatch '(?m)^\s*namespace\s+Subsystem\.Diagnostics\s*(;|\{)'
+          ) {
+            throw "Dg.cs does not use namespace Subsystem.Diagnostics."
           }
 
-          Set-Content `
-            -Path $screenStream `
-            -Value $text `
-            -Encoding utf8
+          Write-Host "Dg namespace confirmed:"
+          Write-Host "  Subsystem.Diagnostics"
 
           # --------------------------------------------------------
-          # 20.9 Fix WebDriveCmdlets.cs
-          # --------------------------------------------------------
-
-          Write-Host ""
-          Write-Host "=========================================="
-          Write-Host "Fixing WebDriveCmdlets.cs"
-          Write-Host "=========================================="
-
-          $webDrive =
-            ".\src\runspace\Pwsh\Cmdlets\WebDriveCmdlets.cs"
-
-          if (-not (Test-Path $webDrive)) {
-            throw "WebDriveCmdlets.cs not found."
-          }
-
-          $text = Get-Content `
-            -Path $webDrive `
-            -Raw
-
-          $updatedText = [regex]::Replace(
-            $text,
-            '(?<![A-Za-z0-9_])Subsystem\.Dg(?![A-Za-z0-9_])',
-            'Subsystem.Diagnostics.Dg'
-          )
-
-          if ($updatedText -ne $text) {
-
-            Write-Host "Fixed obsolete reference:"
-            Write-Host "  Subsystem.Dg"
-            Write-Host "      ->"
-            Write-Host "  Subsystem.Diagnostics.Dg"
-
-            $text = $updatedText
-          }
-          else {
-            Write-Host "No obsolete Subsystem.Dg reference found."
-          }
-
-          Set-Content `
-            -Path $webDrive `
-            -Value $text `
-            -Encoding utf8
-
-          # --------------------------------------------------------
-          # 20.10 Verify all Dg references
-          # --------------------------------------------------------
-
-          Write-Host ""
-          Write-Host "=========================================="
-          Write-Host "Verifying Dg references"
-          Write-Host "=========================================="
-
-          $sourceFiles = @(
-            $mainActivity,
-            $screenStream,
-            $webDrive
-          )
-
-          foreach ($file in $sourceFiles) {
-
-            Write-Host ""
-            Write-Host "File:"
-            Write-Host "  $file"
-
-            $matches = Select-String `
-              -Path $file `
-              -Pattern '\bDg\b' `
-              -AllMatches `
-              -ErrorAction SilentlyContinue
-
-            if ($matches) {
-              $matches |
-                Select-Object LineNumber, Line
-            }
-            else {
-              Write-Host "  No Dg references."
-            }
-          }
-
-          # --------------------------------------------------------
-          # 20.11 Verify obsolete Subsystem.Dg is gone
+          # 20.10 Verify every remaining Subsystem.Dg
           # --------------------------------------------------------
 
           Write-Host ""
@@ -1095,10 +1101,10 @@ jobs:
 
           $obsoleteFound = $false
 
-          foreach ($file in $sourceFiles) {
+          foreach ($file in $csFiles) {
 
             $matches = Select-String `
-              -Path $file `
+              -Path $file.FullName `
               -Pattern '(?<![A-Za-z0-9_])Subsystem\.Dg(?![A-Za-z0-9_])' `
               -AllMatches `
               -ErrorAction SilentlyContinue
@@ -1109,10 +1115,11 @@ jobs:
 
               Write-Host ""
               Write-Host "OBSOLETE REFERENCE FOUND:"
-              Write-Host "  $file"
+              Write-Host "  $($file.FullName)"
 
-              $matches |
-                Select-Object LineNumber, Line
+              foreach ($match in $matches) {
+                Write-Host "  Line $($match.LineNumber): $($match.Line)"
+              }
             }
           }
 
@@ -1121,6 +1128,43 @@ jobs:
           }
 
           Write-Host "No obsolete Subsystem.Dg references remain."
+
+          # --------------------------------------------------------
+          # 20.11 Show final Dg references
+          # --------------------------------------------------------
+
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "Final Dg references"
+          Write-Host "=========================================="
+
+          $finalDgReferences = @(
+            Get-ChildItem `
+              -Path $runspaceDirectory `
+              -Recurse `
+              -Filter "*.cs" `
+              -File |
+              Select-String `
+                -Pattern '\bDg\b' `
+                -AllMatches `
+                -ErrorAction SilentlyContinue
+          )
+
+          if ($finalDgReferences.Count -eq 0) {
+            Write-Host "WARNING: no Dg references were detected."
+          }
+          else {
+
+            foreach ($match in $finalDgReferences) {
+
+              Write-Host ""
+              Write-Host "$($match.Path):$($match.LineNumber)"
+              Write-Host "  $($match.Line.Trim())"
+            }
+          }
+
+          Write-Host ""
+          Write-Host "Dg compatibility corrections completed."
 
           # --------------------------------------------------------
           # 20.12 Final configuration
