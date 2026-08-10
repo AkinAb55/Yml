@@ -1016,8 +1016,21 @@ jobs:
             -Value $text `
             -Encoding utf8
 
+          ```powershell
+         
           # --------------------------------------------------------
           # 20.9 Fix WebDriveCmdlets.cs
+          #
+          # Replace the complete obsolete type prefix:
+          #
+          #     Subsystem.Dg
+          #
+          # with:
+          #
+          #     Subsystem.Diagnostics.Dg
+          #
+          # Do NOT use "Subsystem.Dg." here because the obsolete
+          # reference may be followed by different syntax.
           # --------------------------------------------------------
 
           Write-Host ""
@@ -1036,24 +1049,41 @@ jobs:
             -Path $webDrive `
             -Raw
 
-          if ($text.Contains("Subsystem.Dg.")) {
+          # Exact identifier replacement.
+          #
+          # (?<![A-Za-z0-9_])
+          #   start of identifier
+          #
+          # Subsystem\.Dg
+          #   obsolete fully-qualified type prefix
+          #
+          # (?![A-Za-z0-9_])
+          #   end of identifier
+          #
+          $updatedText = [regex]::Replace(
+            $text,
+            '(?<![A-Za-z0-9_])Subsystem\.Dg(?![A-Za-z0-9_])',
+            'Subsystem.Diagnostics.Dg'
+          )
 
-            $text = $text.Replace(
-              "Subsystem.Dg.",
-              "Subsystem.Diagnostics.Dg."
-            )
+          if ($updatedText -ne $text) {
 
-            Write-Host "Fixed:"
-            Write-Host "  Subsystem.Dg -> Subsystem.Diagnostics.Dg"
+            Write-Host "Fixed obsolete references:"
+            Write-Host "  Subsystem.Dg"
+            Write-Host "      ->"
+            Write-Host "  Subsystem.Diagnostics.Dg"
+
+            $text = $updatedText
           }
           else {
-            Write-Host "No obsolete Subsystem.Dg reference found."
+            Write-Host "No obsolete Subsystem.Dg identifier found."
           }
 
           Set-Content `
             -Path $webDrive `
             -Value $text `
             -Encoding utf8
+
 
           # --------------------------------------------------------
           # 20.10 Verify Dg references
@@ -1076,46 +1106,68 @@ jobs:
             Write-Host "File:"
             Write-Host "  $file"
 
-            Select-String `
+            $matches = Select-String `
               -Path $file `
-              -Pattern "Subsystem\.Diagnostics\.Dg|\bDg\." |
-              Select-Object LineNumber, Line
+              -Pattern '\bDg\b' `
+              -AllMatches `
+              -ErrorAction SilentlyContinue
+
+            if ($matches) {
+              $matches |
+                Select-Object LineNumber, Line
+            }
+            else {
+              Write-Host "  No Dg references."
+            }
           }
 
+
           # --------------------------------------------------------
-          # 20.11 Make sure obsolete namespace is gone
+          # 20.11 Verify obsolete Subsystem.Dg identifier
+          #
+          # IMPORTANT:
+          # Check the identifier itself, not "Subsystem.Dg."
+          #
+          # This prevents false positives and catches every remaining
+          # form of the obsolete reference.
           # --------------------------------------------------------
 
           Write-Host ""
-          Write-Host "Checking obsolete Subsystem.Dg references..."
+          Write-Host "=========================================="
+          Write-Host "Checking obsolete Subsystem.Dg"
+          Write-Host "=========================================="
 
-          $obsolete = @()
+          $obsoleteFound = $false
 
           foreach ($file in $sourceFiles) {
 
             $matches = Select-String `
               -Path $file `
-              -Pattern "Subsystem\.Dg\." `
+              -Pattern '(?<![A-Za-z0-9_])Subsystem\.Dg(?![A-Za-z0-9_])' `
               -AllMatches `
               -ErrorAction SilentlyContinue
 
             if ($matches) {
-              $obsolete += $matches
+
+              $obsoleteFound = $true
+
+              Write-Host ""
+              Write-Host "OBSOLETE REFERENCE FOUND:"
+              Write-Host $file
+
+              $matches |
+                Select-Object LineNumber, Line
             }
           }
 
-          if ($obsolete.Count -gt 0) {
-
-            Write-Host ""
-            Write-Host "Obsolete references found:"
-
-            $obsolete |
-              Select-Object Path, LineNumber, Line
-
+          if ($obsoleteFound) {
             throw "Obsolete Subsystem.Dg references remain."
           }
 
           Write-Host "No obsolete Subsystem.Dg references remain."
+
+          Write-Host ""
+          Write-Host "Diagnostics Dg references are ready for compilation."
 
           # --------------------------------------------------------
           # 20.12 Final configuration
