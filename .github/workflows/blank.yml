@@ -712,19 +712,12 @@ jobs:
       # ============================================================
       # 20. Build Android ARM64
       #
-      # Android-specific build preparation:
+      # Build-time Android compatibility preparation.
       #
-      # 1. Restore the upstream project file.
-      # 2. Remove only Windows-specific C# sources.
-      # 3. Keep Diagnostics sources in the Android compilation.
-      # 4. Fix the upstream Diagnostics namespace references:
-      #      Dg -> Subsystem.Diagnostics.Dg
-      #      Subsystem.Dg -> Subsystem.Diagnostics.Dg
-      # 5. Build net11.0-android / android-arm64.
-      #
-      # The upstream GitHub repository is NOT modified.
-      # All changes exist only inside the temporary GitHub
-      # Actions runner workspace.
+      # IMPORTANT:
+      # The upstream repository is NOT modified on GitHub.
+      # All modifications exist only in the temporary Actions
+      # runner workspace.
       # ============================================================
 
       - name: Build Subsystem for Android ARM64
@@ -782,14 +775,10 @@ jobs:
           # 20.3 Configure Android Compile Remove rules
           #
           # IMPORTANT:
-          # Diagnostics is intentionally NOT removed.
+          # Diagnostics is NOT removed.
           #
-          # The SDK default Compile discovery must include:
-          #
-          # src\runspace\Diagnostics\Dg.cs
-          # src\runspace\Diagnostics\AgentSettings.cs
-          # src\runspace\Diagnostics\PackageInfoDb.cs
-          # src\runspace\Diagnostics\SqliteProbe.cs
+          # Dg.cs and the other Diagnostics sources must remain
+          # available to the Android compiler.
           # --------------------------------------------------------
 
           Write-Host ""
@@ -800,10 +789,25 @@ jobs:
             $xml.DocumentElement.NamespaceURI
           )
 
+          # IMPORTANT:
+          # Use a single-quoted PowerShell string so that
+          # $(TargetFramework) is written literally into XML.
+          #
+          # DO NOT use:
+          #
+          # "'$(TargetFramework)' == 'net11.0-android'"
+          #
+          # because PowerShell interprets $(TargetFramework).
+
+          $androidCondition = '''$(TargetFramework)' == 'net11.0-android'''
+
           $itemGroup.SetAttribute(
             "Condition",
-            "'$(TargetFramework)' == 'net11.0-android'"
+            $androidCondition
           )
+
+          Write-Host "Android condition:"
+          Write-Host $androidCondition
 
           $windowsPaths = @(
             "src\runspace\windows\**\*.cs",
@@ -812,6 +816,7 @@ jobs:
 
           foreach ($path in $windowsPaths) {
 
+            Write-Host ""
             Write-Host "Removing Windows source:"
             Write-Host "  $path"
 
@@ -834,17 +839,45 @@ jobs:
 
           Write-Host ""
           Write-Host "Android Compile Remove rules configured."
-          Write-Host ""
-          Write-Host "Windows sources removed:"
-          foreach ($path in $windowsPaths) {
-            Write-Host "  $path"
-          }
-
-          Write-Host ""
-          Write-Host "Diagnostics sources remain included."
 
           # --------------------------------------------------------
-          # 20.4 Verify Diagnostics source files
+          # 20.4 Verify project XML after modification
+          # --------------------------------------------------------
+
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "Verifying modified project XML"
+          Write-Host "=========================================="
+
+          try {
+            [xml]$verifyXml = Get-Content `
+              -Path $projectFile `
+              -Raw
+          }
+          catch {
+            throw "Modified project XML is invalid: $($_.Exception.Message)"
+          }
+
+          $androidGroups = @(
+            $verifyXml.Project.ItemGroup |
+              Where-Object {
+                $_.Condition -eq "'`$(TargetFramework)' == 'net11.0-android'"
+              }
+          )
+
+          if ($androidGroups.Count -eq 0) {
+
+            Write-Host ""
+            Write-Host "Project XML:"
+            Write-Host (Get-Content $projectFile -Raw)
+
+            throw "Android conditional ItemGroup was not written correctly."
+          }
+
+          Write-Host "Android conditional ItemGroup verified."
+
+          # --------------------------------------------------------
+          # 20.5 Verify Diagnostics sources
           # --------------------------------------------------------
 
           Write-Host ""
@@ -886,7 +919,7 @@ jobs:
           Write-Host "Dg.cs found."
 
           # --------------------------------------------------------
-          # 20.5 Verify actual Dg namespace
+          # 20.6 Inspect Dg namespace
           # --------------------------------------------------------
 
           Write-Host ""
@@ -898,64 +931,29 @@ jobs:
             -Path $dgFile `
             -Raw
 
-          if ($dgText -notmatch '(?m)^\s*namespace\s+Subsystem\.Diagnostics\s*;') {
+          if (
+            $dgText -notmatch '(?m)^\s*namespace\s+Subsystem\.Diagnostics\s*(;|\{)'
+          ) {
+            throw "Dg.cs does not declare Subsystem.Diagnostics namespace."
+          }
 
-            if ($dgText -match '(?m)^\s*namespace\s+Subsystem\.Diagnostics\b') {
-              Write-Host "Dg uses block-style Subsystem.Diagnostics namespace."
-            }
-            else {
-              throw "Dg.cs does not declare Subsystem.Diagnostics namespace."
-            }
-          }
-          else {
-            Write-Host "Dg.cs namespace confirmed:"
-            Write-Host "Subsystem.Diagnostics"
-          }
+          Write-Host "Dg namespace confirmed:"
+          Write-Host "Subsystem.Diagnostics"
 
           # --------------------------------------------------------
-          # 20.6 Fix Dg references
-          #
-          # MainActivity.cs:
-          #   namespace Subsystem
-          #   uses Dg directly
-          #
-          # ScreenStreamCmdlets.cs:
-          #   uses Dg directly
-          #
-          # WebDriveCmdlets.cs:
-          #   incorrectly uses Subsystem.Dg
-          #
-          # We modify ONLY the temporary runner copy.
+          # 20.7 Fix MainActivity.cs
           # --------------------------------------------------------
 
           Write-Host ""
           Write-Host "=========================================="
-          Write-Host "Fixing Diagnostics references"
+          Write-Host "Fixing MainActivity.cs"
           Write-Host "=========================================="
 
           $mainActivity = ".\src\runspace\MainActivity.cs"
-          $screenStream = ".\src\runspace\Pwsh\Cmdlets\ScreenStreamCmdlets.cs"
-          $webDrive = ".\src\runspace\Pwsh\Cmdlets\WebDriveCmdlets.cs"
 
-          $requiredFiles = @(
-            $mainActivity,
-            $screenStream,
-            $webDrive
-          )
-
-          foreach ($file in $requiredFiles) {
-
-            if (-not (Test-Path $file)) {
-              throw "Required source file not found: $file"
-            }
+          if (-not (Test-Path $mainActivity)) {
+            throw "MainActivity.cs not found."
           }
-
-          # --------------------------------------------------------
-          # MainActivity.cs
-          # --------------------------------------------------------
-
-          Write-Host ""
-          Write-Host "Processing MainActivity.cs..."
 
           $text = Get-Content `
             -Path $mainActivity `
@@ -963,21 +961,23 @@ jobs:
 
           if ($text -match '\bDg\.') {
 
-            if ($text -notmatch '(?m)^\s*using\s+Subsystem\.Diagnostics\s*;') {
+            if (
+              $text -notmatch '(?m)^\s*using\s+Subsystem\.Diagnostics\s*;'
+            ) {
 
-              $text = "using Subsystem.Diagnostics;" `
-                + [Environment]::NewLine `
-                + $text
+              $text =
+                "using Subsystem.Diagnostics;" +
+                [Environment]::NewLine +
+                $text
 
-              Write-Host "Added:"
-              Write-Host "  using Subsystem.Diagnostics;"
+              Write-Host "Added using Subsystem.Diagnostics;"
             }
             else {
-              Write-Host "Diagnostics using already present."
+              Write-Host "Diagnostics using already exists."
             }
           }
           else {
-            Write-Host "No direct Dg references found in MainActivity.cs."
+            Write-Host "No direct Dg references detected."
           }
 
           Set-Content `
@@ -986,11 +986,20 @@ jobs:
             -Encoding utf8
 
           # --------------------------------------------------------
-          # ScreenStreamCmdlets.cs
+          # 20.8 Fix ScreenStreamCmdlets.cs
           # --------------------------------------------------------
 
           Write-Host ""
-          Write-Host "Processing ScreenStreamCmdlets.cs..."
+          Write-Host "=========================================="
+          Write-Host "Fixing ScreenStreamCmdlets.cs"
+          Write-Host "=========================================="
+
+          $screenStream =
+            ".\src\runspace\Pwsh\Cmdlets\ScreenStreamCmdlets.cs"
+
+          if (-not (Test-Path $screenStream)) {
+            throw "ScreenStreamCmdlets.cs not found."
+          }
 
           $text = Get-Content `
             -Path $screenStream `
@@ -998,21 +1007,23 @@ jobs:
 
           if ($text -match '\bDg\.') {
 
-            if ($text -notmatch '(?m)^\s*using\s+Subsystem\.Diagnostics\s*;') {
+            if (
+              $text -notmatch '(?m)^\s*using\s+Subsystem\.Diagnostics\s*;'
+            ) {
 
-              $text = "using Subsystem.Diagnostics;" `
-                + [Environment]::NewLine `
-                + $text
+              $text =
+                "using Subsystem.Diagnostics;" +
+                [Environment]::NewLine +
+                $text
 
-              Write-Host "Added:"
-              Write-Host "  using Subsystem.Diagnostics;"
+              Write-Host "Added using Subsystem.Diagnostics;"
             }
             else {
-              Write-Host "Diagnostics using already present."
+              Write-Host "Diagnostics using already exists."
             }
           }
           else {
-            Write-Host "No direct Dg references found in ScreenStreamCmdlets.cs."
+            Write-Host "No direct Dg references detected."
           }
 
           Set-Content `
@@ -1021,11 +1032,20 @@ jobs:
             -Encoding utf8
 
           # --------------------------------------------------------
-          # WebDriveCmdlets.cs
+          # 20.9 Fix WebDriveCmdlets.cs
           # --------------------------------------------------------
 
           Write-Host ""
-          Write-Host "Processing WebDriveCmdlets.cs..."
+          Write-Host "=========================================="
+          Write-Host "Fixing WebDriveCmdlets.cs"
+          Write-Host "=========================================="
+
+          $webDrive =
+            ".\src\runspace\Pwsh\Cmdlets\WebDriveCmdlets.cs"
+
+          if (-not (Test-Path $webDrive)) {
+            throw "WebDriveCmdlets.cs not found."
+          }
 
           $text = Get-Content `
             -Path $webDrive `
@@ -1038,8 +1058,10 @@ jobs:
               "Subsystem.Diagnostics.Dg."
             )
 
-            Write-Host "Fixed:"
-            Write-Host "  Subsystem.Dg -> Subsystem.Diagnostics.Dg"
+            Write-Host "Fixed Subsystem.Dg -> Subsystem.Diagnostics.Dg"
+          }
+          else {
+            Write-Host "No obsolete Subsystem.Dg reference found."
           }
 
           Set-Content `
@@ -1048,7 +1070,7 @@ jobs:
             -Encoding utf8
 
           # --------------------------------------------------------
-          # 20.7 Verify all modified references
+          # 20.10 Verify Dg references
           # --------------------------------------------------------
 
           Write-Host ""
@@ -1056,38 +1078,34 @@ jobs:
           Write-Host "Verifying Dg references"
           Write-Host "=========================================="
 
-          Write-Host ""
-          Write-Host "MainActivity.cs:"
-          Select-String `
-            -Path $mainActivity `
-            -Pattern "Subsystem\.Diagnostics\.Dg|\bDg\." |
-            Select-Object LineNumber, Line
+          $sourceFiles = @(
+            $mainActivity,
+            $screenStream,
+            $webDrive
+          )
 
-          Write-Host ""
-          Write-Host "ScreenStreamCmdlets.cs:"
-          Select-String `
-            -Path $screenStream `
-            -Pattern "Subsystem\.Diagnostics\.Dg|\bDg\." |
-            Select-Object LineNumber, Line
+          foreach ($file in $sourceFiles) {
 
-          Write-Host ""
-          Write-Host "WebDriveCmdlets.cs:"
-          Select-String `
-            -Path $webDrive `
-            -Pattern "Subsystem\.Dg|Subsystem\.Diagnostics\.Dg" |
-            Select-Object LineNumber, Line
+            Write-Host ""
+            Write-Host "File:"
+            Write-Host $file
+
+            Select-String `
+              -Path $file `
+              -Pattern "Subsystem\.Diagnostics\.Dg|\bDg\." |
+              Select-Object LineNumber, Line
+          }
 
           # --------------------------------------------------------
-          # 20.8 Verify that the obsolete namespace reference
-          #       no longer exists in the three affected files.
+          # 20.11 Verify obsolete Subsystem.Dg is gone
           # --------------------------------------------------------
 
           Write-Host ""
-          Write-Host "Checking for obsolete Subsystem.Dg references..."
+          Write-Host "Checking obsolete Subsystem.Dg references..."
 
-          $obsoleteReferences = @()
+          $obsolete = @()
 
-          foreach ($file in $requiredFiles) {
+          foreach ($file in $sourceFiles) {
 
             $matches = Select-String `
               -Path $file `
@@ -1096,16 +1114,16 @@ jobs:
               -ErrorAction SilentlyContinue
 
             if ($matches) {
-              $obsoleteReferences += $matches
+              $obsolete += $matches
             }
           }
 
-          if ($obsoleteReferences.Count -gt 0) {
+          if ($obsolete.Count -gt 0) {
 
             Write-Host ""
-            Write-Host "Obsolete Subsystem.Dg references found:"
+            Write-Host "Obsolete references found:"
 
-            $obsoleteReferences |
+            $obsolete |
               Select-Object Path, LineNumber, Line
 
             throw "Obsolete Subsystem.Dg references remain."
@@ -1114,7 +1132,7 @@ jobs:
           Write-Host "No obsolete Subsystem.Dg references remain."
 
           # --------------------------------------------------------
-          # 20.9 Build configuration summary
+          # 20.12 Final build configuration
           # --------------------------------------------------------
 
           Write-Host ""
@@ -1124,22 +1142,15 @@ jobs:
 
           Write-Host "Minimum Android API: $env:MIN_ANDROID_API"
           Write-Host "Compile SDK: $env:TARGET_ANDROID_API"
+          Write-Host "Target Framework: net11.0-android"
           Write-Host "Runtime: android-arm64"
           Write-Host "ABI: arm64-v8a"
-          Write-Host "Target Framework: net11.0-android"
-
           Write-Host ""
-          Write-Host "Diagnostics:"
-          Write-Host "  Included: YES"
-
-          Write-Host ""
-          Write-Host "Windows-specific source removal:"
-          foreach ($path in $windowsPaths) {
-            Write-Host "  $path"
-          }
+          Write-Host "Diagnostics sources: INCLUDED"
+          Write-Host "Windows sources: REMOVED"
 
           # --------------------------------------------------------
-          # 20.10 Build Android ARM64
+          # 20.13 Build
           # --------------------------------------------------------
 
           Write-Host ""
@@ -1154,7 +1165,7 @@ jobs:
             -r android-arm64 `
             --no-restore `
             -p:SubsystemRelease=true `
-            -p:SupportedOSPlatformVersion="$env:MIN_ANDROID_API.0" `
+            -p:SupportedOSPlatformVersion="$($env:MIN_ANDROID_API).0" `
             -p:AndroidSdkDirectory="$env:ANDROID_HOME" `
             -p:EnableDefaultCompileItems=true
 
