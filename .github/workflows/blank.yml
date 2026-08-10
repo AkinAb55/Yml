@@ -708,16 +708,18 @@ jobs:
           Write-Host "No project XML modifications were performed."
           Write-Host "No explicit Compile items were injected."
           Write-Host "SDK default Compile discovery remains enabled."
-
+          
       # ============================================================
       # 20. Build Android ARM64
       #
-      # Build-time Android compatibility preparation.
+      # Android-specific source preparation.
       #
       # IMPORTANT:
-      # The upstream repository is NOT modified on GitHub.
-      # All modifications exist only in the temporary Actions
-      # runner workspace.
+      # - Upstream repository is NOT modified on GitHub.
+      # - Changes exist only on the temporary Actions runner.
+      # - Diagnostics sources are intentionally KEPT.
+      # - Only Windows-specific C# sources are removed.
+      # - Dg references are corrected before compilation.
       # ============================================================
 
       - name: Build Subsystem for Android ARM64
@@ -772,13 +774,17 @@ jobs:
           }
 
           # --------------------------------------------------------
-          # 20.3 Configure Android Compile Remove rules
+          # 20.3 Add Compile Remove rules
           #
-          # IMPORTANT:
+          # NO Condition is used here.
+          #
+          # dotnet build is explicitly invoked with:
+          #
+          #   -f net11.0-android
+          #
+          # therefore these Remove items apply to this build.
+          #
           # Diagnostics is NOT removed.
-          #
-          # Dg.cs and the other Diagnostics sources must remain
-          # available to the Android compiler.
           # --------------------------------------------------------
 
           Write-Host ""
@@ -788,26 +794,6 @@ jobs:
             "ItemGroup",
             $xml.DocumentElement.NamespaceURI
           )
-
-          # IMPORTANT:
-          # Use a single-quoted PowerShell string so that
-          # $(TargetFramework) is written literally into XML.
-          #
-          # DO NOT use:
-          #
-          # "'$(TargetFramework)' == 'net11.0-android'"
-          #
-          # because PowerShell interprets $(TargetFramework).
-
-          $androidCondition = '''$(TargetFramework)' == 'net11.0-android'''
-
-          $itemGroup.SetAttribute(
-            "Condition",
-            $androidCondition
-          )
-
-          Write-Host "Android condition:"
-          Write-Host $androidCondition
 
           $windowsPaths = @(
             "src\runspace\windows\**\*.cs",
@@ -838,15 +824,15 @@ jobs:
           $xml.Save($projectFile)
 
           Write-Host ""
-          Write-Host "Android Compile Remove rules configured."
+          Write-Host "Compile Remove rules configured."
 
           # --------------------------------------------------------
-          # 20.4 Verify project XML after modification
+          # 20.4 Verify project XML
           # --------------------------------------------------------
 
           Write-Host ""
           Write-Host "=========================================="
-          Write-Host "Verifying modified project XML"
+          Write-Host "Verifying project XML"
           Write-Host "=========================================="
 
           try {
@@ -858,23 +844,22 @@ jobs:
             throw "Modified project XML is invalid: $($_.Exception.Message)"
           }
 
-          $androidGroups = @(
-            $verifyXml.Project.ItemGroup |
+          $removeItems = @(
+            $verifyXml.Project.ItemGroup.Compile |
               Where-Object {
-                $_.Condition -eq "'`$(TargetFramework)' == 'net11.0-android'"
+                $_.Remove
               }
           )
 
-          if ($androidGroups.Count -eq 0) {
-
-            Write-Host ""
-            Write-Host "Project XML:"
-            Write-Host (Get-Content $projectFile -Raw)
-
-            throw "Android conditional ItemGroup was not written correctly."
+          if ($removeItems.Count -lt 2) {
+            throw "Compile Remove rules were not written correctly."
           }
 
-          Write-Host "Android conditional ItemGroup verified."
+          Write-Host "Compile Remove rules found:"
+
+          foreach ($item in $removeItems) {
+            Write-Host "  Remove=$($item.Remove)"
+          }
 
           # --------------------------------------------------------
           # 20.5 Verify Diagnostics sources
@@ -919,7 +904,7 @@ jobs:
           Write-Host "Dg.cs found."
 
           # --------------------------------------------------------
-          # 20.6 Inspect Dg namespace
+          # 20.6 Verify Dg namespace
           # --------------------------------------------------------
 
           Write-Host ""
@@ -938,7 +923,7 @@ jobs:
           }
 
           Write-Host "Dg namespace confirmed:"
-          Write-Host "Subsystem.Diagnostics"
+          Write-Host "  Subsystem.Diagnostics"
 
           # --------------------------------------------------------
           # 20.7 Fix MainActivity.cs
@@ -977,7 +962,7 @@ jobs:
             }
           }
           else {
-            Write-Host "No direct Dg references detected."
+            Write-Host "No direct Dg references found."
           }
 
           Set-Content `
@@ -1023,7 +1008,7 @@ jobs:
             }
           }
           else {
-            Write-Host "No direct Dg references detected."
+            Write-Host "No direct Dg references found."
           }
 
           Set-Content `
@@ -1058,7 +1043,8 @@ jobs:
               "Subsystem.Diagnostics.Dg."
             )
 
-            Write-Host "Fixed Subsystem.Dg -> Subsystem.Diagnostics.Dg"
+            Write-Host "Fixed:"
+            Write-Host "  Subsystem.Dg -> Subsystem.Diagnostics.Dg"
           }
           else {
             Write-Host "No obsolete Subsystem.Dg reference found."
@@ -1088,7 +1074,7 @@ jobs:
 
             Write-Host ""
             Write-Host "File:"
-            Write-Host $file
+            Write-Host "  $file"
 
             Select-String `
               -Path $file `
@@ -1097,7 +1083,7 @@ jobs:
           }
 
           # --------------------------------------------------------
-          # 20.11 Verify obsolete Subsystem.Dg is gone
+          # 20.11 Make sure obsolete namespace is gone
           # --------------------------------------------------------
 
           Write-Host ""
@@ -1132,7 +1118,7 @@ jobs:
           Write-Host "No obsolete Subsystem.Dg references remain."
 
           # --------------------------------------------------------
-          # 20.12 Final build configuration
+          # 20.12 Final configuration
           # --------------------------------------------------------
 
           Write-Host ""
@@ -1145,6 +1131,7 @@ jobs:
           Write-Host "Target Framework: net11.0-android"
           Write-Host "Runtime: android-arm64"
           Write-Host "ABI: arm64-v8a"
+
           Write-Host ""
           Write-Host "Diagnostics sources: INCLUDED"
           Write-Host "Windows sources: REMOVED"
