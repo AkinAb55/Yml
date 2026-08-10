@@ -708,18 +708,9 @@ jobs:
           Write-Host "No project XML modifications were performed."
           Write-Host "No explicit Compile items were injected."
           Write-Host "SDK default Compile discovery remains enabled."
-          
+        
       # ============================================================
       # 20. Build Android ARM64
-      #
-      # Android-specific source preparation.
-      #
-      # IMPORTANT:
-      # - Upstream repository is NOT modified on GitHub.
-      # - Changes exist only on the temporary Actions runner.
-      # - Diagnostics sources are intentionally KEPT.
-      # - Only Windows-specific C# sources are removed.
-      # - Dg references are corrected before compilation.
       # ============================================================
 
       - name: Build Subsystem for Android ARM64
@@ -770,21 +761,18 @@ jobs:
           }
 
           if (-not $xml.Project) {
-            throw "Invalid project XML: <Project> element not found."
+            throw "Invalid project XML: Project element not found."
           }
 
           # --------------------------------------------------------
           # 20.3 Add Compile Remove rules
           #
-          # NO Condition is used here.
+          # No Condition is used.
           #
-          # dotnet build is explicitly invoked with:
-          #
+          # The build below explicitly uses:
           #   -f net11.0-android
           #
-          # therefore these Remove items apply to this build.
-          #
-          # Diagnostics is NOT removed.
+          # Diagnostics remains included.
           # --------------------------------------------------------
 
           Write-Host ""
@@ -862,7 +850,7 @@ jobs:
           }
 
           # --------------------------------------------------------
-          # 20.5 Verify Diagnostics sources
+          # 20.5 Verify Diagnostics
           # --------------------------------------------------------
 
           Write-Host ""
@@ -944,7 +932,7 @@ jobs:
             -Path $mainActivity `
             -Raw
 
-          if ($text -match '\bDg\.') {
+          if ($text -match '\bDg\b') {
 
             if (
               $text -notmatch '(?m)^\s*using\s+Subsystem\.Diagnostics\s*;'
@@ -962,7 +950,7 @@ jobs:
             }
           }
           else {
-            Write-Host "No direct Dg references found."
+            Write-Host "No Dg references found in MainActivity.cs."
           }
 
           Set-Content `
@@ -990,7 +978,7 @@ jobs:
             -Path $screenStream `
             -Raw
 
-          if ($text -match '\bDg\.') {
+          if ($text -match '\bDg\b') {
 
             if (
               $text -notmatch '(?m)^\s*using\s+Subsystem\.Diagnostics\s*;'
@@ -1008,7 +996,7 @@ jobs:
             }
           }
           else {
-            Write-Host "No direct Dg references found."
+            Write-Host "No Dg references found in ScreenStreamCmdlets.cs."
           }
 
           Set-Content `
@@ -1016,21 +1004,8 @@ jobs:
             -Value $text `
             -Encoding utf8
 
-          ```powershell
-         
           # --------------------------------------------------------
           # 20.9 Fix WebDriveCmdlets.cs
-          #
-          # Replace the complete obsolete type prefix:
-          #
-          #     Subsystem.Dg
-          #
-          # with:
-          #
-          #     Subsystem.Diagnostics.Dg
-          #
-          # Do NOT use "Subsystem.Dg." here because the obsolete
-          # reference may be followed by different syntax.
           # --------------------------------------------------------
 
           Write-Host ""
@@ -1049,17 +1024,6 @@ jobs:
             -Path $webDrive `
             -Raw
 
-          # Exact identifier replacement.
-          #
-          # (?<![A-Za-z0-9_])
-          #   start of identifier
-          #
-          # Subsystem\.Dg
-          #   obsolete fully-qualified type prefix
-          #
-          # (?![A-Za-z0-9_])
-          #   end of identifier
-          #
           $updatedText = [regex]::Replace(
             $text,
             '(?<![A-Za-z0-9_])Subsystem\.Dg(?![A-Za-z0-9_])',
@@ -1068,7 +1032,7 @@ jobs:
 
           if ($updatedText -ne $text) {
 
-            Write-Host "Fixed obsolete references:"
+            Write-Host "Fixed obsolete reference:"
             Write-Host "  Subsystem.Dg"
             Write-Host "      ->"
             Write-Host "  Subsystem.Diagnostics.Dg"
@@ -1076,7 +1040,7 @@ jobs:
             $text = $updatedText
           }
           else {
-            Write-Host "No obsolete Subsystem.Dg identifier found."
+            Write-Host "No obsolete Subsystem.Dg reference found."
           }
 
           Set-Content `
@@ -1084,9 +1048,8 @@ jobs:
             -Value $text `
             -Encoding utf8
 
-
           # --------------------------------------------------------
-          # 20.10 Verify Dg references
+          # 20.10 Verify all Dg references
           # --------------------------------------------------------
 
           Write-Host ""
@@ -1121,15 +1084,8 @@ jobs:
             }
           }
 
-
           # --------------------------------------------------------
-          # 20.11 Verify obsolete Subsystem.Dg identifier
-          #
-          # IMPORTANT:
-          # Check the identifier itself, not "Subsystem.Dg."
-          #
-          # This prevents false positives and catches every remaining
-          # form of the obsolete reference.
+          # 20.11 Verify obsolete Subsystem.Dg is gone
           # --------------------------------------------------------
 
           Write-Host ""
@@ -1153,7 +1109,7 @@ jobs:
 
               Write-Host ""
               Write-Host "OBSOLETE REFERENCE FOUND:"
-              Write-Host $file
+              Write-Host "  $file"
 
               $matches |
                 Select-Object LineNumber, Line
@@ -1165,9 +1121,6 @@ jobs:
           }
 
           Write-Host "No obsolete Subsystem.Dg references remain."
-
-          Write-Host ""
-          Write-Host "Diagnostics Dg references are ready for compilation."
 
           # --------------------------------------------------------
           # 20.12 Final configuration
@@ -1216,7 +1169,6 @@ jobs:
           Write-Host "=========================================="
           Write-Host "Android ARM64 compilation succeeded."
           Write-Host "=========================================="
-
       # ============================================================
       # 21. Locate produced APK
       # ============================================================
