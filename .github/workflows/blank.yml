@@ -888,7 +888,62 @@ jobs:
 
           Write-Host ""
           Write-Host "Compile Remove rules configured."
+          # ========================================================
+          # 20.5.1 Include upstream Android resources
+          #
+          # Upstream keeps Android resources under:
+          #
+          #   src\runspace\Resources
+          #
+          # This is not the project-root Resources directory, so
+          # Microsoft.NET.Sdk does not discover it automatically.
+          #
+          # Without this ItemGroup the generated Resource class
+          # does not contain Resource.Mipmap, Resource.Layout, etc.
+          # ========================================================
 
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "Configuring Android resources"
+          Write-Host "=========================================="
+
+          $resourceDirectory = ".\src\runspace\Resources"
+
+          if (-not (Test-Path $resourceDirectory)) {
+              throw "Android Resources directory not found: $resourceDirectory"
+          }
+
+          $resourceItemGroup = $xml.CreateElement(
+              "ItemGroup",
+              $xml.DocumentElement.NamespaceURI
+          )
+
+          $resourceItemGroup.SetAttribute(
+              "Condition",
+              $androidCondition
+          )
+
+          $androidResource = $xml.CreateElement(
+              "AndroidResource",
+              $xml.DocumentElement.NamespaceURI
+          )
+
+          $androidResource.SetAttribute(
+              "Include",
+              "src\runspace\Resources\**\*"
+          )
+
+          $resourceItemGroup.AppendChild(
+              $androidResource
+          ) | Out-Null
+
+          $xml.Project.AppendChild(
+              $resourceItemGroup
+          ) | Out-Null
+
+          Write-Host "Android resources configured:"
+          Write-Host "  src\runspace\Resources\**\*"
+          
           # ========================================================
           # 20.6 Save project
           # ========================================================
@@ -1202,7 +1257,114 @@ jobs:
                   Write-Host "  $($file.FullName)"
               }
           }
+          
+          # ========================================================
+          # 20.13.1 Fix NotificationService ImmutableDictionary
+          #
+          # ImmutableDictionary cannot be modified through:
+          #
+          #   TryRemove(...)
+          #   Notifications[key] = value
+          #
+          # Use Remove and SetItem instead.
+          # ========================================================
 
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "Fixing NotificationService"
+          Write-Host "=========================================="
+
+          $notificationServiceFile = `
+              ".\src\runspace\Services\NotificationService.cs"
+
+          if (-not (Test-Path $notificationServiceFile)) {
+              throw "NotificationService.cs not found."
+          }
+
+          $notificationText = Get-Content `
+              $notificationServiceFile `
+              -Raw
+
+          $notificationOriginal = $notificationText
+
+          # ImmutableDictionary removal.
+          $notificationText = [regex]::Replace(
+              $notificationText,
+              'Notifications\.TryRemove\(\s*sbn\.Key\s*,\s*out\s*_\s*\)',
+              'Notifications = Notifications.Remove(sbn.Key)'
+          )
+
+          # ImmutableDictionary insertion/update.
+          $notificationText = [regex]::Replace(
+              $notificationText,
+              'Notifications\[\s*n\.Key\s*\]\s*=\s*n\s*;',
+              'Notifications = Notifications.SetItem(n.Key, n);'
+          )
+
+          if ($notificationText -eq $notificationOriginal) {
+
+              $hasTryRemove = (
+                  $notificationText -match `
+                  'Notifications\.TryRemove\s*\('
+              )
+
+              $hasIndexerAssignment = (
+                  $notificationText -match `
+                  'Notifications\[[^\]]+\]\s*='
+              )
+
+              if ($hasTryRemove -or $hasIndexerAssignment) {
+                  throw "NotificationService ImmutableDictionary fix failed."
+              }
+
+              Write-Host "NotificationService already uses immutable operations."
+          }
+          else {
+
+              Set-Content `
+                  -Path $notificationServiceFile `
+                  -Value $notificationText `
+                  -Encoding utf8NoBOM
+
+              Write-Host "NotificationService fixed."
+          }
+
+          # Final verification.
+
+          $notificationFinalText = Get-Content `
+              $notificationServiceFile `
+              -Raw
+
+          if (
+              $notificationFinalText -match `
+              'Notifications\.TryRemove\s*\('
+          ) {
+              throw "NotificationService still contains TryRemove."
+          }
+
+          if (
+              $notificationFinalText -match `
+              'Notifications\[[^\]]+\]\s*='
+          ) {
+              throw "NotificationService still contains immutable indexer assignment."
+          }
+
+          if (
+              $notificationFinalText -notmatch `
+              'Notifications\s*=\s*Notifications\.Remove'
+          ) {
+              throw "NotificationService Remove operation was not found."
+          }
+
+          if (
+              $notificationFinalText -notmatch `
+              'Notifications\s*=\s*Notifications\.SetItem'
+          ) {
+              throw "NotificationService SetItem operation was not found."
+          }
+
+          Write-Host "NotificationService verification passed."
+          
           # ========================================================
           # 20.14 Fix PeLoader subPath
           # ========================================================
@@ -1422,7 +1584,37 @@ jobs:
 
           Write-Host ""
           Write-Host "Final source verification passed."
+           
+          # ========================================================
+          # Verify Android resources
+          # ========================================================
 
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "Verifying Android resources"
+          Write-Host "=========================================="
+
+          $requiredAndroidResources = @(
+              ".\src\runspace\Resources\layout\activity_main.xml",
+              ".\src\runspace\Resources\layout\subsystem_widget.xml",
+              ".\src\runspace\Resources\mipmap-anydpi-v26\appicon.xml",
+              ".\src\runspace\Resources\mipmap-anydpi-v26\appicon_round.xml",
+              ".\src\runspace\Resources\values\colors.xml",
+              ".\src\runspace\Resources\values\strings.xml"
+          )
+
+          foreach ($resource in $requiredAndroidResources) {
+
+              if (-not (Test-Path $resource)) {
+                  throw "Required Android resource missing: $resource"
+              }
+
+              Write-Host "Resource:"
+              Write-Host "  $resource"
+          }
+
+          Write-Host "Android resources verification passed."
+           
           # ========================================================
           # 20.17 Final Android restore
           # ========================================================
