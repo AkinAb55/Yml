@@ -709,671 +709,635 @@ jobs:
           Write-Host "No explicit Compile items were injected."
           Write-Host "SDK default Compile discovery remains enabled."
         
-      # ============================================================
-      # 20. Prepare and build Android ARM64
-      # ============================================================
+# ============================================================
+# 20. Prepare and build Android ARM64
+# ============================================================
 
-      - name: Build Subsystem for Android ARM64
-        shell: pwsh
-        working-directory: subsystem
-        run: |
-          $ErrorActionPreference = "Stop"
+- name: Build Subsystem for Android ARM64
+  shell: pwsh
+  working-directory: subsystem
+  run: |
+    $ErrorActionPreference = "Stop"
 
-          Write-Host "=========================================="
-          Write-Host "Preparing Subsystem Android ARM64 build"
-          Write-Host "=========================================="
+    Write-Host "=========================================="
+    Write-Host "Preparing Subsystem Android ARM64 build"
+    Write-Host "=========================================="
 
-          # ========================================================
-          # 20.1 Restore upstream project file
-          # ========================================================
+    # ========================================================
+    # 20.1 Restore upstream project file
+    # ========================================================
 
-          Write-Host ""
-          Write-Host "Restoring upstream subsystem.master.csproj..."
+    Write-Host ""
+    Write-Host "Restoring upstream subsystem.master.csproj..."
 
-          git checkout -- subsystem.master.csproj
+    git checkout -- ".\subsystem.master.csproj"
 
-          if ($LASTEXITCODE -ne 0) {
-            throw "Failed to restore subsystem.master.csproj."
-          }
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to restore subsystem.master.csproj."
+    }
 
-          Write-Host "Upstream project file restored."
+    Write-Host "Upstream project file restored."
 
-          # ========================================================
-          # 20.2 Restore SessionCmdlets.cs
-          #
-          # Previous attempts could have damaged this file.
-          # Always start from the upstream version.
-          # ========================================================
+    # ========================================================
+    # 20.2 Restore upstream SessionCmdlets.cs
+    # ========================================================
 
-          Write-Host ""
-          Write-Host "Restoring SessionCmdlets.cs..."
+    Write-Host ""
+    Write-Host "Restoring SessionCmdlets.cs..."
 
-          git checkout -- ".\src\runspace\Pwsh\Cmdlets\SessionCmdlets.cs"
+    $sessionFile = ".\src\runspace\Pwsh\Cmdlets\SessionCmdlets.cs"
 
-          if ($LASTEXITCODE -ne 0) {
-            throw "Failed to restore SessionCmdlets.cs."
-          }
+    if (-not (Test-Path $sessionFile)) {
+        throw "SessionCmdlets.cs not found: $sessionFile"
+    }
 
-          Write-Host "SessionCmdlets.cs restored."
+    git checkout -- "$sessionFile"
 
-          # ========================================================
-          # 20.3 Load project XML
-          # ========================================================
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to restore SessionCmdlets.cs."
+    }
 
-          Write-Host ""
-          Write-Host "Loading project XML..."
+    Write-Host "SessionCmdlets.cs restored from upstream."
 
-          $projectFile = ".\subsystem.master.csproj"
+    # ========================================================
+    # 20.3 Load project XML
+    # ========================================================
 
-          if (-not (Test-Path $projectFile)) {
-            throw "Project file not found: $projectFile"
-          }
+    Write-Host ""
+    Write-Host "Loading project XML..."
 
-          [xml]$xml = Get-Content $projectFile -Raw
+    $projectFile = ".\subsystem.master.csproj"
 
-          Write-Host "Project XML loaded."
+    if (-not (Test-Path $projectFile)) {
+        throw "Project file not found: $projectFile"
+    }
 
-          # ========================================================
-          # 20.4 Configure Android build properties
-          # ========================================================
+    [xml]$xml = Get-Content $projectFile -Raw
 
-          Write-Host ""
-          Write-Host "Configuring Android build properties..."
+    Write-Host "Project XML loaded."
 
-          $androidCondition = "'`$(TargetFramework)' == 'net11.0-android'"
+    # ========================================================
+    # 20.4 Configure Android build properties
+    # ========================================================
 
-          $androidPropertyGroup = $null
+    Write-Host ""
+    Write-Host "Configuring Android build properties..."
 
-          foreach ($group in @($xml.Project.PropertyGroup)) {
-            if ($group.Condition -eq $androidCondition) {
-              $androidPropertyGroup = $group
-              break
-            }
-          }
+    # IMPORTANT:
+    # `$(` is escaped because this is a PowerShell string.
+    # We need the literal MSBuild expression:
+    #
+    # '$(TargetFramework)' == 'net11.0-android'
 
-          if ($null -eq $androidPropertyGroup) {
-            Write-Host "Creating Android PropertyGroup..."
+    $androidCondition = "'`$(TargetFramework)' == 'net11.0-android'"
 
-            $androidPropertyGroup = $xml.CreateElement(
-              "PropertyGroup",
-              $xml.DocumentElement.NamespaceURI
-            )
+    $androidPropertyGroup = $null
 
-            $androidPropertyGroup.SetAttribute(
-              "Condition",
-              $androidCondition
-            )
+    foreach ($group in @($xml.Project.PropertyGroup)) {
+        if ($group.Condition -eq $androidCondition) {
+            $androidPropertyGroup = $group
+            break
+        }
+    }
 
-            $xml.Project.AppendChild($androidPropertyGroup) | Out-Null
-          }
-          else {
-            Write-Host "Android PropertyGroup already exists."
-          }
+    if ($null -eq $androidPropertyGroup) {
+        Write-Host "Creating Android PropertyGroup..."
 
-          $supportedApi = $androidPropertyGroup.SelectSingleNode(
-            "SupportedOSPlatformVersion"
-          )
-
-          if ($null -eq $supportedApi) {
-            $supportedApi = $xml.CreateElement(
-              "SupportedOSPlatformVersion",
-              $xml.DocumentElement.NamespaceURI
-            )
-
-            $supportedApi.InnerText = "$($env:MIN_ANDROID_API).0"
-
-            $androidPropertyGroup.AppendChild(
-              $supportedApi
-            ) | Out-Null
-          }
-          else {
-            $supportedApi.InnerText = "$($env:MIN_ANDROID_API).0"
-          }
-
-          Write-Host "SupportedOSPlatformVersion=$($supportedApi.InnerText)"
-
-          # ========================================================
-          # 20.5 Configure Compile Remove rules
-          #
-          # IMPORTANT:
-          # Do NOT add Diagnostics Compile Include entries.
-          # SDK default Compile discovery must remain enabled.
-          #
-          # IMPORTANT:
-          # Do NOT remove Diagnostics.
-          # ========================================================
-
-          Write-Host ""
-          Write-Host "Configuring Android Compile Remove rules..."
-
-          $removeItemGroup = $xml.CreateElement(
-            "ItemGroup",
+        $androidPropertyGroup = $xml.CreateElement(
+            "PropertyGroup",
             $xml.DocumentElement.NamespaceURI
-          )
+        )
 
-          $removeItemGroup.SetAttribute(
+        $androidPropertyGroup.SetAttribute(
             "Condition",
             $androidCondition
-          )
+        )
 
-          $windowsPaths = @(
-            "src\runspace\windows\**\*.cs",
-            "src\shell\platform\Windows\**\*.cs"
-          )
+        $xml.Project.AppendChild(
+            $androidPropertyGroup
+        ) | Out-Null
+    }
+    else {
+        Write-Host "Android PropertyGroup already exists."
+    }
 
-          foreach ($path in $windowsPaths) {
+    $supportedApi = $androidPropertyGroup.SelectSingleNode(
+        "SupportedOSPlatformVersion"
+    )
 
-            Write-Host ""
-            Write-Host "Removing Windows source:"
-            Write-Host "  $path"
+    if ($null -eq $supportedApi) {
+        $supportedApi = $xml.CreateElement(
+            "SupportedOSPlatformVersion",
+            $xml.DocumentElement.NamespaceURI
+        )
 
-            $compileRemove = $xml.CreateElement(
-              "Compile",
-              $xml.DocumentElement.NamespaceURI
-            )
+        $androidPropertyGroup.AppendChild(
+            $supportedApi
+        ) | Out-Null
+    }
 
-            $compileRemove.SetAttribute(
-              "Remove",
-              $path
-            )
+    $supportedApi.InnerText = "$($env:MIN_ANDROID_API).0"
 
-            $removeItemGroup.AppendChild(
-              $compileRemove
-            ) | Out-Null
-          }
+    Write-Host "SupportedOSPlatformVersion=$($supportedApi.InnerText)"
 
-          $xml.Project.AppendChild(
-            $removeItemGroup
-          ) | Out-Null
+    # ========================================================
+    # 20.5 Configure Android Compile Remove rules
+    #
+    # IMPORTANT:
+    # Do NOT add Diagnostics Compile Include.
+    #
+    # IMPORTANT:
+    # Do NOT remove Diagnostics.
+    #
+    # IMPORTANT:
+    # Do NOT modify the upstream ONNX Compile Include.
+    # ========================================================
 
-          Write-Host ""
-          Write-Host "Compile Remove rules configured."
+    Write-Host ""
+    Write-Host "Configuring Android Compile Remove rules..."
 
-          # ========================================================
-          # 20.6 Save project
-          # ========================================================
+    $removeItemGroup = $xml.CreateElement(
+        "ItemGroup",
+        $xml.DocumentElement.NamespaceURI
+    )
 
-          $xml.Save(
-            (Resolve-Path $projectFile).Path
-          )
+    $removeItemGroup.SetAttribute(
+        "Condition",
+        $androidCondition
+    )
 
-          # ========================================================
-          # 20.7 Verify project XML
-          # ========================================================
+    $windowsPaths = @(
+        "src\runspace\windows\**\*.cs",
+        "src\shell\platform\Windows\**\*.cs"
+    )
 
-          Write-Host ""
-          Write-Host "=========================================="
-          Write-Host "Verifying project XML"
-          Write-Host "=========================================="
+    foreach ($path in $windowsPaths) {
 
-          [xml]$verifyXml = Get-Content $projectFile -Raw
+        Write-Host ""
+        Write-Host "Removing Windows source:"
+        Write-Host "  $path"
 
-          $compileIncludes = @(
-            $verifyXml.Project.ItemGroup.Compile |
-              Where-Object {
-                $_.Include
-              }
-          )
+        $compileRemove = $xml.CreateElement(
+            "Compile",
+            $xml.DocumentElement.NamespaceURI
+        )
 
-          Write-Host ""
-          Write-Host "Explicit Compile Include entries: $($compileIncludes.Count)"
+        $compileRemove.SetAttribute(
+            "Remove",
+            $path
+        )
 
-          foreach ($item in $compileIncludes) {
-            Write-Host "  Include=$($item.Include)"
-          }
+        $removeItemGroup.AppendChild(
+            $compileRemove
+        ) | Out-Null
+    }
 
-          # The upstream ONNX Compile Include is allowed.
-          $onnxInclude = $compileIncludes |
-            Where-Object {
-              $_.Include -like "*src\native\dpx\onnxnet\*.cs*"
-            }
+    $xml.Project.AppendChild(
+        $removeItemGroup
+    ) | Out-Null
 
-          if ($null -eq $onnxInclude) {
-            throw "Expected upstream ONNX Compile Include was not found."
-          }
+    Write-Host ""
+    Write-Host "Compile Remove rules configured."
 
-          Write-Host ""
-          Write-Host "Expected upstream ONNX Compile Include confirmed."
+    # ========================================================
+    # 20.6 Save modified project
+    # ========================================================
 
-          # Diagnostics must NOT be explicitly included.
-          $diagnosticIncludes = $compileIncludes |
-            Where-Object {
-              $_.Include -match "src[\\/]runspace[\\/]Diagnostics"
-            }
+    Write-Host ""
+    Write-Host "Saving Android project configuration..."
 
-          if ($diagnosticIncludes.Count -gt 0) {
-            throw "Diagnostics Compile Include entries were found. Remove them; SDK default Compile discovery must be used."
-          }
+    $xml.Save(
+        (Resolve-Path $projectFile).Path
+    )
 
-          Write-Host "Diagnostics Compile Include check passed."
+    Write-Host "Project configuration saved."
 
-          $compileRemoves = @(
-            $verifyXml.Project.ItemGroup.Compile |
-              Where-Object {
-                $_.Remove
-              }
-          )
+    # ========================================================
+    # 20.7 Verify project XML
+    # ========================================================
 
-          Write-Host ""
-          Write-Host "Compile Remove entries:"
+    Write-Host ""
+    Write-Host "=========================================="
+    Write-Host "Verifying project XML"
+    Write-Host "=========================================="
 
-          foreach ($item in $compileRemoves) {
-            Write-Host "  Remove=$($item.Remove)"
-          }
+    [xml]$verifyXml = Get-Content $projectFile -Raw
 
-          # ========================================================
-          # 20.8 Check Diagnostics source files
-          # ========================================================
+    $compileIncludes = @(
+        $verifyXml.Project.ItemGroup.Compile |
+        Where-Object {
+            $_.Include
+        }
+    )
 
-          Write-Host ""
-          Write-Host "=========================================="
-          Write-Host "Checking Diagnostics sources"
-          Write-Host "=========================================="
+    Write-Host ""
+    Write-Host "Explicit Compile Include entries: $($compileIncludes.Count)"
 
-          $diagnosticsDirectory = ".\src\runspace\Diagnostics"
+    foreach ($item in $compileIncludes) {
+        Write-Host "  Include=$($item.Include)"
+    }
 
-          if (-not (Test-Path $diagnosticsDirectory)) {
-            throw "Diagnostics directory not found."
-          }
+    # --------------------------------------------------------
+    # Upstream ONNX Compile Include must remain.
+    # --------------------------------------------------------
 
-          $requiredDiagnostics = @(
-            "AgentSettings.cs",
-            "Dg.cs",
-            "PackageInfoDb.cs",
-            "SqliteProbe.cs"
-          )
+    $onnxInclude = @(
+        $compileIncludes |
+        Where-Object {
+            $_.Include -like "*src\native\dpx\onnxnet\*.cs*"
+        }
+    )
 
-          foreach ($fileName in $requiredDiagnostics) {
+    if ($onnxInclude.Count -eq 0) {
+        throw "Expected upstream ONNX Compile Include was not found."
+    }
 
-            $path = Join-Path `
-              $diagnosticsDirectory `
-              $fileName
+    Write-Host ""
+    Write-Host "Expected upstream ONNX Compile Include confirmed."
 
-            if (-not (Test-Path $path)) {
-              throw "Required Diagnostics source missing: $path"
-            }
+    # --------------------------------------------------------
+    # Diagnostics must NOT have explicit Compile Include.
+    # --------------------------------------------------------
 
-            Write-Host "Diagnostics:"
-            Write-Host "  $((Resolve-Path $path).Path)"
-          }
+    $diagnosticIncludes = @(
+        $compileIncludes |
+        Where-Object {
+            $_.Include -match "src[\\/]runspace[\\/]Diagnostics"
+        }
+    )
 
-          # ========================================================
-          # 20.9 Verify Dg namespace
-          # ========================================================
+    if ($diagnosticIncludes.Count -gt 0) {
+        throw "Diagnostics Compile Include entries were found. SDK default Compile discovery must be used."
+    }
 
-          Write-Host ""
-          Write-Host "=========================================="
-          Write-Host "Checking Dg namespace"
-          Write-Host "=========================================="
+    Write-Host "Diagnostics Compile Include check passed."
 
-          $dgFile = ".\src\runspace\Diagnostics\Dg.cs"
+    # --------------------------------------------------------
+    # Verify exactly the two intended Windows removals.
+    # --------------------------------------------------------
 
-          $dgText = Get-Content $dgFile -Raw
+    $compileRemoves = @(
+        $verifyXml.Project.ItemGroup.Compile |
+        Where-Object {
+            $_.Remove
+        }
+    )
 
-          if ($dgText -notmatch '(?m)^\s*namespace\s+Subsystem\.Diagnostics\b') {
-            throw "Dg.cs does not use namespace Subsystem.Diagnostics."
-          }
+    Write-Host ""
+    Write-Host "Compile Remove entries:"
 
-          Write-Host "Dg namespace confirmed:"
-          Write-Host "  Subsystem.Diagnostics"
+    foreach ($item in $compileRemoves) {
+        Write-Host "  Remove=$($item.Remove)"
+    }
 
-          # ========================================================
-          # 20.10 Fix obsolete Diagnostics namespace references
-          #
-          # Replace:
-          #   Subsystem.Dg
-          #
-          # with:
-          #   Subsystem.Diagnostics.Dg
-          #
-          # Also add using Subsystem.Diagnostics when a file uses
-          # Dg directly without a namespace qualification.
-          # ========================================================
+    $runspaceWindowsRemove = @(
+        $compileRemoves |
+        Where-Object {
+            $_.Remove -eq "src\runspace\windows\**\*.cs"
+        }
+    )
 
-          Write-Host ""
-          Write-Host "=========================================="
-          Write-Host "Fixing Diagnostics references"
-          Write-Host "=========================================="
+    $shellWindowsRemove = @(
+        $compileRemoves |
+        Where-Object {
+            $_.Remove -eq "src\shell\platform\Windows\**\*.cs"
+        }
+    )
 
-          $sourceFiles = @(
-            Get-ChildItem `
-              ".\src\runspace" `
-              -Recurse `
-              -Filter "*.cs" `
-              -File `
-              -ErrorAction SilentlyContinue
-          )
+    if ($runspaceWindowsRemove.Count -ne 1) {
+        throw "Expected src\runspace\windows Compile Remove rule was not found."
+    }
 
-          foreach ($file in $sourceFiles) {
+    if ($shellWindowsRemove.Count -ne 1) {
+        throw "Expected src\shell\platform\Windows Compile Remove rule was not found."
+    }
 
-            $text = Get-Content `
-              $file.FullName `
-              -Raw
+    # ========================================================
+    # 20.8 Verify Diagnostics sources
+    # ========================================================
 
-            $original = $text
+    Write-Host ""
+    Write-Host "=========================================="
+    Write-Host "Checking Diagnostics sources"
+    Write-Host "=========================================="
 
-            # ------------------------------------------------------
-            # First fix explicitly obsolete namespace references.
-            #
-            # IMPORTANT:
-            # This pattern does NOT match
-            # Subsystem.Diagnostics.Dg.
-            # ------------------------------------------------------
+    $diagnosticsDirectory = ".\src\runspace\Diagnostics"
 
-            $text = [regex]::Replace(
-              $text,
-              '(?<![\w.])Subsystem\.Dg\b',
-              'Subsystem.Diagnostics.Dg'
-            )
+    if (-not (Test-Path $diagnosticsDirectory)) {
+        throw "Diagnostics directory not found."
+    }
 
-            # ------------------------------------------------------
-            # If the file uses Dg directly, add the correct using.
-            # ------------------------------------------------------
+    $requiredDiagnostics = @(
+        "AgentSettings.cs",
+        "Dg.cs",
+        "PackageInfoDb.cs",
+        "SqliteProbe.cs"
+    )
 
-            $usesDg = [regex]::IsMatch(
-              $text,
-              '(?<![\w.])Dg\s*\.\s*[A-Za-z_][A-Za-z0-9_]*'
-            )
+    foreach ($fileName in $requiredDiagnostics) {
 
-            $isDgDefinition = $file.Name -eq "Dg.cs"
+        $path = Join-Path `
+            $diagnosticsDirectory `
+            $fileName
 
-            if ($usesDg -and -not $isDgDefinition) {
+        if (-not (Test-Path $path)) {
+            throw "Required Diagnostics source missing: $path"
+        }
 
-              $hasUsing = [regex]::IsMatch(
-                $text,
-                '(?m)^\s*using\s+Subsystem\.Diagnostics\s*;'
-              )
+        Write-Host "Diagnostics:"
+        Write-Host "  $((Resolve-Path $path).Path)"
+    }
 
-              if (-not $hasUsing) {
+    # ========================================================
+    # 20.9 Verify Dg namespace
+    # ========================================================
 
-                $usingLine = "using Subsystem.Diagnostics;"
+    Write-Host ""
+    Write-Host "=========================================="
+    Write-Host "Checking Dg namespace"
+    Write-Host "=========================================="
 
-                if ($text -match '(?m)^using\s+[A-Za-z0-9_.]+\s*;') {
-                  $text = $usingLine + "`r`n" + $text
-                }
-                elseif ($text -match '(?m)^namespace\s+') {
-                  $text = $usingLine + "`r`n`r`n" + $text
-                }
-                else {
-                  $text = $usingLine + "`r`n`r`n" + $text
-                }
+    $dgFile = ".\src\runspace\Diagnostics\Dg.cs"
+
+    $dgText = Get-Content `
+        $dgFile `
+        -Raw
+
+    if ($dgText -notmatch '(?m)^\s*namespace\s+Subsystem\.Diagnostics\b') {
+        throw "Dg.cs does not declare namespace Subsystem.Diagnostics."
+    }
+
+    Write-Host "Dg namespace confirmed:"
+    Write-Host "  Subsystem.Diagnostics"
+
+    # ========================================================
+    # 20.10 Fix obsolete Subsystem.Dg references
+    #
+    # Only the obsolete namespace is replaced.
+    #
+    # IMPORTANT:
+    # Subsystem.Diagnostics.Dg must NOT be changed.
+    # ========================================================
+
+    Write-Host ""
+    Write-Host "Fixing obsolete Subsystem.Dg references..."
+
+    $runspaceRoot = ".\src\runspace"
+
+    $csFiles = Get-ChildItem `
+        $runspaceRoot `
+        -Recurse `
+        -Filter "*.cs" `
+        -File
+
+    foreach ($file in $csFiles) {
+
+        $text = Get-Content `
+            $file.FullName `
+            -Raw
+
+        $original = $text
+
+        # Replace ONLY the obsolete namespace-qualified form.
+        # Do not touch Subsystem.Diagnostics.Dg.
+
+        $text = [regex]::Replace(
+            $text,
+            '\bSubsystem\.Dg\b',
+            'Subsystem.Diagnostics.Dg'
+        )
+
+        if ($text -ne $original) {
+
+            Set-Content `
+                -Path $file.FullName `
+                -Value $text `
+                -Encoding utf8NoBOM
+
+            Write-Host "Fixed obsolete Dg reference:"
+            Write-Host "  $($file.FullName)"
+        }
+    }
+
+    # ========================================================
+    # 20.11 Add using Subsystem.Diagnostics where needed
+    #
+    # This is deliberately limited to files that contain
+    # unqualified Dg references.
+    # ========================================================
+
+    Write-Host ""
+    Write-Host "Checking unqualified Dg references..."
+
+    $diagnosticsUsing = "using Subsystem.Diagnostics;"
+
+    foreach ($file in $csFiles) {
+
+        $text = Get-Content `
+            $file.FullName `
+            -Raw
+
+        if ($text -match '(?m)\bDg\.' -and
+            $text -notmatch '(?m)^\s*using\s+Subsystem\.Diagnostics\s*;') {
+
+            # Do not modify Diagnostics/Dg.cs itself.
+            if ($file.FullName -ne (Resolve-Path $dgFile).Path) {
+
+                $text = $diagnosticsUsing + "`r`n" + $text
+
+                Set-Content `
+                    -Path $file.FullName `
+                    -Value $text `
+                    -Encoding utf8NoBOM
 
                 Write-Host "Added using Subsystem.Diagnostics:"
                 Write-Host "  $($file.FullName)"
-              }
             }
-
-            if ($text -ne $original) {
-
-              Set-Content `
-                -Path $file.FullName `
-                -Value $text `
-                -Encoding UTF8
-
-              if (
-                $original -match '(?<![\w.])Subsystem\.Dg\b'
-              ) {
-                Write-Host "Fixed Diagnostics namespace references:"
-                Write-Host "  $($file.FullName)"
-              }
-            }
-          }
-
-        # ========================================================
-# 20.11 Fix SessionManager.SetBackground for Android
-# ========================================================
-
-Write-Host ""
-Write-Host "=========================================="
-Write-Host "Fixing SessionManager.SetBackground"
-Write-Host "=========================================="
-
-$sessionCmdlets = ".\src\runspace\Pwsh\Cmdlets\SessionCmdlets.cs"
-
-if (-not (Test-Path $sessionCmdlets)) {
-    throw "SessionCmdlets.cs not found."
-}
-
-# Always restore the real upstream file first.
-git checkout -- "$sessionCmdlets"
-
-if ($LASTEXITCODE -ne 0) {
-    throw "Failed to restore SessionCmdlets.cs."
-}
-
-Write-Host "SessionCmdlets.cs restored from upstream."
-
-$sessionText = Get-Content `
-    -Path $sessionCmdlets `
-    -Raw
-
-# The upstream file must contain the obsolete API.
-if ($sessionText -notmatch 'SessionManager\.SetBackground\s*\(') {
-    throw "Expected upstream SessionManager.SetBackground call was not found."
-}
-
-# Match exactly the helper used by the upstream SessionCmdlets.cs.
-$helperPattern = '(?s)public static void SetSessionBackgroundHelper\s*\(\s*PSCmdlet\s+cmdlet\s*,\s*string\s+name\s*,\s*bool\s+enabled\s*\)\s*\{.*?\n\s*\}\s*\n\}'
-
-$matches = [regex]::Matches(
-    $sessionText,
-    $helperPattern,
-    [System.Text.RegularExpressions.RegexOptions]::Multiline
-)
-
-if ($matches.Count -ne 1) {
-    throw "Expected exactly one SetSessionBackgroundHelper method, found $($matches.Count)."
-}
-
-$newHelper = @'
-    public static void SetSessionBackgroundHelper(PSCmdlet cmdlet, string name, bool enabled)
-    {
-        var session = SessionManager.Get(name);
-
-        if (session != null)
-        {
-            session.Background = enabled;
-
-            cmdlet.Host.UI.WriteLine(
-                cmdlet.Host.UI.RawUI.ForegroundColor,
-                cmdlet.Host.UI.RawUI.BackgroundColor,
-                $"Session '{name}' background mode set to {enabled}");
-        }
-        else
-        {
-            cmdlet.Host.UI.WriteLine(
-                cmdlet.Host.UI.RawUI.ForegroundColor,
-                cmdlet.Host.UI.BackgroundColor,
-                $"No session '{name}'");
         }
     }
-}
+
+    # ========================================================
+    # 20.12 Fix SessionManager.SetBackground
+    #
+    # The current upstream SessionCmdlets.cs calls:
+    #
+    #   SessionManager.SetBackground(name, enabled)
+    #
+    # That API is not available in the Android build.
+    #
+    # We keep the cmdlets but make the helper Android-safe.
+    # ========================================================
+
+    Write-Host ""
+    Write-Host "=========================================="
+    Write-Host "Fixing SessionManager.SetBackground"
+    Write-Host "=========================================="
+
+    $sessionText = Get-Content `
+        $sessionFile `
+        -Raw
+
+    if ($sessionText -notmatch 'SessionManager\.SetBackground\s*\(') {
+        throw "Expected upstream SessionManager.SetBackground call was not found."
+    }
+
+    # Replace the complete helper instead of attempting to
+    # manipulate only the if-condition.
+    #
+    # This avoids leaving an invalid if/else structure behind.
+
+    $helperPattern = '(?s)public\s+static\s+void\s+SetSessionBackgroundHelper\s*\(\s*PSCmdlet\s+cmdlet\s*,\s*string\s+name\s*,\s*bool\s+enabled\s*\)\s*\{.*?\n\s*\}'
+
+    $helperMatches = [regex]::Matches(
+        $sessionText,
+        $helperPattern,
+        [System.Text.RegularExpressions.RegexOptions]::Multiline
+    )
+
+    if ($helperMatches.Count -ne 1) {
+        throw "Expected exactly one SetSessionBackgroundHelper method, found $($helperMatches.Count)."
+    }
+
+    $newHelper = @'
+    public static void SetSessionBackgroundHelper(PSCmdlet cmdlet, string name, bool enabled)
+    {
+        cmdlet.Host.UI.WriteLine(
+            cmdlet.Host.UI.RawUI.ForegroundColor,
+            cmdlet.Host.UI.RawUI.BackgroundColor,
+            $"Session '{name}' background mode is not supported by the Android build.");
+    }
 '@
 
-$sessionText = [regex]::Replace(
-    $sessionText,
-    $helperPattern,
-    $newHelper.TrimEnd(),
-    1,
-    [System.Text.RegularExpressions.RegexOptions]::Multiline
-)
+    $sessionText = [regex]::Replace(
+        $sessionText,
+        $helperPattern,
+        $newHelper.TrimEnd(),
+        1,
+        [System.Text.RegularExpressions.RegexOptions]::Multiline
+    )
 
-Set-Content `
-    -Path $sessionCmdlets `
-    -Value $sessionText `
-    -Encoding utf8NoBOM
+    Set-Content `
+        -Path $sessionFile `
+        -Value $sessionText `
+        -Encoding utf8NoBOM
 
-# --------------------------------------------------------
-# Final verification
-# --------------------------------------------------------
+    # ========================================================
+    # 20.13 Final source verification
+    # ========================================================
 
-$verifySessionText = Get-Content `
-    -Path $sessionCmdlets `
-    -Raw
+    Write-Host ""
+    Write-Host "=========================================="
+    Write-Host "Final source verification"
+    Write-Host "=========================================="
 
-if ($verifySessionText -match 'SessionManager\.SetBackground\s*\(') {
-    throw "SessionManager.SetBackground still exists in SessionCmdlets.cs."
-}
+    $finalSessionText = Get-Content `
+        $sessionFile `
+        -Raw
 
-if ($verifySessionText -notmatch 'SessionManager\.Get\s*\(\s*name\s*\)') {
-    throw "SessionManager.Get(name) was not found after patch."
-}
+    if ($finalSessionText -match 'SessionManager\.SetBackground\s*\(') {
+        throw "SessionManager.SetBackground still exists in SessionCmdlets.cs."
+    }
 
-if ($verifySessionText -notmatch 'session\.Background\s*=\s*enabled') {
-    throw "session.Background = enabled was not found after patch."
-}
+    Write-Host "SessionManager.SetBackground removed."
 
-Write-Host "SessionManager.SetBackground removed successfully."
-Write-Host "SessionManager.Get(name) confirmed."
-Write-Host "session.Background = enabled confirmed."
-          # ========================================================
-          # 20.12 Verify SessionCmdlets braces
-          # ========================================================
+    # --------------------------------------------------------
+    # No obsolete Subsystem.Dg reference may remain.
+    # --------------------------------------------------------
 
-          $openBraces = (
-            [regex]::Matches(
-              $verifySessionText,
-              '\{'
-            )
-          ).Count
+    $obsoleteDgMatches = @(
+        Get-ChildItem `
+            $runspaceRoot `
+            -Recurse `
+            -Filter "*.cs" `
+            -File |
+        Select-String `
+            -Pattern '\bSubsystem\.Dg\b' `
+            -AllMatches
+    )
 
-          $closeBraces = (
-            [regex]::Matches(
-              $verifySessionText,
-              '\}'
-            )
-          ).Count
+    if ($obsoleteDgMatches.Count -gt 0) {
 
-          Write-Host ""
-          Write-Host "SessionCmdlets.cs brace check:"
-          Write-Host "  Opening braces : $openBraces"
-          Write-Host "  Closing braces : $closeBraces"
+        Write-Host ""
+        Write-Host "Remaining obsolete Subsystem.Dg references:"
 
-          if ($openBraces -ne $closeBraces) {
-            throw "SessionCmdlets.cs has unbalanced braces."
-          }
+        foreach ($match in $obsoleteDgMatches) {
+            Write-Host "  $($match.Path):$($match.LineNumber)"
+            Write-Host "    $($match.Line)"
+        }
 
-          Write-Host "SessionCmdlets.cs structure verification passed."
+        throw "Obsolete Subsystem.Dg references remain."
+    }
 
-          # ========================================================
-          # 20.13 Final Diagnostics verification
-          # ========================================================
+    Write-Host "No obsolete Subsystem.Dg references remain."
 
-          Write-Host ""
-          Write-Host "=========================================="
-          Write-Host "Final Android source verification"
-          Write-Host "=========================================="
+    # --------------------------------------------------------
+    # Diagnostics must still exist.
+    # --------------------------------------------------------
 
-          $obsoleteDgFiles = @(
-            Get-ChildItem `
-              ".\src\runspace" `
-              -Recurse `
-              -Filter "*.cs" `
-              -File `
-              -ErrorAction SilentlyContinue |
-              Select-String `
-                -Pattern '(?<![\w.])Subsystem\.Dg\b' `
-                -AllMatches
-          )
+    foreach ($fileName in $requiredDiagnostics) {
 
-          if ($obsoleteDgFiles.Count -gt 0) {
+        $path = Join-Path `
+            $diagnosticsDirectory `
+            $fileName
 
-            Write-Host ""
-            Write-Host "OBSOLETE Subsystem.Dg REFERENCES FOUND:"
+        if (-not (Test-Path $path)) {
+            throw "Diagnostics source disappeared after source patching: $path"
+        }
+    }
 
-            foreach ($match in $obsoleteDgFiles) {
-              Write-Host "  $($match.Path):$($match.LineNumber)"
-              Write-Host "    $($match.Line.Trim())"
-            }
+    Write-Host "Diagnostics sources remain intact."
 
-            throw "Obsolete Subsystem.Dg references remain."
-          }
+    # ========================================================
+    # 20.14 Restore AFTER all project/source modifications
+    #
+    # This is important because Step 16 restored the original
+    # project BEFORE Step 20 changed it.
+    #
+    # We restore again here so obj/project.assets.json matches
+    # the final Android project.
+    # ========================================================
 
-          Write-Host "No obsolete Subsystem.Dg references remain."
+    Write-Host ""
+    Write-Host "=========================================="
+    Write-Host "Restoring final Android project"
+    Write-Host "=========================================="
 
-          foreach ($fileName in $requiredDiagnostics) {
+    dotnet restore `
+        ".\subsystem.master.csproj" `
+        -p:TargetFramework=net11.0-android `
+        -r android-arm64
 
-            $path = Join-Path `
-              $diagnosticsDirectory `
-              $fileName
+    if ($LASTEXITCODE -ne 0) {
+        throw "Final Android restore failed."
+    }
 
-            if (-not (Test-Path $path)) {
-              throw "Diagnostics source disappeared: $fileName"
-            }
-          }
+    Write-Host "Final Android restore completed."
 
-          Write-Host "Diagnostics sources verified."
+    # ========================================================
+    # 20.15 Build Android ARM64
+    # ========================================================
 
-          if (
-            $verifySessionText -match `
-              'SessionManager\.SetBackground\s*\('
-          ) {
-            throw "SessionManager.SetBackground verification failed."
-          }
+    Write-Host ""
+    Write-Host "=========================================="
+    Write-Host "Building Subsystem Android ARM64"
+    Write-Host "=========================================="
 
-          Write-Host "SessionManager.SetBackground verification passed."
+    dotnet build `
+        ".\subsystem.master.csproj" `
+        -c Release `
+        -f net11.0-android `
+        -r android-arm64 `
+        --no-restore
 
-          # ========================================================
-          # 20.14 Android project configuration
-          # ========================================================
+    if ($LASTEXITCODE -ne 0) {
+        throw "Subsystem Android ARM64 build failed."
+    }
 
-          Write-Host ""
-          Write-Host "=========================================="
-          Write-Host "Android project configuration"
-          Write-Host "=========================================="
+    Write-Host ""
+    Write-Host "=========================================="
+    Write-Host "Subsystem Android ARM64 build succeeded"
+    Write-Host "=========================================="
 
-          [xml]$finalXml = Get-Content `
-            $projectFile `
-            -Raw
-
-          $targetFrameworks = @(
-            $finalXml.Project.PropertyGroup.TargetFrameworks
-          ) -join ";"
-
-          Write-Host "TargetFrameworks:"
-          Write-Host "  $targetFrameworks"
-
-          if (
-            $targetFrameworks -notmatch `
-              "net11\.0-android"
-          ) {
-            throw "net11.0-android target is missing."
-          }
-
-          Write-Host ""
-          Write-Host "Minimum Android API: $env:MIN_ANDROID_API"
-          Write-Host "Compile SDK: $env:TARGET_ANDROID_API"
-          Write-Host "Runtime: android-arm64"
-          Write-Host "ABI: arm64-v8a"
-
-          # ========================================================
-          # 20.15 Build Android ARM64
-          # ========================================================
-
-          Write-Host ""
-          Write-Host "=========================================="
-          Write-Host "Building Subsystem for Android ARM64"
-          Write-Host "=========================================="
-
-          dotnet build `
-            ".\subsystem.master.csproj" `
-            -c Release `
-            -f net11.0-android `
-            -r android-arm64 `
-            --no-restore `
-            -p:SubsystemRelease=true `
-            -p:SupportedOSPlatformVersion="$($env:MIN_ANDROID_API).0" `
-            -p:AndroidSdkDirectory="$env:ANDROID_HOME" `
-            -p:EnableDefaultCompileItems=true
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "Android ARM64 compilation failed."
-          }
-
-          Write-Host ""
-          Write-Host "=========================================="
-          Write-Host "Android ARM64 compilation succeeded."
-          Write-Host "=========================================="
  # ============================================================
       # 21. Locate produced APK
       # ============================================================
