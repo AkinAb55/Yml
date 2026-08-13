@@ -1112,29 +1112,86 @@ jobs:
             }
           }
 
-          # --------------------------------------------------------
-          # 20.14 Add Diagnostics namespace to cmdlets that use
-          # Diagnostics types without qualification
-          # --------------------------------------------------------
+         # --------------------------------------------------------
+# 20.14 Add Diagnostics namespace to EVERY source file
+# that uses unqualified Dg
+# --------------------------------------------------------
 
-          $diagnosticConsumers = @(
-            ".\src\runspace\Pwsh\Cmdlets\AgentCmdlets.cs",
-            ".\src\runspace\Pwsh\Cmdlets\DiagnosticCmdlets.cs",
-            ".\src\runspace\Pwsh\Cmdlets\PackageCmdlets.cs",
-            ".\src\runspace\Pwsh\Cmdlets\WrapperCmdlets.cs"
-          )
+Write-Host ""
+Write-Host "=========================================="
+Write-Host "Adding Diagnostics namespace to Dg consumers"
+Write-Host "=========================================="
 
-          foreach ($consumer in $diagnosticConsumers) {
+$diagnosticConsumers = @(
+  Get-ChildItem `
+    -Path $runspaceRoot `
+    -Recurse `
+    -Filter "*.cs" `
+    -File
+)
 
-            if (-not (Test-Path $consumer)) {
-              Write-Host "WARNING: file not found:"
-              Write-Host "  $consumer"
-              continue
-            }
+foreach ($file in $diagnosticConsumers) {
 
-            Add-DiagnosticsUsing `
-              -FilePath $consumer
-          }
+  $text = Get-Content `
+    -Path $file.FullName `
+    -Raw
+
+  # Skip files that do not contain an unqualified Dg usage.
+  #
+  # We intentionally search for:
+  #   Dg.
+  #
+  # and not simply "Dg", because the latter also matches
+  # namespace/type declarations and comments.
+
+  if ($text -notmatch '(?<![\w.])Dg\s*\.') {
+    continue
+  }
+
+  # Already imported.
+  if ($text -match '(?m)^\s*using\s+Subsystem\.Diagnostics\s*;') {
+    Write-Host "Diagnostics using already present:"
+    Write-Host "  $($file.FullName)"
+    continue
+  }
+
+  Write-Host "Adding Diagnostics using:"
+  Write-Host "  $($file.FullName)"
+
+  $usingLine = "using Subsystem.Diagnostics;"
+
+  # Find the last using directive.
+  $usingMatches = [regex]::Matches(
+    $text,
+    '(?m)^\s*using\s+[^;]+;\s*\r?$'
+  )
+
+  if ($usingMatches.Count -gt 0) {
+
+    $lastUsing = $usingMatches[$usingMatches.Count - 1]
+
+    $insertPosition =
+      $lastUsing.Index + $lastUsing.Length
+
+    $newText = $text.Insert(
+      $insertPosition,
+      "`r`n$usingLine"
+    )
+  }
+  else {
+
+    $newText =
+      "$usingLine`r`n$text"
+  }
+
+  Set-Content `
+    -Path $file.FullName `
+    -Value $newText `
+    -Encoding utf8NoBOM
+}
+
+Write-Host ""
+Write-Host "Diagnostics namespace processing completed."
 
           # --------------------------------------------------------
           # 20.15 Fix remaining fully-qualified obsolete references
@@ -1262,49 +1319,60 @@ jobs:
           }
 
           # --------------------------------------------------------
-          # 20.18 Handle Android-specific SetBackground reference
-          #
-          # The Android build can legitimately lack the Windows
-          # implementation. Do NOT invent a new SessionManager API.
-          #
-          # If SessionCmdlets.cs contains SetBackground(), remove
-          # only the Android-incompatible call for Android.
-          # --------------------------------------------------------
+# 20.18 Remove Android-incompatible SessionManager.SetBackground
+# --------------------------------------------------------
 
-          $sessionCmdlets = `
-            ".\src\runspace\Pwsh\Cmdlets\SessionCmdlets.cs"
+Write-Host ""
+Write-Host "=========================================="
+Write-Host "Checking SessionManager.SetBackground"
+Write-Host "=========================================="
 
-          if (Test-Path $sessionCmdlets) {
+$sessionCmdlets =
+  ".\src\runspace\Pwsh\Cmdlets\SessionCmdlets.cs"
 
-            $sessionText = Get-Content `
-              -Path $sessionCmdlets `
-              -Raw
+if (-not (Test-Path $sessionCmdlets)) {
+  throw "SessionCmdlets.cs not found: $sessionCmdlets"
+}
 
-            if ($sessionText -match "SessionManager\.SetBackground\s*\(") {
+$sessionText = Get-Content `
+  -Path $sessionCmdlets `
+  -Raw
 
-              Write-Host ""
-              Write-Host "Android-specific SessionManager.SetBackground reference found."
+if ($sessionText -match 'SessionManager\.SetBackground\s*\(') {
 
-              # Replace only the call with a no-op conditional.
-              #
-              # This keeps the cmdlet source available while avoiding
-              # a call to an API which does not exist on Android.
-              $sessionText = [regex]::Replace(
-                $sessionText,
-                '(?m)^(\s*)SessionManager\.SetBackground\s*\((.*?)\)\s*;',
-                '$1// Android: SessionManager.SetBackground is not available.'
-              )
+  Write-Host "Android-incompatible SetBackground call found."
 
-              Set-Content `
-                -Path $sessionCmdlets `
-                -Value $sessionText `
-                -Encoding utf8NoBOM
+  # Handle a normal one-line invocation:
+  #
+  # SessionManager.SetBackground(...);
+  #
+  # and multiline invocations as well.
 
-              Write-Host "Removed Android-incompatible SetBackground call."
-            }
-          }
+  $pattern =
+    '(?s)(?m)^[ \t]*SessionManager\.SetBackground\s*\(.*?\)\s*;[ \t]*\r?\n?'
 
-          # --------------------------------------------------------
+  $newSessionText = [regex]::Replace(
+    $sessionText,
+    $pattern,
+    '// Android: SessionManager.SetBackground is unavailable.`r`n'
+  )
+
+  if ($newSessionText -eq $sessionText) {
+    throw "Found SessionManager.SetBackground but failed to remove it."
+  }
+
+  Set-Content `
+    -Path $sessionCmdlets `
+    -Value $newSessionText `
+    -Encoding utf8NoBOM
+
+  Write-Host "Removed Android-incompatible SetBackground call."
+}
+else {
+  Write-Host "No SessionManager.SetBackground reference found."
+}
+          
+       # --------------------------------------------------------
           # 20.19 Final project/source diagnostics
           # --------------------------------------------------------
 
@@ -1340,7 +1408,48 @@ jobs:
           if ($targetFrameworks -notmatch "net11\.0-android") {
             throw "net11.0-android target framework is missing."
           }
+        
+  # --------------------------------------------------------
+# 20.19.1 Final Dg verification
+# --------------------------------------------------------
 
+Write-Host ""
+Write-Host "=========================================="
+Write-Host "Final Dg consumer verification"
+Write-Host "=========================================="
+
+$dgConsumers = @(
+  Get-ChildItem `
+    -Path $runspaceRoot `
+    -Recurse `
+    -Filter "*.cs" `
+    -File |
+    Where-Object {
+      $content = Get-Content $_.FullName -Raw
+      $content -match '(?<![\w.])Dg\s*\.'
+    }
+)
+
+foreach ($file in $dgConsumers) {
+
+  $content = Get-Content `
+    -Path $file.FullName `
+    -Raw
+
+  if ($content -notmatch '(?m)^\s*using\s+Subsystem\.Diagnostics\s*;') {
+
+    Write-Host ""
+    Write-Host "ERROR: Dg consumer has no Diagnostics using:"
+    Write-Host "  $($file.FullName)"
+
+    throw "Missing 'using Subsystem.Diagnostics;' in Dg consumer."
+  }
+
+  Write-Host "OK: $($file.FullName)"
+}
+
+Write-Host ""
+Write-Host "All Dg consumers have Subsystem.Diagnostics."
           
           # --------------------------------------------------------
           # 20.20 Build
