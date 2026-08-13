@@ -943,7 +943,7 @@ jobs:
             -Path $projectFile `
             -Raw
 
-          $compileIncludes = @(
+                 $compileIncludes = @(
             $verifyXml.SelectNodes(
               "//*[local-name()='Compile'][@Include]"
             )
@@ -952,13 +952,59 @@ jobs:
           Write-Host ""
           Write-Host "Explicit Compile Include entries: $($compileIncludes.Count)"
 
-          if ($compileIncludes.Count -gt 0) {
-            foreach ($item in $compileIncludes) {
-              Write-Host "  Include=$($item.Include)"
+          foreach ($item in $compileIncludes) {
+            Write-Host "  Include=$($item.Include)"
+          }
+
+          # The upstream project contains a legitimate Compile Include
+          # for the ONNX native source tree.
+          #
+          # IMPORTANT:
+          # Do not remove it and do not treat it as an error.
+          #
+          # Diagnostics files are NOT added manually. They remain under
+          # SDK default Compile discovery.
+
+          $onnxIncludeFound = $false
+
+          foreach ($item in $compileIncludes) {
+            if (
+              [string]$item.Include -eq
+              '$(MSBuildProjectDirectory)\src\native\dpx\onnxnet\*.cs'
+            ) {
+              $onnxIncludeFound = $true
+              break
+            }
+          }
+
+          if (-not $onnxIncludeFound) {
+            throw "Expected upstream ONNX Compile Include was not found."
+          }
+
+          Write-Host ""
+          Write-Host "Expected upstream ONNX Compile Include confirmed."
+
+          # Make absolutely sure that we did not manually add any
+          # Diagnostics Compile Include entries.
+
+          $diagnosticsIncludes = @(
+            $compileIncludes |
+              Where-Object {
+                [string]$_.Include -match `
+                  'src[\\/]runspace[\\/]Diagnostics[\\/].*\.cs'
+              }
+          )
+
+          if ($diagnosticsIncludes.Count -gt 0) {
+            foreach ($item in $diagnosticsIncludes) {
+              Write-Host "Unexpected Diagnostics Include:"
+              Write-Host "  $($item.Include)"
             }
 
-            throw "Explicit Compile Include entries were found. They are not allowed in the Android build."
+            throw "Diagnostics files must not be explicitly included."
           }
+
+          Write-Host "Diagnostics Compile Include check passed."
 
           $compileRemoves = @(
             $verifyXml.SelectNodes(
