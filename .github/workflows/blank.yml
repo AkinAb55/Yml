@@ -1149,157 +1149,161 @@ jobs:
               }
           }
 
-          # ========================================================
-          # 20.12 Fix SessionManager.SetBackground
-          #
-          # The upstream source contains:
-          #
-          #   if (SessionManager.SetBackground(name, enabled))
-          #
-          # SessionManager.SetBackground is unavailable for the
-          # Android build.
-          #
-          # We replace ONLY the unavailable method call with false.
-          # The existing if/else C# structure is preserved.
-          # No here-string is used.
-          # ========================================================
+                # ========================================================
+      # 20.12 Fix Diagnostics namespace references
+      #
+      # Diagnostics sources use:
+      #
+      #   namespace Subsystem.Diagnostics;
+      #
+      # Fix legacy references that still point to the old
+      # Subsystem namespace.
+      # ========================================================
 
-          Write-Host ""
-          Write-Host "=========================================="
-          Write-Host "Fixing SessionManager.SetBackground"
-          Write-Host "=========================================="
+      Write-Host ""
+      Write-Host "=========================================="
+      Write-Host "Fixing Diagnostics namespace references"
+      Write-Host "=========================================="
 
-          $sessionText = Get-Content `
-              $sessionFile `
+      foreach ($file in $csFiles) {
+
+          $text = Get-Content `
+              $file.FullName `
               -Raw
 
-          if ($sessionText -notmatch 'SessionManager\.SetBackground\s*\(') {
-              throw "Expected upstream SessionManager.SetBackground call was not found."
+          $original = $text
+
+          # Fully-qualified obsolete references.
+          $text = $text -replace '\bSubsystem\.PackageInfoDb\b', 'Subsystem.Diagnostics.PackageInfoDb'
+          $text = $text -replace '\bSubsystem\.SqliteProbe\b', 'Subsystem.Diagnostics.SqliteProbe'
+          $text = $text -replace '\bSubsystem\.AgentSettings\b', 'Subsystem.Diagnostics.AgentSettings'
+
+          # Unqualified Diagnostics types used by Cmdlets.
+          if (
+              $text -match '\b(?:PackageInfoDb|PackageInfo|SqliteProbe|AgentSettings)\b' -and
+              $text -notmatch '(?m)^\s*using\s+Subsystem\.Diagnostics\s*;'
+          ) {
+
+              # Do not modify the Diagnostics files themselves.
+              if (
+                  $file.FullName -ne (Resolve-Path $dgFile).Path -and
+                  $file.FullName -notlike "*\src\runspace\Diagnostics\*"
+              ) {
+
+                  $text = "using Subsystem.Diagnostics;`r`n" + $text
+              }
           }
 
-          Write-Host "Upstream SessionManager.SetBackground found."
+          if ($text -ne $original) {
 
-          $oldSetBackground = 'SessionManager\.SetBackground\s*\(\s*name\s*,\s*enabled\s*\)'
+              Set-Content `
+                  -Path $file.FullName `
+                  -Value $text `
+                  -Encoding utf8NoBOM
 
-          $beforeSessionPatch = $sessionText
+              Write-Host "Fixed Diagnostics references:"
+              Write-Host "  $($file.FullName)"
+          }
+      }
 
-          $sessionText = [regex]::Replace(
-              $sessionText,
-              $oldSetBackground,
-              'false',
-              1
+      Write-Host "Diagnostics namespace references fixed."
+             # ========================================================
+      # 20.13 Fix PeLoader undefined subPath
+      #
+      # Upstream PeLoader.cs uses subPath without declaring it.
+      #
+      # Extract the path portion after:
+      #
+      #   \Device\Android\FileSystem\
+      #
+      # before combining it with HOME.
+      # ========================================================
+
+      Write-Host ""
+      Write-Host "=========================================="
+      Write-Host "Fixing PeLoader subPath"
+      Write-Host "=========================================="
+
+      $peLoaderFile = ".\src\runspace\Device\PeLoader.cs"
+
+      if (-not (Test-Path $peLoaderFile)) {
+          throw "PeLoader.cs not found: $peLoaderFile"
+      }
+
+      $peLoaderText = Get-Content `
+          $peLoaderFile `
+          -Raw
+
+      $oldPeLoaderCode = @(
+          'string defaultTmp = Path.Combine(Path.DirectorySeparatorChar.ToString(), "data", "local", "tmp");',
+          'string home = Environment.GetEnvironmentVariable("HOME") ?? defaultTmp;',
+          'localPath = Path.Combine(home, subPath);'
+      ) -join "`r`n"
+
+      $newPeLoaderCode = @(
+          'string defaultTmp = Path.Combine(Path.DirectorySeparatorChar.ToString(), "data", "local", "tmp");',
+          'string home = Environment.GetEnvironmentVariable("HOME") ?? defaultTmp;',
+          'string subPath = path.Substring("\\Device\\Android\\FileSystem\\".Length);',
+          'localPath = Path.Combine(home, subPath);'
+      ) -join "`r`n"
+
+      if ($peLoaderText -notmatch '\bPath\.Combine\(home,\s*subPath\)') {
+          throw "Expected PeLoader subPath usage was not found."
+      }
+
+      if ($peLoaderText -notmatch 'string\s+subPath\s*=') {
+
+          $peLoaderText = $peLoaderText.Replace(
+              $oldPeLoaderCode,
+              $newPeLoaderCode
           )
 
-          if ($sessionText -eq $beforeSessionPatch) {
-              throw "SessionManager.SetBackground replacement did not modify SessionCmdlets.cs."
+          if ($peLoaderText -notmatch 'string\s+subPath\s*=\s*path\.Substring') {
+              throw "Failed to insert PeLoader subPath definition."
           }
 
           Set-Content `
-              -Path $sessionFile `
-              -Value $sessionText `
+              -Path $peLoaderFile `
+              -Value $peLoaderText `
               -Encoding utf8NoBOM
 
-          Write-Host "SessionManager.SetBackground call replaced."
+          Write-Host "PeLoader subPath definition added."
+      }
+      else {
+          Write-Host "PeLoader subPath definition already exists."
+      }
+               # ========================================================
+      # 20.14 Verify Diagnostics namespace references
+      # ========================================================
 
-          # ========================================================
-          # 20.13 Final source verification
-          # ========================================================
+      Write-Host ""
+      Write-Host "Checking obsolete Diagnostics references..."
 
-          Write-Host ""
-          Write-Host "=========================================="
-          Write-Host "Final source verification"
-          Write-Host "=========================================="
+      $obsoleteDiagnosticsMatches = @(
+          Get-ChildItem `
+              $runspaceRoot `
+              -Recurse `
+              -Filter "*.cs" `
+              -File |
+          Select-String `
+              -Pattern '\bSubsystem\.(PackageInfoDb|SqliteProbe|AgentSettings)\b' `
+              -AllMatches
+      )
 
-          $finalSessionText = Get-Content `
-              $sessionFile `
-              -Raw
-
-          if ($finalSessionText -match 'SessionManager\.SetBackground\s*\(') {
-
-              Write-Host ""
-              Write-Host "Remaining SessionManager.SetBackground references:"
-
-              ($finalSessionText -split "`r?`n") |
-                  Select-String 'SessionManager\.SetBackground' |
-                  ForEach-Object {
-                      Write-Host "  $($_.Line)"
-                  }
-
-              throw "SessionManager.SetBackground still exists in SessionCmdlets.cs."
-          }
-
-          Write-Host "SessionManager.SetBackground removed."
-
-          # --------------------------------------------------------
-          # Verify obsolete Subsystem.Dg references.
-          # --------------------------------------------------------
-
-          $obsoleteDgMatches = @(
-              Get-ChildItem `
-                  $runspaceRoot `
-                  -Recurse `
-                  -Filter "*.cs" `
-                  -File |
-              Select-String `
-                  -Pattern '\bSubsystem\.Dg\b' `
-                  -AllMatches
-          )
-
-          if ($obsoleteDgMatches.Count -gt 0) {
-
-              Write-Host ""
-              Write-Host "Remaining obsolete Subsystem.Dg references:"
-
-              foreach ($match in $obsoleteDgMatches) {
-                  Write-Host "  $($match.Path):$($match.LineNumber)"
-                  Write-Host "    $($match.Line)"
-              }
-
-              throw "Obsolete Subsystem.Dg references remain."
-          }
-
-          Write-Host "No obsolete Subsystem.Dg references remain."
-
-          # --------------------------------------------------------
-          # Verify Diagnostics sources still exist.
-          # --------------------------------------------------------
-
-          foreach ($fileName in $requiredDiagnostics) {
-
-              $diagnosticPath = Join-Path `
-                  $diagnosticsDirectory `
-                  $fileName
-
-              if (-not (Test-Path $diagnosticPath)) {
-                  throw "Diagnostics source disappeared after source patching: $diagnosticPath"
-              }
-          }
-
-          Write-Host "Diagnostics sources remain intact."
-
-          # ========================================================
-          # 20.14 Final Android restore
-          #
-          # Step 16 restored before Step 20 changed the project.
-          # Restore again now so project.assets.json corresponds
-          # to the final modified project.
-          # ========================================================
+      if ($obsoleteDiagnosticsMatches.Count -gt 0) {
 
           Write-Host ""
-          Write-Host "=========================================="
-          Write-Host "Restoring final Android project"
-          Write-Host "=========================================="
+          Write-Host "Remaining obsolete Diagnostics references:"
 
-          dotnet restore `
-              ".\subsystem.master.csproj" `
-              -p:TargetFramework=net11.0-android `
-              -r android-arm64
-
-          if ($LASTEXITCODE -ne 0) {
-              throw "Final Android restore failed."
+          foreach ($match in $obsoleteDiagnosticsMatches) {
+              Write-Host "  $($match.Path):$($match.LineNumber)"
+              Write-Host "    $($match.Line)"
           }
 
-          Write-Host "Final Android restore completed."
+          throw "Obsolete Diagnostics namespace references remain."
+      }
+
+      Write-Host "No obsolete Diagnostics namespace references remain."
 
           # ========================================================
           # 20.15 Build Android ARM64
