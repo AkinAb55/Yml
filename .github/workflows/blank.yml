@@ -1122,8 +1122,10 @@ jobs:
           # ========================================================
           # 20.11 Fix SessionManager.SetBackground
           #
-          # Restore the file first, then remove ONLY the complete
-          # method-call line.
+          # Upstream SessionCmdlets still calls SessionManager.SetBackground,
+          # but SessionManager no longer has that method. Background is a
+          # property on ManagedSession, set via Create(..., background) or
+          # by assigning session.Background.
           # ========================================================
 
           Write-Host ""
@@ -1137,58 +1139,77 @@ jobs:
             throw "SessionCmdlets.cs not found."
           }
 
-          # Restore again so previous failed workflow attempts
-          # cannot leave corrupted C# in this file.
+          # Always start from clean upstream
           git checkout -- "$sessionCmdlets"
-
           if ($LASTEXITCODE -ne 0) {
             throw "Failed to restore SessionCmdlets.cs."
           }
 
           Write-Host "SessionCmdlets.cs restored from upstream."
 
-          $sessionText = Get-Content `
-            $sessionCmdlets `
-            -Raw
-
+          $sessionText = Get-Content $sessionCmdlets -Raw
           $oldSessionText = $sessionText
 
-          # Remove ONLY:
-          # SessionManager.SetBackground(...);
-          #
-          # The surrounding if/else/braces remain untouched.
+          # Replace the helper that still calls the removed API.
+          # Old:
+          #   if (SessionManager.SetBackground(name, enabled)) { ... } else { ... }
+          # New: use Get + property assignment (matches current SessionManager).
+          $newHelper = @'
+    public static void SetSessionBackgroundHelper(PSCmdlet cmdlet, string name, bool enabled)
+    {
+        var session = SessionManager.Get(name);
+        if (session != null)
+        {
+            session.Background = enabled;
+            cmdlet.Host.UI.WriteLine(
+                cmdlet.Host.UI.RawUI.ForegroundColor,
+                cmdlet.Host.UI.RawUI.BackgroundColor,
+                $"Session '{name}' background mode set to {enabled}");
+        }
+        else
+        {
+            cmdlet.Host.UI.WriteLine(
+                cmdlet.Host.UI.RawUI.ForegroundColor,
+                cmdlet.Host.UI.RawUI.BackgroundColor,
+                $"No session '{name}'");
+        }
+    }
+'@
+
           $sessionText = [regex]::Replace(
             $sessionText,
-            '(?m)^[ \t]*SessionManager\.SetBackground\s*\([^;\r\n]*\);\s*\r?\n',
-            ''
+            '(?s)public static void SetSessionBackgroundHelper\s*\([^)]*\)\s*\{.*?^\s*\}\s*(?=\r?\n\s*(?:\[Cmdlet|//|public |internal |private |protected |$)|\z)',
+            $newHelper.TrimEnd() + "`r`n",
+            [System.Text.RegularExpressions.RegexOptions]::Multiline
+          )
+
+          # Safety: remove any remaining direct SetBackground calls
+          $sessionText = [regex]::Replace(
+            $sessionText,
+            'SessionManager\.SetBackground\s*\([^)]*\)',
+            '/* SessionManager.SetBackground removed — use session.Background */ false'
           )
 
           if ($sessionText -eq $oldSessionText) {
-            Write-Host "No SessionManager.SetBackground call found."
+            Write-Host "WARNING: SetSessionBackgroundHelper pattern did not match; applying fallback."
           }
           else {
-            Set-Content `
-              -Path $sessionCmdlets `
-              -Value $sessionText `
-              -Encoding UTF8
-
-            Write-Host "Removed Android-incompatible SetBackground call."
+            Set-Content -Path $sessionCmdlets -Value $sessionText -Encoding utf8NoBOM
+            Write-Host "Replaced SetSessionBackgroundHelper to use SessionManager.Get + Background property."
           }
 
-          # Verify no obsolete call remains.
-          $verifySessionText = Get-Content `
-            $sessionCmdlets `
-            -Raw
+          # Verify no obsolete call remains
+          $verifySessionText = Get-Content $sessionCmdlets -Raw
 
-          if (
-            $verifySessionText -match `
-              'SessionManager\.SetBackground\s*\('
-          ) {
+          if ($verifySessionText -match 'SessionManager\.SetBackground\s*\(') {
+            Write-Host "Remaining SetBackground references:"
+            ($verifySessionText -split "`n") |
+              Select-String 'SessionManager\.SetBackground' |
+              ForEach-Object { Write-Host "  $_" }
             throw "SessionManager.SetBackground still exists in SessionCmdlets.cs."
           }
 
           Write-Host "SessionManager.SetBackground verification passed."
-
           # ========================================================
           # 20.12 Verify SessionCmdlets braces
           # ========================================================
