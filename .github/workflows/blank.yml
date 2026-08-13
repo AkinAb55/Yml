@@ -1233,33 +1233,81 @@ jobs:
           $sessionFile =
             ".\src\runspace\Pwsh\Cmdlets\SessionCmdlets.cs"
 
-          if (Test-Path $sessionFile) {
-
-            $sessionText = Get-Content `
-              -Path $sessionFile `
-              -Raw
-
-            if ($sessionText -match "SessionManager\.SetBackground") {
-
-              $sessionText = [regex]::Replace(
-                $sessionText,
-                '(?m)^[\t ]*SessionManager\.SetBackground\s*\([^;]*\);\s*\r?\n?',
-                ''
-              )
-
-              Set-Content `
-                -Path $sessionFile `
-                -Value $sessionText `
-                -Encoding utf8 `
-                -NoNewline
-
-              Write-Host "Removed Android-incompatible SetBackground call."
-            }
-            else {
-              Write-Host "No SessionManager.SetBackground call found."
-            }
+          if (-not (Test-Path $sessionFile)) {
+            throw "SessionCmdlets.cs was not found: $sessionFile"
           }
 
+          $sessionText = Get-Content `
+            -Path $sessionFile `
+            -Raw
+
+          if ($sessionText -match "SessionManager\.SetBackground") {
+
+            Write-Host ""
+            Write-Host "Found Android-incompatible SetBackground reference."
+
+            # Remove the complete statement regardless of whether
+            # it is on one line or spans several lines.
+            #
+            # Examples handled:
+            #
+            # SessionManager.SetBackground(...);
+            #
+            # await SessionManager.SetBackground(...);
+            #
+            # SessionManager.SetBackground(
+            #     ...
+            # );
+
+            $pattern = '(?ms)(?:await\s+)?SessionManager\.SetBackground\s*\(.*?\)\s*;'
+
+            $updatedSessionText = [regex]::Replace(
+              $sessionText,
+              $pattern,
+              ''
+            )
+
+            if ($updatedSessionText -eq $sessionText) {
+              throw "SetBackground was detected but could not be removed."
+            }
+
+            Set-Content `
+              -Path $sessionFile `
+              -Value $updatedSessionText `
+              -Encoding utf8 `
+              -NoNewline
+
+            Write-Host "Removed Android-incompatible SetBackground call."
+          }
+          else {
+            Write-Host "No SessionManager.SetBackground call found."
+          }
+
+          # ------------------------------------------------------------
+          # Verify immediately after modification.
+          # ------------------------------------------------------------
+
+          $sessionTextAfterFix = Get-Content `
+            -Path $sessionFile `
+            -Raw
+
+          if ($sessionTextAfterFix -match "SessionManager\.SetBackground") {
+
+            Write-Host ""
+            Write-Host "Remaining SetBackground references:"
+
+            Select-String `
+              -Path $sessionFile `
+              -Pattern "SessionManager\.SetBackground" |
+              ForEach-Object {
+                Write-Host "  $($_.Path):$($_.LineNumber)"
+                Write-Host "  $($_.Line.Trim())"
+              }
+
+            throw "SessionManager.SetBackground could not be removed completely."
+          }
+
+          Write-Host "SessionManager.SetBackground verification passed."
           # ------------------------------------------------------------
           # Final source verification.
           # ------------------------------------------------------------
