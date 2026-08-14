@@ -870,14 +870,69 @@ jobs:
           if (-not (Test-Path $resourceDirectory)) {
               throw "Android Resources directory not found: $resourceDirectory"
           }
+          
+          # --------------------------------------------------------
+          # Force legacy Resource class generation.
+          #
+          # Subsystem source code uses:
+          #
+          #   Resource.Layout
+          #   Resource.Id
+          #   Resource.String
+          #   Resource.Mipmap
+          #
+          # .NET Android Release builds can use the designer
+          # assembly instead of Resource.designer.cs.
+          #
+          # Subsystem requires the generated Resource class.
+          # --------------------------------------------------------
 
+          $resourceDesignerProperty = $androidPropertyGroup.SelectSingleNode(
+              "AndroidGenerateResourceDesigner"
+          )
+
+          if ($null -eq $resourceDesignerProperty) {
+
+              $resourceDesignerProperty = $xml.CreateElement(
+                  "AndroidGenerateResourceDesigner",
+                  $xml.DocumentElement.NamespaceURI
+              )
+
+              $androidPropertyGroup.AppendChild(
+                  $resourceDesignerProperty
+              ) | Out-Null
+          }
+
+          $resourceDesignerProperty.InnerText = "true"
+
+          $designerAssemblyProperty = $androidPropertyGroup.SelectSingleNode(
+              "AndroidUseDesignerAssembly"
+          )
+
+          if ($null -eq $designerAssemblyProperty) {
+
+              $designerAssemblyProperty = $xml.CreateElement(
+                  "AndroidUseDesignerAssembly",
+                  $xml.DocumentElement.NamespaceURI
+              )
+
+              $androidPropertyGroup.AppendChild(
+                  $designerAssemblyProperty
+              ) | Out-Null
+          }
+
+          $designerAssemblyProperty.InnerText = "false"
+
+          Write-Host "AndroidGenerateResourceDesigner=true"
+          Write-Host "AndroidUseDesignerAssembly=false"
+          
           # --------------------------------------------------------
           # Android resource prefix
           # --------------------------------------------------------
 
-          $androidResourcePrefix = $xml.SelectSingleNode(
-              "/Project/PropertyGroup[AndroidResourcePrefix]"
-          )
+             $androidResourcePrefix = $androidPropertyGroup.SelectSingleNode(
+                    "MonoAndroidResourcePrefix"
+             )
 
           if ($null -eq $androidResourcePrefix) {
 
@@ -886,10 +941,10 @@ jobs:
                   $xml.DocumentElement.NamespaceURI
               )
 
-              $prefixNode = $xml.CreateElement(
-                  "AndroidResourcePrefix",
+             $prefixNode = $xml.CreateElement(
+                  "MonoAndroidResourcePrefix",
                   $xml.DocumentElement.NamespaceURI
-              )
+             )
 
               $prefixNode.InnerText = "src\runspace\Resources"
 
@@ -1628,7 +1683,53 @@ jobs:
           }
 
           Write-Host "Android resources verification passed."
-           
+          
+          # ========================================================
+          # Verify Resource designer configuration
+          # ========================================================
+
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "Verifying Resource designer configuration"
+          Write-Host "=========================================="
+
+          [xml]$resourceVerifyXml = Get-Content `
+              $projectFile `
+              -Raw
+
+          $resourceAndroidGroup = @(
+              $resourceVerifyXml.Project.PropertyGroup |
+              Where-Object {
+                  $_.Condition -eq $androidCondition
+              }
+          ) | Select-Object -First 1
+
+          if ($null -eq $resourceAndroidGroup) {
+              throw "Android PropertyGroup was not found during Resource verification."
+          }
+
+          $generateDesigner = $resourceAndroidGroup.AndroidGenerateResourceDesigner
+          $useDesignerAssembly = $resourceAndroidGroup.AndroidUseDesignerAssembly
+          $resourcePrefix = $resourceAndroidGroup.MonoAndroidResourcePrefix
+
+          Write-Host "AndroidGenerateResourceDesigner=$generateDesigner"
+          Write-Host "AndroidUseDesignerAssembly=$useDesignerAssembly"
+          Write-Host "MonoAndroidResourcePrefix=$resourcePrefix"
+
+          if ($generateDesigner -ne "true") {
+              throw "AndroidGenerateResourceDesigner is not true."
+          }
+
+          if ($useDesignerAssembly -ne "false") {
+              throw "AndroidUseDesignerAssembly is not false."
+          }
+
+          if ($resourcePrefix -ne "src\runspace\Resources") {
+              throw "MonoAndroidResourcePrefix is incorrect."
+          }
+
+          Write-Host "Resource designer configuration passed."
+          
           # ========================================================
           # 20.17 Final Android restore
           # ========================================================
