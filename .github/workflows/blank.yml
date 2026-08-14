@@ -1522,7 +1522,7 @@ jobs:
               if (-not (Test-Path $diagnosticPath)) {
                   throw "Diagnostics source missing: $diagnosticPath"
               }
-          }
+            }
           Write-Host "Diagnostics sources remain intact."
 
           # --------------------------------------------------------
