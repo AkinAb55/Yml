@@ -850,13 +850,14 @@ jobs:
           Write-Host "Compile Remove rules configured."
           
           # ========================================================
-          # 20.6 Configure Android resources
+          # 20.5.1 Configure Android resources
           #
-          # The upstream Resources directory contains Android
-          # resource folders plus documentation files.
+          # Upstream stores Android resources under:
           #
-          # Do NOT include the whole directory as AndroidResource.
-          # AAPT2 cannot process files such as aboutresources.docx.
+          #   src\runspace\Resources
+          #
+          # Configure Xamarin.Android to use this directory as the
+          # Android resource prefix.
           # ========================================================
 
           Write-Host ""
@@ -869,6 +870,57 @@ jobs:
           if (-not (Test-Path $resourceDirectory)) {
               throw "Android Resources directory not found: $resourceDirectory"
           }
+
+          # --------------------------------------------------------
+          # Android resource prefix
+          # --------------------------------------------------------
+
+          $androidResourcePrefix = $xml.SelectSingleNode(
+              "/Project/PropertyGroup[AndroidResourcePrefix]"
+          )
+
+          if ($null -eq $androidResourcePrefix) {
+
+              $androidResourcePrefix = $xml.CreateElement(
+                  "PropertyGroup",
+                  $xml.DocumentElement.NamespaceURI
+              )
+
+              $prefixNode = $xml.CreateElement(
+                  "AndroidResourcePrefix",
+                  $xml.DocumentElement.NamespaceURI
+              )
+
+              $prefixNode.InnerText = "src\runspace\Resources"
+
+              $androidResourcePrefix.AppendChild(
+                  $prefixNode
+              ) | Out-Null
+
+              $xml.Project.AppendChild(
+                  $androidResourcePrefix
+              ) | Out-Null
+
+              Write-Host "AndroidResourcePrefix added:"
+              Write-Host "  src\runspace\Resources"
+          }
+          else {
+
+              $prefixNode = $androidResourcePrefix.SelectSingleNode(
+                  "AndroidResourcePrefix"
+              )
+
+              $prefixNode.InnerText = "src\runspace\Resources"
+
+              Write-Host "AndroidResourcePrefix updated:"
+              Write-Host "  src\runspace\Resources"
+          }
+
+          # --------------------------------------------------------
+          # Android resources
+          #
+          # Exclude documentation files from AndroidResource.
+          # --------------------------------------------------------
 
           $resourceItemGroup = $xml.CreateElement(
               "ItemGroup",
@@ -892,7 +944,7 @@ jobs:
 
           $androidResource.SetAttribute(
               "Exclude",
-              "src\runspace\Resources\aboutresources.docx;src\runspace\Resources\**\*.docx;src\runspace\Resources\**\*.doc;src\runspace\Resources\**\*.pdf;src\runspace\Resources\**\*.md;src\runspace\Resources\**\*.txt"
+              "src\runspace\Resources\**\*.docx;src\runspace\Resources\**\*.doc;src\runspace\Resources\**\*.pdf;src\runspace\Resources\**\*.md;src\runspace\Resources\**\*.txt"
           )
 
           $resourceItemGroup.AppendChild(
