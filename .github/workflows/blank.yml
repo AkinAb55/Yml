@@ -640,125 +640,85 @@ jobs:
       # ============================================================
       # 18. Prepare native library
       # ============================================================
-
       - name: Prepare native library
         shell: pwsh
         working-directory: subsystem
         run: |
           $ErrorActionPreference = "Stop"
-
-          $source = `
-            ".\src\runspace\native\libs\arm64-v8a\libpsl-android.so"
-
-          $destination = `
-            ".\src\runspace\libs\arm64-v8a\libpsl-android.so"
-
+          $source = ".\src\runspace\native\libs\arm64-v8a\libpsl-android.so"
+          $destination = ".\src\runspace\libs\arm64-v8a\libpsl-android.so"
           if (-not (Test-Path $source)) {
-         throw "Native library source not found: $source"
+            throw "Native library source not found: $source"
           }
-
-          New-Item `
-            -ItemType Directory `
-            -Force `
-            -Path ".\src\runspace\libs\arm64-v8a" |
-            Out-Null
-
-          Copy-Item `
-            -Path $source `
-            -Destination $destination `
-            -Force
-
+          New-Item -ItemType Directory -Force -Path ".\src\runspace\libs\arm64-v8a" | Out-Null
+          Copy-Item -Path $source -Destination $destination -Force
           if (-not (Test-Path $destination)) {
             throw "Native library was not copied."
           }
-
           $size = (Get-Item $destination).Length
-
           Write-Host "Prepared native library."
           Write-Host "Size: $size bytes"
 
       # ============================================================
       # 19. Final source sanity check
       # ============================================================
-
       - name: Final source sanity check
         shell: pwsh
         working-directory: subsystem
         run: |
           $ErrorActionPreference = "Stop"
-
           Write-Host "=========================================="
           Write-Host "Final source sanity check"
           Write-Host "=========================================="
-
           $required = @(
             ".\subsystem.master.csproj",
             ".\src\runspace\native\libs\arm64-v8a\libpsl-android.so"
           )
-
           foreach ($file in $required) {
             if (-not (Test-Path $file)) {
               throw "Required build input missing: $file"
             }
-
             Write-Host "OK: $file"
           }
-
           Write-Host ""
           Write-Host "No project XML modifications were performed."
           Write-Host "No explicit Compile items were injected."
           Write-Host "SDK default Compile discovery remains enabled."
-        
-       # ============================================================
+
+      # ============================================================
       # 20. Prepare and build Android ARM64
       # ============================================================
-
       - name: Build Subsystem for Android ARM64
         shell: pwsh
         working-directory: subsystem
         run: |
           $ErrorActionPreference = "Stop"
-
           Write-Host "=========================================="
           Write-Host "Preparing Subsystem Android ARM64 build"
           Write-Host "=========================================="
-
-          # ========================================================
+          
           # 20.1 Restore upstream project file
-          # ========================================================
-
           Write-Host ""
           Write-Host "Restoring upstream subsystem.master.csproj..."
-
           git checkout -- ".\subsystem.master.csproj"
-
           if ($LASTEXITCODE -ne 0) {
               throw "Failed to restore subsystem.master.csproj."
           }
-
           Write-Host "Upstream project file restored."
-
-          # ========================================================
+          
           # 20.2 Restore SessionCmdlets.cs
-          # ========================================================
-
           Write-Host ""
           Write-Host "Restoring SessionCmdlets.cs..."
-
           $sessionFile = ".\src\runspace\Pwsh\Cmdlets\SessionCmdlets.cs"
-
           if (-not (Test-Path $sessionFile)) {
               throw "SessionCmdlets.cs not found: $sessionFile"
           }
-
           git checkout -- "$sessionFile"
-
           if ($LASTEXITCODE -ne 0) {
               throw "Failed to restore SessionCmdlets.cs."
           }
-
           Write-Host "SessionCmdlets.cs restored."
-
+          
           # ========================================================
           # 20.3 Load project XML
           # ========================================================
