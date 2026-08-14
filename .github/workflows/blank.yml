@@ -738,67 +738,119 @@ jobs:
 
           Write-Host "Project XML loaded."
 
+            # ========================================================
+# Configuring Android build properties
+# ========================================================
+
+Write-Host ""
+Write-Host "=========================================="
+Write-Host "Configuring Android build properties"
+Write-Host "=========================================="
+
+$propertyGroup = $projectXml.Project.PropertyGroup |
+    Where-Object {
+        $_.TargetFramework -eq "net11.0-android"
+    } |
+    Select-Object -First 1
+
+if ($null -eq $propertyGroup) {
+    $propertyGroup = $projectXml.CreateElement("PropertyGroup")
+    $propertyGroup.SetAttribute(
+        "Condition",
+        "'`$(TargetFramework)' == 'net11.0-android'"
+    )
+    [void]$projectXml.Project.AppendChild($propertyGroup)
+
+    Write-Host "Android PropertyGroup created."
+}
+else {
+    Write-Host "Android PropertyGroup already exists."
+}
+
+function Set-ProjectProperty {
+    param(
+        [System.Xml.XmlElement]$Group,
+        [string]$Name,
+        [string]$Value
+    )
+
+    $node = $Group.SelectSingleNode($Name)
+
+    if ($null -eq $node) {
+        $node = $projectXml.CreateElement($Name)
+        [void]$Group.AppendChild($node)
+    }
+
+    $node.InnerText = $Value
+}
+
+Set-ProjectProperty $propertyGroup "SupportedOSPlatformVersion" "31.0"
+
+Set-ProjectProperty $propertyGroup "AndroidGenerateResourceDesigner" "true"
+
+Set-ProjectProperty $propertyGroup "AndroidUseDesignerAssembly" "false"
+
+# IMPORTANT:
+# Resource files are located under src\runspace\Resources.
+# The prefix must point to that Android resource directory.
+Set-ProjectProperty $propertyGroup `
+    "MonoAndroidResourcePrefix" `
+    "src\runspace\Resources"
+
+Write-Host "SupportedOSPlatformVersion=31.0"
+Write-Host "AndroidGenerateResourceDesigner=true"
+Write-Host "AndroidUseDesignerAssembly=false"
+Write-Host "MonoAndroidResourcePrefix=src\runspace\Resources"
+            
+           # ========================================================
+          # Configuring Android Resource Designer generation
           # ========================================================
-          # 20.4 Configure Android properties
-          # ========================================================
 
-          Write-Host ""
-          Write-Host "Configuring Android build properties..."
+Write-Host ""
+Write-Host "=========================================="
+Write-Host "Configuring Android Resource Designer generation"
+Write-Host "=========================================="
 
-          $androidCondition = "'`$(TargetFramework)' == 'net11.0-android'"
+$target = $projectXml.Project.Target |
+    Where-Object {
+        $_.Name -eq "ForceAndroidResourceDesigner"
+    } |
+    Select-Object -First 1
 
-          $androidPropertyGroup = $null
+if ($null -ne $target) {
+    [void]$projectXml.Project.RemoveChild($target)
+}
 
-          foreach ($group in @($xml.Project.PropertyGroup)) {
+$target = $projectXml.CreateElement("Target")
+$target.SetAttribute("Name", "ForceAndroidResourceDesigner")
+$target.SetAttribute("BeforeTargets", "CoreCompile")
 
-              if ($group.Condition -eq $androidCondition) {
-                  $androidPropertyGroup = $group
-                  break
-              }
-          }
+$message = $projectXml.CreateElement("Message")
+$message.SetAttribute(
+    "Importance",
+    "High"
+)
+$message.SetAttribute(
+    "Text",
+    "Forcing Android Resource Designer generation before C# compilation."
+)
 
-          if ($null -eq $androidPropertyGroup) {
+[void]$target.AppendChild($message)
 
-              Write-Host "Creating Android PropertyGroup..."
+$property = $projectXml.CreateElement("PropertyGroup")
 
-              $androidPropertyGroup = $xml.CreateElement(
-                  "PropertyGroup",
-                  $xml.DocumentElement.NamespaceURI
-              )
+$designer = $projectXml.CreateElement("AndroidGenerateResourceDesigner")
+$designer.InnerText = "true"
 
-              $androidPropertyGroup.SetAttribute(
-                  "Condition",
-                  $androidCondition
-              )
+[void]$property.AppendChild($designer)
 
-              $xml.Project.AppendChild(
-                  $androidPropertyGroup
-              ) | Out-Null
-          }
-          else {
-              Write-Host "Android PropertyGroup already exists."
-          }
+[void]$target.AppendChild($property)
 
-          $supportedApi = $androidPropertyGroup.SelectSingleNode(
-              "SupportedOSPlatformVersion"
-          )
+[void]$projectXml.Project.AppendChild($target)
 
-          if ($null -eq $supportedApi) {
-
-              $supportedApi = $xml.CreateElement(
-                  "SupportedOSPlatformVersion",
-                  $xml.DocumentElement.NamespaceURI
-              )
-
-              $androidPropertyGroup.AppendChild(
-                  $supportedApi
-              ) | Out-Null
-          }
-
-          $supportedApi.InnerText = "$($env:MIN_ANDROID_API).0"
-
-          Write-Host "SupportedOSPlatformVersion=$($supportedApi.InnerText)"
-
+Write-Host "Android Resource Designer target configured."
+Write-Host "Resource generation will be requested before CoreCompile."
+            
           # ========================================================
           # 20.5 Configure Android Compile Remove rules
           # ========================================================
