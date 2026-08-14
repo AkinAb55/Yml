@@ -926,6 +926,25 @@ jobs:
           Write-Host "AndroidGenerateResourceDesigner=true"
           Write-Host "AndroidUseDesignerAssembly=false"
           
+          # --- ДОБАВИТЬ ---
+			$monoResourcePrefix = $androidPropertyGroup.SelectSingleNode("MonoAndroidResourcePrefix")
+			if ($null -eq $monoResourcePrefix) {
+			    $monoResourcePrefix = $xml.CreateElement("MonoAndroidResourcePrefix", $xml.DocumentElement.NamespaceURI)
+			    $androidPropertyGroup.AppendChild($monoResourcePrefix) | Out-Null
+			}
+			$monoResourcePrefix.InnerText = "src\runspace\Resources"
+			
+			$androidManifestProp = $androidPropertyGroup.SelectSingleNode("AndroidManifest")
+			if ($null -eq $androidManifestProp) {
+			    $androidManifestProp = $xml.CreateElement("AndroidManifest", $xml.DocumentElement.NamespaceURI)
+			    $androidPropertyGroup.AppendChild($androidManifestProp) | Out-Null
+			}
+			$androidManifestProp.InnerText = "src\runspace\AndroidManifest.xml"
+			
+			Write-Host "MonoAndroidResourcePrefix=src\runspace\Resources"
+			Write-Host "AndroidManifest=src\runspace\AndroidManifest.xml"
+# --- КОНЕЦ ДОБАВЛЕНИЯ ---
+          
           # --------------------------------------------------------
           # Android resources
           #
