@@ -848,18 +848,15 @@ jobs:
 
           Write-Host ""
           Write-Host "Compile Remove rules configured."
+          
           # ========================================================
-          # 20.5.1 Include upstream Android resources
+          # 20.6 Configure Android resources
           #
-          # Upstream keeps Android resources under:
+          # The upstream Resources directory contains Android
+          # resource folders plus documentation files.
           #
-          #   src\runspace\Resources
-          #
-          # This is not the project-root Resources directory, so
-          # Microsoft.NET.Sdk does not discover it automatically.
-          #
-          # Without this ItemGroup the generated Resource class
-          # does not contain Resource.Mipmap, Resource.Layout, etc.
+          # Do NOT include the whole directory as AndroidResource.
+          # AAPT2 cannot process files such as aboutresources.docx.
           # ========================================================
 
           Write-Host ""
@@ -893,6 +890,11 @@ jobs:
               "src\runspace\Resources\**\*"
           )
 
+          $androidResource.SetAttribute(
+              "Exclude",
+              "src\runspace\Resources\aboutresources.docx;src\runspace\Resources\**\*.docx;src\runspace\Resources\**\*.doc;src\runspace\Resources\**\*.pdf;src\runspace\Resources\**\*.md;src\runspace\Resources\**\*.txt"
+          )
+
           $resourceItemGroup.AppendChild(
               $androidResource
           ) | Out-Null
@@ -903,7 +905,7 @@ jobs:
 
           Write-Host "Android resources configured:"
           Write-Host "  src\runspace\Resources\**\*"
-          
+          Write-Host "  Documentation files excluded."
           # ========================================================
           # 20.6 Save project
           # ========================================================
