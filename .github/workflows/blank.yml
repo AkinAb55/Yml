@@ -911,14 +911,11 @@ Write-Host "Resource generation will be requested before CoreCompile."
           # Configure Xamarin.Android to use this directory as the
           # Android resource prefix.
           # ========================================================
-
           Write-Host ""
           Write-Host "=========================================="
           Write-Host "Configuring Android resources"
           Write-Host "=========================================="
-
           $resourceDirectory = ".\src\runspace\Resources"
-
           if (-not (Test-Path $resourceDirectory)) {
               throw "Android Resources directory not found: $resourceDirectory"
           }
@@ -938,43 +935,32 @@ Write-Host "Resource generation will be requested before CoreCompile."
           #
           # Subsystem requires the generated Resource class.
           # --------------------------------------------------------
-
           $resourceDesignerProperty = $androidPropertyGroup.SelectSingleNode(
               "AndroidGenerateResourceDesigner"
           )
-
           if ($null -eq $resourceDesignerProperty) {
-
               $resourceDesignerProperty = $xml.CreateElement(
                   "AndroidGenerateResourceDesigner",
                   $xml.DocumentElement.NamespaceURI
               )
-
               $androidPropertyGroup.AppendChild(
                   $resourceDesignerProperty
               ) | Out-Null
           }
-
           $resourceDesignerProperty.InnerText = "true"
-
           $designerAssemblyProperty = $androidPropertyGroup.SelectSingleNode(
               "AndroidUseDesignerAssembly"
           )
-
           if ($null -eq $designerAssemblyProperty) {
-
               $designerAssemblyProperty = $xml.CreateElement(
                   "AndroidUseDesignerAssembly",
                   $xml.DocumentElement.NamespaceURI
               )
-
               $androidPropertyGroup.AppendChild(
                   $designerAssemblyProperty
               ) | Out-Null
           }
-
           $designerAssemblyProperty.InnerText = "false"
-
           Write-Host "AndroidGenerateResourceDesigner=true"
           Write-Host "AndroidUseDesignerAssembly=false"
           
@@ -983,115 +969,88 @@ Write-Host "Resource generation will be requested before CoreCompile."
           #
           # Exclude documentation files from AndroidResource.
           # --------------------------------------------------------
-
           $resourceItemGroup = $xml.CreateElement(
               "ItemGroup",
               $xml.DocumentElement.NamespaceURI
           )
-
           $resourceItemGroup.SetAttribute(
               "Condition",
               $androidCondition
           )
-
           $androidResource = $xml.CreateElement(
               "AndroidResource",
               $xml.DocumentElement.NamespaceURI
           )
-
           $androidResource.SetAttribute(
               "Include",
               "src\runspace\Resources\**\*"
           )
-
           $androidResource.SetAttribute(
               "Exclude",
               "src\runspace\Resources\**\*.docx;src\runspace\Resources\**\*.doc;src\runspace\Resources\**\*.pdf;src\runspace\Resources\**\*.md;src\runspace\Resources\**\*.txt"
           )
-
           $resourceItemGroup.AppendChild(
               $androidResource
           ) | Out-Null
-
           $xml.Project.AppendChild(
               $resourceItemGroup
           ) | Out-Null
-
           Write-Host "Android resources configured:"
           Write-Host "  src\runspace\Resources\**\*"
           Write-Host "  Documentation files excluded."
           # ========================================================
           # 20.6 Save project
           # ========================================================
-
           Write-Host ""
           Write-Host "Saving project XML..."
-
           $xml.Save(
               (Resolve-Path $projectFile).Path
           )
-
           Write-Host "Project XML saved."
-
           # ========================================================
           # 20.7 Verify project XML
           # ========================================================
-
           Write-Host ""
           Write-Host "=========================================="
           Write-Host "Verifying project XML"
           Write-Host "=========================================="
-
           [xml]$verifyXml = Get-Content `
               $projectFile `
               -Raw
-
           $compileIncludes = @(
               $verifyXml.Project.ItemGroup.Compile |
               Where-Object {
                   $_.Include
               }
           )
-
           Write-Host ""
           Write-Host "Explicit Compile Include entries: $($compileIncludes.Count)"
-
           foreach ($item in $compileIncludes) {
               Write-Host "  Include=$($item.Include)"
           }
-
           # ONNX upstream Compile Include must remain.
-
           $onnxInclude = @(
               $compileIncludes |
               Where-Object {
                   $_.Include -like "*src\native\dpx\onnxnet\*.cs*"
               }
           )
-
           if ($onnxInclude.Count -eq 0) {
               throw "Expected upstream ONNX Compile Include was not found."
           }
-
           Write-Host "Expected upstream ONNX Compile Include confirmed."
-
           # Diagnostics must NOT be explicitly included.
-
           $diagnosticIncludes = @(
               $compileIncludes |
               Where-Object {
                   $_.Include -match "src[\\/]runspace[\\/]Diagnostics"
               }
           )
-
           if ($diagnosticIncludes.Count -gt 0) {
               throw "Diagnostics Compile Include entries were found."
           }
-
           Write-Host "Diagnostics Compile Include check passed."
-
           # Verify Windows removals.
-
           $compileRemoves = @(
               $verifyXml.Project.ItemGroup.Compile |
               Where-Object {
@@ -1101,11 +1060,9 @@ Write-Host "Resource generation will be requested before CoreCompile."
           
           Write-Host ""
           Write-Host "Compile Remove entries:"
-
           foreach ($item in $compileRemoves) {
               Write-Host "  Remove=$($item.Remove)"
           }
-
           if (
               @(
                   $compileRemoves |
@@ -1116,7 +1073,6 @@ Write-Host "Resource generation will be requested before CoreCompile."
           ) {
               throw "Missing runspace Windows Compile Remove rule."
           }
-
           if (
               @(
                   $compileRemoves |
@@ -1127,20 +1083,16 @@ Write-Host "Resource generation will be requested before CoreCompile."
           ) {
               throw "Missing shell Windows Compile Remove rule."
           }
-
           # ========================================================
           # 20.8 Diagnostics paths
           # ========================================================
-
           Write-Host ""
           Write-Host "=========================================="
           Write-Host "Checking Diagnostics sources"
           Write-Host "=========================================="
-
           $runspaceRoot = ".\src\runspace"
           $diagnosticsDirectory = ".\src\runspace\Diagnostics"
           $dgFile = ".\src\runspace\Diagnostics\Dg.cs"
-
           $requiredDiagnostics = @(
               "AgentSettings.cs",
               "Dg.cs",
