@@ -1494,7 +1494,7 @@ jobs:
                   '\bSubsystem\.(PackageInfoDb|SqliteProbe|AgentSettings)\b' `
                   -AllMatches
           )
-         if ($obsoleteDiagnosticsMatches.Count -gt 0) {
+          if ($obsoleteDiagnosticsMatches.Count -gt 0) {
 
               Write-Host ""
               Write-Host "Remaining obsolete Diagnostics references:"
