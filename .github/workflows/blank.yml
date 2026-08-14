@@ -1681,6 +1681,84 @@ jobs:
 
           Write-Host "Resource designer configuration passed."
           
+           # ========================================================
+          # Diagnose generated Android Resource class
+          # ========================================================
+
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "Diagnosing generated Android Resource"
+          Write-Host "=========================================="
+
+          $objDirectory = Join-Path `
+              $env:GITHUB_WORKSPACE `
+              "build\subsystem.master\obj"
+
+          Write-Host "Searching for Resource.designer.cs..."
+          Write-Host "Object directory:"
+          Write-Host "  $objDirectory"
+
+          $resourceDesignerFiles = @(
+              Get-ChildItem `
+                  -Path $objDirectory `
+                  -Recurse `
+                  -Filter "Resource.designer.cs" `
+                  -File `
+                  -ErrorAction SilentlyContinue
+          )
+
+          if ($resourceDesignerFiles.Count -eq 0) {
+
+              Write-Host ""
+              Write-Host "Resource.designer.cs was NOT found."
+              Write-Host "This confirms that the Android resource designer is not being generated before C# compilation."
+
+          }
+          else {
+
+              Write-Host ""
+              Write-Host "Resource.designer.cs files found: $($resourceDesignerFiles.Count)"
+
+              foreach ($resourceDesigner in $resourceDesignerFiles) {
+
+                  Write-Host "Resource designer:"
+                  Write-Host "  $($resourceDesigner.FullName)"
+                  Write-Host "  Size: $($resourceDesigner.Length) bytes"
+              }
+          }
+
+          Write-Host ""
+          Write-Host "Searching for _Microsoft.Android.Resource.Designer.dll..."
+
+          $designerAssemblies = @(
+              Get-ChildItem `
+                  -Path $objDirectory `
+                  -Recurse `
+                  -Filter "_Microsoft.Android.Resource.Designer.dll" `
+                  -File `
+                  -ErrorAction SilentlyContinue
+          )
+
+          if ($designerAssemblies.Count -eq 0) {
+
+              Write-Host "No Resource Designer assembly found."
+
+          }
+          else {
+
+              Write-Host "Resource Designer assemblies found: $($designerAssemblies.Count)"
+
+              foreach ($designerAssembly in $designerAssemblies) {
+
+                  Write-Host "Designer assembly:"
+                  Write-Host "  $($designerAssembly.FullName)"
+                  Write-Host "  Size: $($designerAssembly.Length) bytes"
+              }
+          }
+
+          Write-Host ""
+          Write-Host "Android Resource diagnostic completed."
+          
           # ========================================================
           # 20.17 Final Android restore
           # ========================================================
