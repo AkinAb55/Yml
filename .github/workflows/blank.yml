@@ -927,51 +927,6 @@ jobs:
           Write-Host "AndroidUseDesignerAssembly=false"
           
           # --------------------------------------------------------
-          # Android resource prefix
-          # --------------------------------------------------------
-
-             $androidResourcePrefix = $androidPropertyGroup.SelectSingleNode(
-                    "MonoAndroidResourcePrefix"
-             )
-
-          if ($null -eq $androidResourcePrefix) {
-
-              $androidResourcePrefix = $xml.CreateElement(
-                  "PropertyGroup",
-                  $xml.DocumentElement.NamespaceURI
-              )
-
-             $prefixNode = $xml.CreateElement(
-                  "MonoAndroidResourcePrefix",
-                  $xml.DocumentElement.NamespaceURI
-             )
-
-              $prefixNode.InnerText = "src\runspace\Resources"
-
-              $androidResourcePrefix.AppendChild(
-                  $prefixNode
-              ) | Out-Null
-
-              $xml.Project.AppendChild(
-                  $androidResourcePrefix
-              ) | Out-Null
-
-              Write-Host "AndroidResourcePrefix added:"
-              Write-Host "  src\runspace\Resources"
-          }
-          else {
-
-              $prefixNode = $androidResourcePrefix.SelectSingleNode(
-                  "AndroidResourcePrefix"
-              )
-
-              $prefixNode.InnerText = "src\runspace\Resources"
-
-              Write-Host "AndroidResourcePrefix updated:"
-              Write-Host "  src\runspace\Resources"
-          }
-
-          # --------------------------------------------------------
           # Android resources
           #
           # Exclude documentation files from AndroidResource.
@@ -1722,10 +1677,6 @@ jobs:
 
           if ($useDesignerAssembly -ne "false") {
               throw "AndroidUseDesignerAssembly is not false."
-          }
-
-          if ($resourcePrefix -ne "src\runspace\Resources") {
-              throw "MonoAndroidResourcePrefix is incorrect."
           }
 
           Write-Host "Resource designer configuration passed."
