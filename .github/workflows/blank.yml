@@ -1929,64 +1929,128 @@ jobs:
           Write-Host "=========================================="
           Write-Host "Subsystem Android ARM64 build succeeded"
           Write-Host "=========================================="
+      
       # ============================================================
-      # 21. Locate produced APK
+      # 21. Locate / produce Android ARM64 APK
       # ============================================================
 
-      - name: Locate Android APK
+      - name: Locate Android ARM64 APK
         shell: pwsh
         working-directory: subsystem
         run: |
           $ErrorActionPreference = "Stop"
 
           Write-Host "=========================================="
-          Write-Host "Locating Android APK"
+          Write-Host "Locating Android ARM64 APK"
           Write-Host "=========================================="
+
+          $binDirectory = Join-Path $env:GITHUB_WORKSPACE "subsystem\bin"
+
+          if (-not (Test-Path $binDirectory)) {
+            throw "Subsystem bin directory was not found: $binDirectory"
+          }
+
+          Write-Host ""
+          Write-Host "Searching existing APK files..."
 
           $apkFiles = @(
             Get-ChildItem `
-              -Path . `
+              -Path $binDirectory `
               -Recurse `
               -Filter "*.apk" `
               -File `
               -ErrorAction SilentlyContinue
           )
 
+          if ($apkFiles.Count -gt 0) {
+            Write-Host ""
+            Write-Host "APK files found: $($apkFiles.Count)"
+
+            foreach ($apk in $apkFiles) {
+              Write-Host ""
+              Write-Host "APK:"
+              Write-Host "  $($apk.FullName)"
+              Write-Host "  Size: $($apk.Length) bytes"
+            }
+          }
+          else {
+            Write-Host ""
+            Write-Host "No APK was found after dotnet build."
+            Write-Host "Running dotnet publish to generate the Android package..."
+
+            dotnet publish `
+              ".\subsystem.master.csproj" `
+              -c Release `
+              -f net11.0-android `
+              -r android-arm64 `
+              --no-restore
+
+            if ($LASTEXITCODE -ne 0) {
+              throw "dotnet publish failed with exit code $LASTEXITCODE."
+            }
+
+            Write-Host ""
+            Write-Host "dotnet publish completed."
+
+            $apkFiles = @(
+              Get-ChildItem `
+                -Path $binDirectory `
+                -Recurse `
+                -Filter "*.apk" `
+                -File `
+                -ErrorAction SilentlyContinue
+            )
+          }
+
           if ($apkFiles.Count -eq 0) {
             Write-Host ""
-            Write-Host "Build output:"
+            Write-Host "=========================================="
+            Write-Host "No APK found"
+            Write-Host "=========================================="
+
+            Write-Host ""
+            Write-Host "Contents of bin directory:"
 
             Get-ChildItem `
-              ".\bin" `
+              -Path $binDirectory `
               -Recurse `
               -File `
               -ErrorAction SilentlyContinue |
               Select-Object FullName, Length
 
-            throw "No APK was produced."
+            throw "No Android APK was produced."
           }
 
-          foreach ($apk in $apkFiles) {
-            Write-Host ""
-            Write-Host "APK:"
-            Write-Host $apk.FullName
-            Write-Host "Size: $($apk.Length) bytes"
-          }
+          Write-Host ""
+          Write-Host "Selecting ARM64 APK..."
 
-          Where-Object {
-              $_.FullName -match "arm64|android-arm64"
-            } |
+          $arm64Apk = @(
+            $apkFiles |
+              Where-Object {
+                $_.FullName -match "android-arm64|arm64-v8a|arm64"
+              }
+          ) |
+            Sort-Object Length -Descending |
             Select-Object -First 1
 
           if (-not $arm64Apk) {
+            Write-Host ""
+            Write-Host "No APK path explicitly contained an ARM64 identifier."
+            Write-Host "Using the largest APK produced by the ARM64 publish."
+            
             $arm64Apk = $apkFiles |
               Sort-Object Length -Descending |
               Select-Object -First 1
           }
 
           if (-not $arm64Apk) {
-            throw "Could not select an Android APK."
+            throw "Could not select an Android ARM64 APK."
           }
+
+          Write-Host ""
+          Write-Host "Selected APK:"
+          Write-Host "  $($arm64Apk.FullName)"
+          Write-Host "  Size: $($arm64Apk.Length) bytes"
 
           $artifactDirectory = Join-Path `
             $env:GITHUB_WORKSPACE `
@@ -2001,19 +2065,24 @@ jobs:
           $artifactPath = Join-Path `
             $artifactDirectory `
             "Subsystem-Android-ARM64.apk"
-            Copy-Item `
+
+          Copy-Item `
             $arm64Apk.FullName `
             $artifactPath `
             -Force
 
-          Write-Host ""
-          Write-Host "Selected APK:"
-          Write-Host $arm64Apk.FullName
+          if (-not (Test-Path $artifactPath)) {
+            throw "APK artifact was not created: $artifactPath"
+          }
 
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "Android ARM64 APK ready"
+          Write-Host "=========================================="
           Write-Host ""
           Write-Host "Artifact:"
-          Write-Host $artifactPath
-
+          Write-Host "  $artifactPath"
+          Write-Host "  Size: $((Get-Item $artifactPath).Length) bytes"
       # ============================================================
       # 22. Upload APK
       # ============================================================
