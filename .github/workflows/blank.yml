@@ -7,10 +7,13 @@ permissions:
   contents: read
 
 env:
-  APP_DIR: apps/v0.34.0/geniex_chat_android
+  APP_DIR: geniex_chat_android
+
   JAVA_VERSION: "17"
-  GRADLE_VERSION: "8.13"
+  GRADLE_VERSION: "9.1.0"
+
   ANDROID_API: "34"
+  ANDROID_BUILD_TOOLS: "34.0.0"
   ANDROID_NDK_VERSION: "27.3.13750724"
 
 jobs:
@@ -19,8 +22,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       # ============================================================
-      # 1. Checkout Qualcomm AI Hub Apps
+      # 1. Download Qualcomm source
       # ============================================================
       - name: Checkout Qualcomm AI Hub Apps
         uses: actions/checkout@v4
@@ -37,12 +41,11 @@ jobs:
         with:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
-          cache: gradle
 
       # ============================================================
-      # 3. Gradle
+      # 3. Gradle 9.1.0
       # ============================================================
-      - name: Setup Gradle
+      - name: Setup Gradle 9.1.0
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: ${{ env.GRADLE_VERSION }}
@@ -54,81 +57,114 @@ jobs:
         uses: android-actions/setup-android@v3
 
       # ============================================================
-      # 5. Install required Android SDK components
+      # 5. Install exact Qualcomm Android toolchain
       # ============================================================
-      - name: Install Android SDK 34 and NDK
+      - name: Install Android SDK and NDK
         shell: bash
         run: |
           set -euxo pipefail
+
+          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}"
+          echo "ANDROID_HOME=${ANDROID_HOME}"
 
           yes | sdkmanager --licenses >/dev/null || true
 
           sdkmanager \
             "platform-tools" \
             "platforms;android-${ANDROID_API}" \
-            "build-tools;34.0.0" \
+            "build-tools;${ANDROID_BUILD_TOOLS}" \
             "ndk;${ANDROID_NDK_VERSION}"
 
       # ============================================================
-      # 6. Verify project structure
+      # 6. Verify exact repository structure
       # ============================================================
-      - name: Verify Qualcomm project
+      - name: Verify Qualcomm project structure
         shell: bash
         run: |
           set -euxo pipefail
 
-          echo "Repository:"
+          echo "================================================"
+          echo "Repository"
+          echo "================================================"
+
           pwd
+          ls -la
 
           echo
-          echo "Application directory:"
+          echo "================================================"
+          echo "GenieX Chat directory"
+          echo "================================================"
+
+          test -d "${APP_DIR}"
+
           ls -la "${APP_DIR}"
 
           echo
-          echo "Required files:"
+          echo "================================================"
+          echo "Required files"
+          echo "================================================"
+
           test -f "${APP_DIR}/build.gradle"
           test -f "${APP_DIR}/settings.gradle"
           test -f "${APP_DIR}/gradle.properties"
 
-          echo
-          echo "Checking source:"
+          test -f "${APP_DIR}/_shared/android/common.gradle"
+
           test -d "${APP_DIR}/src"
 
           echo
-          echo "Checking shared Android files:"
-          find . -path "*/_shared/android/*" -maxdepth 8 -type f | sort || true
+          echo "All required files exist."
 
       # ============================================================
-      # 7. Show toolchain versions
+      # 7. Verify Qualcomm versions.env
       # ============================================================
-      - name: Show build environment
+      - name: Verify Qualcomm build versions
         shell: bash
         run: |
           set -euxo pipefail
 
-          java -version
-          gradle --version
+          echo "Qualcomm versions.env:"
+          cat "${APP_DIR}/scripts/versions.env"
 
           echo
-          echo "ANDROID_HOME=${ANDROID_HOME}"
-          echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}"
+          echo "Expected versions:"
 
-          echo
-          echo "Installed NDK:"
-          ls -la "${ANDROID_SDK_ROOT}/ndk"
+          grep -F 'JAVA_SDK_VERSION="17.0.16-ms"' \
+            "${APP_DIR}/scripts/versions.env"
 
-          echo
-          echo "Installed Android platforms:"
-          ls -la "${ANDROID_SDK_ROOT}/platforms"
+          grep -F 'GRADLE_VERSION="9.1.0"' \
+            "${APP_DIR}/scripts/versions.env"
+
+          grep -F 'ANDROID_NDK_VERSION="27.3.13750724"' \
+            "${APP_DIR}/scripts/versions.env"
+
+          grep -F 'ANDROID_COMPILE_API="34"' \
+            "${APP_DIR}/scripts/versions.env"
+
+          grep -F 'ANDROID_TARGET_API="34"' \
+            "${APP_DIR}/scripts/versions.env"
+
+          grep -F 'ANDROID_MIN_API="31"' \
+            "${APP_DIR}/scripts/versions.env"
 
       # ============================================================
-      # 8. Check Gradle configuration
+      # 8. Verify Gradle configuration
       # ============================================================
-      - name: Gradle configuration check
+      - name: Verify Gradle configuration
         working-directory: ${{ env.APP_DIR }}
         shell: bash
         run: |
           set -euxo pipefail
+
+          echo "Gradle:"
+          gradle --version
+
+          echo
+          echo "Java:"
+          java -version
+
+          echo
+          echo "Gradle tasks:"
 
           gradle \
             --no-daemon \
@@ -151,49 +187,62 @@ jobs:
             assembleDebug
 
       # ============================================================
-      # 10. Verify APK
+      # 10. List generated APKs
       # ============================================================
-      - name: Verify APK
-        working-directory: ${{ env.APP_DIR }}
+      - name: Locate generated APK
         shell: bash
         run: |
           set -euxo pipefail
 
-          echo "APK files:"
-          find build/outputs/apk -type f -name "*.apk" -print
+          echo "Generated APK files:"
 
-          APK="build/outputs/apk/debug/app-debug.apk"
+          find "${APP_DIR}/build" \
+            -type f \
+            -name "*.apk" \
+            -print
 
-          test -f "$APK"
+      # ============================================================
+      # 11. Verify final APK
+      # ============================================================
+      - name: Verify final APK
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          APK="${APP_DIR}/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "ERROR: APK was not generated."
+            exit 1
+          fi
 
           echo
-          echo "APK information:"
+          echo "APK successfully generated:"
           ls -lh "$APK"
 
           echo
-          echo "APK SHA256:"
+          echo "SHA256:"
           sha256sum "$APK"
 
       # ============================================================
-      # 11. Upload APK
+      # 12. Upload APK
       # ============================================================
-      - name: Upload Debug APK
+      - name: Upload GenieX Chat APK
         uses: actions/upload-artifact@v4
         with:
           name: geniex-chat-android-debug
-          path: ${{ env.APP_DIR }}/build/outputs/apk/debug/app-debug.apk
+          path: geniex_chat_android/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 30
 
       # ============================================================
-      # 12. Upload mapping/build outputs if present
+      # 13. Upload complete build outputs
       # ============================================================
       - name: Upload build outputs
         uses: actions/upload-artifact@v4
         with:
           name: geniex-chat-android-build-outputs
           path: |
-            ${{ env.APP_DIR }}/build/outputs/**
-            ${{ env.APP_DIR }}/build/intermediates/**/apk/**
+            geniex_chat_android/build/outputs/**
           if-no-files-found: warn
           retention-days: 7
