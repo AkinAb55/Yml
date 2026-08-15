@@ -923,8 +923,46 @@ jobs:
 
           $designerAssemblyProperty.InnerText = "false"
 
+          $intermediateDesignerProperty = $androidPropertyGroup.SelectSingleNode(
+              "AndroidUseIntermediateDesignerFile"
+          )
+
+          if ($null -eq $intermediateDesignerProperty) {
+
+              $intermediateDesignerProperty = $xml.CreateElement(
+                  "AndroidUseIntermediateDesignerFile",
+                  $xml.DocumentElement.NamespaceURI
+              )
+
+              $androidPropertyGroup.AppendChild(
+                  $intermediateDesignerProperty
+              ) | Out-Null
+          }
+
+          $intermediateDesignerProperty.InnerText = "true"
+
+          $resgenNamespaceProperty = $androidPropertyGroup.SelectSingleNode(
+              "AndroidResgenNamespace"
+          )
+
+          if ($null -eq $resgenNamespaceProperty) {
+
+              $resgenNamespaceProperty = $xml.CreateElement(
+                  "AndroidResgenNamespace",
+                  $xml.DocumentElement.NamespaceURI
+              )
+
+              $androidPropertyGroup.AppendChild(
+                  $resgenNamespaceProperty
+              ) | Out-Null
+          }
+
+          $resgenNamespaceProperty.InnerText = "Subsystem"
+
           Write-Host "AndroidGenerateResourceDesigner=true"
           Write-Host "AndroidUseDesignerAssembly=false"
+          Write-Host "AndroidUseIntermediateDesignerFile=true"
+          Write-Host "AndroidResgenNamespace=Subsystem"
           
           # --- ДОБАВИТЬ ---
                               $monoResourcePrefix = $androidPropertyGroup.SelectSingleNode("MonoAndroidResourcePrefix")
@@ -997,7 +1035,7 @@ jobs:
           $xml.Save(
               (Resolve-Path $projectFile).Path
           )
-
+          
           Write-Host "Project XML saved."
 
           # ========================================================
@@ -1026,7 +1064,7 @@ jobs:
           foreach ($item in $compileIncludes) {
               Write-Host "  Include=$($item.Include)"
           }
-          
+
           # ONNX upstream Compile Include must remain.
 
           $onnxInclude = @(
@@ -1452,8 +1490,8 @@ jobs:
                   $replacement,
                   1
               )
-
-              if ($newPeLoaderText -eq $peLoaderText) {
+              
+               if ($newPeLoaderText -eq $peLoaderText) {
                   throw "Failed to add subPath declaration to PeLoader.cs."
               }
               
@@ -1509,7 +1547,59 @@ jobs:
               -Encoding utf8NoBOM
 
           Write-Host "SessionManager.SetBackground call replaced."
-          
+
+          # ========================================================
+          # 20.15.1 Fix Android Notification.Action ICharSequence arguments
+          # ========================================================
+
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "Fixing Android Notification.Action arguments"
+          Write-Host "=========================================="
+
+          $serviceFile = Join-Path $runspaceRoot "Services\SubsystemService.cs"
+
+          if (-not (Test-Path $serviceFile)) {
+              throw "SubsystemService.cs not found."
+          }
+
+          $serviceText = Get-Content `
+              $serviceFile `
+              -Raw
+
+          $beforeServicePatch = $serviceText
+
+          $serviceText = $serviceText.Replace(
+              'Resource.Mipmap.appicon, toggleText, togglePendingIntent)',
+              'Resource.Mipmap.appicon, new Java.Lang.String(toggleText), togglePendingIntent)'
+          )
+
+          $serviceText = $serviceText.Replace(
+              'Resource.Mipmap.appicon, "Shut down", shutdownReqPi)',
+              'Resource.Mipmap.appicon, new Java.Lang.String("Shut down"), shutdownReqPi)'
+          )
+
+          $serviceText = $serviceText.Replace(
+              'Resource.Mipmap.appicon, "Enter Code", replyPendingIntent)',
+              'Resource.Mipmap.appicon, new Java.Lang.String("Enter Code"), replyPendingIntent)'
+          )
+
+          if ($serviceText -ne $beforeServicePatch) {
+              Set-Content `
+                  -Path $serviceFile `
+                  -Value $serviceText `
+                  -Encoding utf8NoBOM
+
+              Write-Host "Android Notification.Action arguments fixed."
+          }
+          else {
+              Write-Host "Android Notification.Action arguments already compatible."
+          }
+
+          if ($serviceText -match 'new Notification\.Action\.Builder\(\s*Resource\.Mipmap\.appicon\s*,\s*"[^"\r\n]+"\s*,') {
+              throw "String Notification.Action.Builder argument still remains in SubsystemService.cs."
+          }
+
           # ========================================================
           # 20.16 Final source verification
           # ========================================================
@@ -1684,10 +1774,14 @@ jobs:
 
           $generateDesigner = $resourceAndroidGroup.AndroidGenerateResourceDesigner
           $useDesignerAssembly = $resourceAndroidGroup.AndroidUseDesignerAssembly
+          $useIntermediateDesigner = $resourceAndroidGroup.AndroidUseIntermediateDesignerFile
+          $resgenNamespace = $resourceAndroidGroup.AndroidResgenNamespace
           $resourcePrefix = $resourceAndroidGroup.MonoAndroidResourcePrefix
 
           Write-Host "AndroidGenerateResourceDesigner=$generateDesigner"
           Write-Host "AndroidUseDesignerAssembly=$useDesignerAssembly"
+          Write-Host "AndroidUseIntermediateDesignerFile=$useIntermediateDesigner"
+          Write-Host "AndroidResgenNamespace=$resgenNamespace"
           Write-Host "MonoAndroidResourcePrefix=$resourcePrefix"
 
           if ($generateDesigner -ne "true") {
@@ -1696,6 +1790,14 @@ jobs:
 
           if ($useDesignerAssembly -ne "false") {
               throw "AndroidUseDesignerAssembly is not false."
+          }
+
+          if ($useIntermediateDesigner -ne "true") {
+              throw "AndroidUseIntermediateDesignerFile is not true."
+          }
+
+          if ($resgenNamespace -ne "Subsystem") {
+              throw "AndroidResgenNamespace is not Subsystem."
           }
 
           Write-Host "Resource designer configuration passed."
@@ -1812,6 +1914,11 @@ jobs:
               -c Release `
               -f net11.0-android `
               -r android-arm64 `
+              -p:SupportedOSPlatformVersion=31.0 `
+              -p:AndroidGenerateResourceDesigner=true `
+              -p:AndroidUseDesignerAssembly=false `
+              -p:AndroidUseIntermediateDesignerFile=true `
+              -p:AndroidResgenNamespace=Subsystem `
               --no-restore
 
           if ($LASTEXITCODE -ne 0) {
@@ -1947,7 +2054,7 @@ jobs:
           Write-Host "TARGET_ANDROID_API=$env:TARGET_ANDROID_API"
           Write-Host "ANDROID_HOME=$env:ANDROID_HOME"
           Write-Host "ANDROID_NDK_HOME=$env:ANDROID_NDK_HOME"
-
+          
           Write-Host ""
           Write-Host "Project target frameworks:"
 
