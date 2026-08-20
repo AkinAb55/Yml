@@ -2010,13 +2010,13 @@ jobs:
           Write-Host "=========================================="
           Write-Host "Subsystem Android ARM64 build succeeded"
           Write-Host "=========================================="
-      # ============================================================
+          
+          # ============================================================
       # 21. Locate produced APK
       # ============================================================
-
-      - name: Locate Android APK
+      
+            - name: Locate Android APK
         shell: pwsh
-        working-directory: subsystem
         run: |
           $ErrorActionPreference = "Stop"
 
@@ -2024,76 +2024,79 @@ jobs:
           Write-Host "Locating Android APK"
           Write-Host "=========================================="
 
-          $apkFiles = @(
-            Get-ChildItem `
-              -Path . `
-              -Recurse `
-              -Filter "*.apk" `
-              -File `
-              -ErrorAction SilentlyContinue
-          )
+          $subsystemRoot = Join-Path `
+            $env:GITHUB_WORKSPACE `
+            "subsystem"
 
-          if ($apkFiles.Count -eq 0) {
+          if (-not (Test-Path $subsystemRoot)) {
+            throw "Subsystem directory does not exist: $subsystemRoot"
+          }
+
+          Write-Host ""
+          Write-Host "Searching for APK files..."
+          Write-Host ""
+
+          $apks = Get-ChildItem `
+            -Path $subsystemRoot `
+            -Recurse `
+            -File `
+            -Filter "*.apk" `
+            -ErrorAction SilentlyContinue
+
+          if ($null -eq $apks -or $apks.Count -eq 0) {
+            Write-Host "No APK files found."
             Write-Host ""
-            Write-Host "Build output:"
+            Write-Host "Searching build directories..."
+            Write-Host ""
 
             Get-ChildItem `
-              ".\bin" `
+              -Path $subsystemRoot `
               -Recurse `
-              -File `
+              -Directory `
               -ErrorAction SilentlyContinue |
-              Select-Object FullName, Length
+              Where-Object {
+                $_.FullName -match "\\(bin|obj|publish|Release|Debug)\\"
+              } |
+              Select-Object -First 200 FullName |
+              Format-Table -AutoSize
 
-            throw "No APK was produced."
+            throw "No APK was produced or no APK was found."
           }
 
-          foreach ($apk in $apkFiles) {
-            Write-Host ""
-            Write-Host "APK:"
-            Write-Host $apk.FullName
-            Write-Host "Size: $($apk.Length) bytes"
-          }
+          Write-Host "APK files found:"
+          Write-Host ""
 
-          Where-Object {
+          $apks |
+            Sort-Object Length -Descending |
+            Select-Object FullName, Length, LastWriteTime |
+            Format-Table -AutoSize
+
+          # Prefer an ARM64 APK if several APKs exist.
+          $apk = $apks |
+            Where-Object {
               $_.FullName -match "arm64|android-arm64"
             } |
+            Sort-Object LastWriteTime -Descending |
             Select-Object -First 1
 
-          if (-not $arm64Apk) {
-            $arm64Apk = $apkFiles |
-              Sort-Object Length -Descending |
+          if ($null -eq $apk) {
+            $apk = $apks |
+              Sort-Object LastWriteTime -Descending |
               Select-Object -First 1
           }
 
-          if (-not $arm64Apk) {
-            throw "Could not select an Android APK."
-          }
-
-          $artifactDirectory = Join-Path `
-            $env:GITHUB_WORKSPACE `
-            "artifacts"
-
-          New-Item `
-            -ItemType Directory `
-            -Force `
-            -Path $artifactDirectory |
-            Out-Null
-
-          $artifactPath = Join-Path `
-            $artifactDirectory `
-            "Subsystem-Android-ARM64.apk"
-            Copy-Item `
-            $arm64Apk.FullName `
-            $artifactPath `
-            -Force
-
           Write-Host ""
           Write-Host "Selected APK:"
-          Write-Host $arm64Apk.FullName
+          Write-Host $apk.FullName
+
+          "APK_PATH=$($apk.FullName)" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Append `
+              -Encoding utf8
 
           Write-Host ""
-          Write-Host "Artifact:"
-          Write-Host $artifactPath
+          Write-Host "APK_PATH exported successfully."
 
       # ============================================================
       # 22. Upload APK
