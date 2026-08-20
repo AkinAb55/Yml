@@ -2008,7 +2008,7 @@ jobs:
       # 21. Locate produced APK
       # ============================================================
 
-            - name: Locate Android APK
+      - name: Locate Android APK
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
