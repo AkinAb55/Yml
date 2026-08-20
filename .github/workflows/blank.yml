@@ -85,88 +85,7 @@ jobs:
               -FilePath $env:GITHUB_ENV `
               -Append `
               -Encoding utf8
-              
-                        "SUBSYSTEM_COMMIT=$gitHead" |
-            Out-File `
-              -FilePath $env:GITHUB_ENV `
-              -Append `
-              -Encoding utf8
 
-      # ============================================================
-      # 3. Patch Android FilesDir initialization
-      #
-      # IMPORTANT:
-      # The official Subsystem repository is NOT modified.
-      # This patch exists only inside the temporary GitHub
-      # Actions runner after the upstream repository is cloned.
-      #
-      # Home.cs already provides:
-      #
-      #   Home.SetAndroidFilesDir(string path)
-      #
-      # We make MainActivity initialize it before Subsystem
-      # components such as Cm / ModelCatalog are used.
-      # ============================================================
-
-      - name: Patch Android FilesDir initialization
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          Write-Host "=========================================="
-          Write-Host "Patching Android FilesDir initialization"
-          Write-Host "=========================================="
-
-          $file = Join-Path `
-            $env:GITHUB_WORKSPACE `
-            "subsystem\src\runspace\MainActivity.cs"
-
-          if (-not (Test-Path $file)) {
-            throw "MainActivity.cs was not found: $file"
-          }
-
-          $content = Get-Content `
-            -Path $file `
-            -Raw `
-            -Encoding UTF8
-
-          $needle = "        Instance = this;"
-
-          $patchLine = "        Subsystem.Cm.EnvironmentVariables.Home.SetAndroidFilesDir(FilesDir.AbsolutePath);"
-
-          if ($content.Contains($patchLine)) {
-            Write-Host "Patch already exists. Nothing to do."
-          }
-          elseif (-not $content.Contains($needle)) {
-            throw "Patch location was not found in MainActivity.cs."
-          }
-          else {
-            $content = $content.Replace(
-              $needle,
-              "$needle`r`n$patchLine"
-            )
-
-            Set-Content `
-              -Path $file `
-              -Value $content `
-              -Encoding UTF8
-
-            Write-Host "Android FilesDir initialization added."
-          }
-
-          Write-Host ""
-          Write-Host "=========================================="
-          Write-Host "Verification"
-          Write-Host "=========================================="
-
-          Select-String `
-            -Path $file `
-            -Pattern "Instance = this|SetAndroidFilesDir" `
-            -Context 1,1
-
-          Write-Host ""
-          Write-Host "Patch completed successfully.""
-      
       # ============================================================
       # 3. Locate project
       # ============================================================
@@ -2010,11 +1929,10 @@ jobs:
           Write-Host "=========================================="
           Write-Host "Subsystem Android ARM64 build succeeded"
           Write-Host "=========================================="
-          
-          # ============================================================
+      # ============================================================
       # 21. Locate produced APK
       # ============================================================
-      
+
             - name: Locate Android APK
         shell: pwsh
         run: |
