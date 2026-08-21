@@ -85,81 +85,7 @@ jobs:
               -FilePath $env:GITHUB_ENV `
               -Append `
               -Encoding utf8
-      # ============================================================
-      # 3. Patch Android FilesDir initialization
-      #
-      # IMPORTANT:
-      # The official Subsystem repository is NOT modified.
-      # This patch exists only inside the temporary GitHub
-      # Actions runner after the upstream repository is cloned.
-      #
-      # Home.cs already provides:
-      #
-      #   Home.SetAndroidFilesDir(string path)
-      #
-      # We make MainActivity initialize it before Subsystem
-      # components such as Cm / ModelCatalog are used.
-      # ============================================================
-
-      - name: Patch Android FilesDir initialization
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          Write-Host "=========================================="
-          Write-Host "Patching Android FilesDir initialization"
-          Write-Host "=========================================="
-
-          $file = Join-Path `
-            $env:GITHUB_WORKSPACE `
-            "subsystem\src\runspace\MainActivity.cs"
-
-          if (-not (Test-Path $file)) {
-            throw "MainActivity.cs was not found: $file"
-          }
-
-          $content = Get-Content `
-            -Path $file `
-            -Raw `
-            -Encoding UTF8
-
-          $needle = "        Instance = this;"
-
-          $patchLine = "        Subsystem.Cm.EnvironmentVariables.Home.SetAndroidFilesDir(FilesDir.AbsolutePath);"
-
-          if ($content.Contains($patchLine)) {
-            Write-Host "Patch already exists. Nothing to do."
-          }
-          elseif (-not $content.Contains($needle)) {
-            throw "Patch location was not found in MainActivity.cs."
-          }
-          else {
-            $content = $content.Replace(
-              $needle,
-              "$needle`r`n$patchLine"
-            )
-
-            Set-Content `
-              -Path $file `
-              -Value $content `
-              -Encoding UTF8
-
-            Write-Host "Android FilesDir initialization added."
-          }
-
-          Write-Host ""
-          Write-Host "=========================================="
-          Write-Host "Verification"
-          Write-Host "=========================================="
-
-          Select-String `
-            -Path $file `
-            -Pattern "Instance = this|SetAndroidFilesDir" `
-            -Context 1,1
-
-          Write-Host ""
-          Write-Host "Patch completed successfully."
-          
+              
       # ============================================================
       # 3. Patch Android FilesDir initialization
       #
@@ -1184,7 +1110,7 @@ jobs:
           $xml.Save(
               (Resolve-Path $projectFile).Path
           )
-
+          
           Write-Host "Project XML saved."
 
           # ========================================================
@@ -1639,8 +1565,8 @@ jobs:
                   $replacement,
                   1
               )
-
-              if ($newPeLoaderText -eq $peLoaderText) {
+              
+               if ($newPeLoaderText -eq $peLoaderText) {
                   throw "Failed to add subPath declaration to PeLoader.cs."
               }
               
@@ -2078,93 +2004,163 @@ jobs:
           Write-Host "=========================================="
           Write-Host "Subsystem Android ARM64 build succeeded"
           Write-Host "=========================================="
+      
       # ============================================================
-      # 21. Locate produced APK
+      # 21. Locate Android ARM64 APK
       # ============================================================
 
-      - name: Locate Android APK
+      - name: Locate Android ARM64 APK
         shell: pwsh
+        working-directory: subsystem
         run: |
           $ErrorActionPreference = "Stop"
 
           Write-Host "=========================================="
-          Write-Host "Locating Android APK"
+          Write-Host "Locating Android ARM64 APK"
           Write-Host "=========================================="
 
-          $subsystemRoot = Join-Path `
-            $env:GITHUB_WORKSPACE `
-            "subsystem"
-
-          if (-not (Test-Path $subsystemRoot)) {
-            throw "Subsystem directory does not exist: $subsystemRoot"
-          }
+          $workspace = $env:GITHUB_WORKSPACE
 
           Write-Host ""
-          Write-Host "Searching for APK files..."
+          Write-Host "Workspace:"
+          Write-Host $workspace
+
           Write-Host ""
+          Write-Host "Searching entire workspace for APK files..."
 
-          $apks = Get-ChildItem `
-            -Path $subsystemRoot `
-            -Recurse `
-            -File `
-            -Filter "*.apk" `
-            -ErrorAction SilentlyContinue
+          $apkFiles = @(
+            Get-ChildItem `
+              -Path $workspace `
+              -Recurse `
+              -Filter "*.apk" `
+              -File `
+              -ErrorAction SilentlyContinue |
+              Where-Object {
+                $_.FullName -notmatch "\\\.git\\"
+              }
+          )
 
-          if ($null -eq $apks -or $apks.Count -eq 0) {
-            Write-Host "No APK files found."
+          if ($apkFiles.Count -eq 0) {
             Write-Host ""
-            Write-Host "Searching build directories..."
+            Write-Host "=========================================="
+            Write-Host "No APK found after successful build"
+            Write-Host "=========================================="
+
             Write-Host ""
+            Write-Host "Searching for Android build output directories..."
 
             Get-ChildItem `
-              -Path $subsystemRoot `
+              -Path $workspace `
               -Recurse `
               -Directory `
               -ErrorAction SilentlyContinue |
               Where-Object {
-                $_.FullName -match "\\(bin|obj|publish|Release|Debug)\\"
+                $_.Name -in @("bin", "obj", "publish")
               } |
-              Select-Object -First 200 FullName |
-              Format-Table -AutoSize
+              Select-Object -First 200 -ExpandProperty FullName
 
-            throw "No APK was produced or no APK was found."
+            Write-Host ""
+            Write-Host "Searching for Android package-related files..."
+
+            Get-ChildItem `
+              -Path $workspace `
+              -Recurse `
+              -File `
+              -ErrorAction SilentlyContinue |
+              Where-Object {
+                $_.Extension -in @(".aab", ".apk", ".apks") -or
+                $_.Name -match "android|arm64"
+              } |
+              Select-Object -First 300 FullName, Length
+
+            throw "No Android APK was produced."
           }
 
-          Write-Host "APK files found:"
           Write-Host ""
+          Write-Host "APK files found: $($apkFiles.Count)"
 
-          $apks |
+          foreach ($apk in $apkFiles) {
+            Write-Host ""
+            Write-Host "APK:"
+            Write-Host "  $($apk.FullName)"
+            Write-Host "  Size: $($apk.Length) bytes"
+          }
+
+          Write-Host ""
+          Write-Host "Selecting ARM64 APK..."
+
+          $arm64Apk = @(
+            $apkFiles |
+              Where-Object {
+                $_.FullName -match "android-arm64|arm64-v8a|arm64"
+              }
+          ) |
             Sort-Object Length -Descending |
-            Select-Object FullName, Length, LastWriteTime |
-            Format-Table -AutoSize
-
-          # Prefer an ARM64 APK if several APKs exist.
-          $apk = $apks |
-            Where-Object {
-              $_.FullName -match "arm64|android-arm64"
-            } |
-            Sort-Object LastWriteTime -Descending |
             Select-Object -First 1
 
-          if ($null -eq $apk) {
-            $apk = $apks |
-              Sort-Object LastWriteTime -Descending |
+          if (-not $arm64Apk) {
+            Write-Host ""
+            Write-Host "No APK path explicitly contains an ARM64 identifier."
+            Write-Host "The build itself was executed with android-arm64."
+            Write-Host "Selecting the largest APK."
+
+            $arm64Apk = $apkFiles |
+              Sort-Object Length -Descending |
               Select-Object -First 1
           }
 
-          Write-Host ""
-          Write-Host "Selected APK:"
-          Write-Host $apk.FullName
-
-          "APK_PATH=$($apk.FullName)" |
-            Out-File `
-              -FilePath $env:GITHUB_ENV `
-              -Append `
-              -Encoding utf8
+          if (-not $arm64Apk) {
+            throw "Could not select an Android ARM64 APK."
+          }
 
           Write-Host ""
-          Write-Host "APK_PATH exported successfully."
+          Write-Host "=========================================="
+          Write-Host "Selected Android ARM64 APK"
+          Write-Host "=========================================="
 
+          Write-Host ""
+          Write-Host "Path:"
+          Write-Host $arm64Apk.FullName
+
+          Write-Host ""
+          Write-Host "Size:"
+          Write-Host "$($arm64Apk.Length) bytes"
+
+          $artifactDirectory = Join-Path `
+            $workspace `
+            "artifacts"
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $artifactDirectory |
+            Out-Null
+
+          $artifactPath = Join-Path `
+            $artifactDirectory `
+            "Subsystem-Android-ARM64.apk"
+
+          Copy-Item `
+            -LiteralPath $arm64Apk.FullName `
+            -Destination $artifactPath `
+            -Force
+
+          if (-not (Test-Path -LiteralPath $artifactPath)) {
+            throw "APK artifact was not created: $artifactPath"
+          }
+
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "Android ARM64 APK ready"
+          Write-Host "=========================================="
+
+          Write-Host ""
+          Write-Host "Artifact:"
+          Write-Host $artifactPath
+
+          Write-Host ""
+          Write-Host "Artifact size:"
+          Write-Host "$((Get-Item -LiteralPath $artifactPath).Length) bytes"
       # ============================================================
       # 22. Upload APK
       # ============================================================
@@ -2205,7 +2201,7 @@ jobs:
           Write-Host "TARGET_ANDROID_API=$env:TARGET_ANDROID_API"
           Write-Host "ANDROID_HOME=$env:ANDROID_HOME"
           Write-Host "ANDROID_NDK_HOME=$env:ANDROID_NDK_HOME"
-
+          
           Write-Host ""
           Write-Host "Project target frameworks:"
 
